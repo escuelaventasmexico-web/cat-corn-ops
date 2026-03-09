@@ -1,4 +1,3 @@
-import React from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { supabase } from '../supabase';
 import { 
@@ -20,7 +19,7 @@ export const Layout = () => {
   const navigate = useNavigate();
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await supabase?.auth.signOut();
     navigate('/login');
   };
 

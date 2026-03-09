@@ -52,20 +52,6 @@ export const SalesHistory = () => {
     return 'other';
   };
 
-  /**
-   * Parsea un valor de fecha (string ISO o YYYY-MM-DD) a Date local.
-   * - Si viene con "T" (ISO), usa new Date() directo.
-   * - Si es solo YYYY-MM-DD, lo interpreta como medianoche local.
-   */
-  const normalizeDate = (dateValue: string): Date => {
-    if (dateValue.includes('T')) {
-      return new Date(dateValue);
-    }
-    // YYYY-MM-DD → fecha local
-    const [y, mo, d] = dateValue.split('-').map(Number);
-    return new Date(y, mo - 1, d);
-  };
-
   useEffect(() => {
     loadSales();
     loadSamples();

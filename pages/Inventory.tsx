@@ -16,7 +16,7 @@ interface RawMaterial {
 type ModalMode = 'add' | 'edit' | 'adjust' | null;
 
 // Recetario hardcodeado: consumo por tanda
-const RECIPES = {
+const RECIPES: Record<string, Record<string, number>> = {
   SALADA_12OZ: {
     'Aceite': 90,           // ml
     'Maíz palomero': 340,   // g
@@ -62,6 +62,7 @@ export const Inventory = () => {
   }, []);
 
   const fetchMaterials = async () => {
+    if (!supabase) return;
     setLoading(true);
     setErrorMessage('');
     const { data, error } = await supabase
@@ -115,7 +116,7 @@ export const Inventory = () => {
       return;
     }
 
-    const { error } = await supabase
+    const { error } = await supabase!
       .from('raw_materials')
       .insert({
         name: formName,
@@ -138,7 +139,7 @@ export const Inventory = () => {
       return;
     }
 
-    const { error } = await supabase
+    const { error } = await supabase!
       .from('raw_materials')
       .update({
         unit: formUnit,
@@ -176,7 +177,7 @@ export const Inventory = () => {
       return;
     }
 
-    const { error } = await supabase
+    const { error } = await supabase!
       .from('raw_materials')
       .update({
         current_stock: newStock,
@@ -190,10 +191,6 @@ export const Inventory = () => {
       closeModal();
       fetchMaterials();
     }
-  };
-
-  const getStockStatus = (current: number, min: number) => {
-    return current >= min ? 'OK' : 'BAJO';
   };
 
   return (

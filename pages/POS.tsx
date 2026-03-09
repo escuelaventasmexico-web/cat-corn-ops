@@ -1,10 +1,10 @@
-import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { supabase, Product, CartItem } from '../supabase';
 import type { Customer } from '../supabase';
 import { normalizePhone, fetchCustomerByPhoneNorm, fetchCustomerById, createCustomerRecord, fetchCustomersList } from '../lib/loyalty';
 import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion } from '../lib/promotions';
 import type { PromotionCode } from '../lib/promotions';
-import { Search, Plus, Minus, Trash2, CreditCard, Banknote, User, ShoppingBag, Cat, PawPrint, Package, Crown, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Check } from 'lucide-react';
+import { Search, Plus, Minus, CreditCard, Banknote, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users } from 'lucide-react';
 import { fetchCashStatus, getOpenSessionId, EMPTY_CASH_STATUS } from '../lib/cashRegister';
 import type { CashRegisterStatus } from '../lib/cashRegister';
 import { CashRegisterStatusPanel } from '../components/CashRegisterStatus';
@@ -12,26 +12,10 @@ import { OpenCashRegisterModal } from '../components/OpenCashRegisterModal';
 import { WithdrawalModal } from '../components/WithdrawalModal';
 import { CloseCashRegisterModal } from '../components/CloseCashRegisterModal';
 
-const getSizeIcon = (size: string) => {
-  const sizeNormalized = size.toLowerCase();
-  
-  if (sizeNormalized.includes('mini')) {
-    return <Cat size={28} className="text-cc-accent" />;
-  } else if (sizeNormalized.includes('mediana')) {
-    return <PawPrint size={28} className="text-cc-primary" />;
-  } else if (sizeNormalized.includes('grande')) {
-    return <Package size={28} className="text-cc-cream" />;
-  } else if (sizeNormalized.includes('jumbo')) {
-    return <Crown size={28} className="text-yellow-400" />;
-  }
-  
-  return <Cat size={28} className="text-cc-text-muted" />;
-};
-
 export const POS = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [processing, setProcessing] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState('');

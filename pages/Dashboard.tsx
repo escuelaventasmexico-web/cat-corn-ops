@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
 import { DollarSign, ShoppingBag, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
@@ -7,6 +7,7 @@ interface TopProduct {
   id: string;
   name: string;
   size: string;
+  flavor: string;
   revenue: number;
   units: number;
 }
@@ -42,6 +43,8 @@ export const Dashboard = () => {
       const yesterday = new Date(today);
       yesterday.setDate(yesterday.getDate() - 1);
       const yesterdayStr = yesterday.toISOString();
+
+      if (!supabase) return;
 
       // 1. Sales Today - total and count (also get payment_method for chart)
       const { data: salesToday } = await supabase
@@ -126,15 +129,19 @@ export const Dashboard = () => {
             const revenue = Number(item.price) * Number(item.quantity);
             const units = Number(item.quantity);
             
+            // Supabase may return the join as array or object
+            const prod = Array.isArray(item.products) ? item.products[0] : item.products;
+            if (!prod) continue;
+
             if (productMap.has(productId)) {
               const existing = productMap.get(productId)!;
               existing.revenue += revenue;
               existing.units += units;
             } else {
               productMap.set(productId, {
-                name: item.products.product_name || item.products.name,
-                size: item.products.size || '',
-                flavor: item.products.category || item.products.flavor || '',
+                name: prod.name || '',
+                size: prod.size || '',
+                flavor: prod.flavor || '',
                 revenue,
                 units
               });
@@ -148,6 +155,7 @@ export const Dashboard = () => {
             id,
             name: data.name,
             size: data.size,
+            flavor: data.flavor,
             revenue: data.revenue,
             units: data.units
           }))
@@ -261,7 +269,7 @@ export const Dashboard = () => {
                                 formatter={(value: number) => `$${value.toFixed(2)}`}
                             />
                             <Bar dataKey="amount" fill="#F4C542" radius={[4, 4, 0, 0]}>
-                                {chartData.map((entry, index) => (
+                                {chartData.map((_entry, index) => (
                                     <Cell key={`cell-${index}`} fill={index === 0 ? '#F4C542' : '#4CAF50'} />
                                 ))}
                             </Bar>

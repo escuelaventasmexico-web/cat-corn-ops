@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
-import { X, Upload, FileText, Download, Eye, Trash2, Edit, AlertCircle, CheckCircle, FileUp } from 'lucide-react';
+import { X, Upload, FileText, Eye, Trash2, AlertCircle, CheckCircle, FileUp } from 'lucide-react';
 import {
   uploadFinanceDoc,
   listFinanceDocs,
-  updateFinanceDoc,
   deleteFinanceDoc,
   downloadFinanceDoc,
-  getFinanceDocSignedUrl,
   validateFinanceDocsBucket,
   FINANCE_DOCS_BUCKET,
   type FinanceDocument,
@@ -100,7 +98,7 @@ export const ExpenseDocumentsManager = ({ onClose }: ExpenseDocumentsManagerProp
 
     setUploadLoading(true);
 
-    const { data, error } = await uploadFinanceDoc({
+    const { error } = await uploadFinanceDoc({
       file: selectedFile,
       doc_type: docType,
       doc_date: docDate || null,
@@ -140,7 +138,7 @@ export const ExpenseDocumentsManager = ({ onClose }: ExpenseDocumentsManagerProp
   const handleDelete = async (doc: FinanceDocument) => {
     if (!confirm(`¿Eliminar el documento "${doc.file_name}"?`)) return;
 
-    const { success, error } = await deleteFinanceDoc(doc.id);
+    const { error } = await deleteFinanceDoc(doc.id);
     if (error) {
       showToast('error', error.message);
     } else {
@@ -151,7 +149,7 @@ export const ExpenseDocumentsManager = ({ onClose }: ExpenseDocumentsManagerProp
 
   // Handle view/download
   const handleView = async (doc: FinanceDocument) => {
-    const { success, error } = await downloadFinanceDoc(doc.storage_path);
+    const { error } = await downloadFinanceDoc(doc.storage_path);
     if (error) {
       showToast('error', error.message);
     }

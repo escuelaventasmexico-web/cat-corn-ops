@@ -230,8 +230,9 @@ export const Production = () => {
           console.error('[MAIZ] Error loading batch_recipes for maíz:', brErr);
         } else {
           const maizMap: Record<string, number> = {};
-          (batchRecipeRows || []).forEach((row: { batch_type: string; qty_per_batch: number; raw_materials: { name: string } | null }) => {
-            const rmName = (row.raw_materials?.name || '').toLowerCase();
+          (batchRecipeRows || []).forEach((row: { batch_type: string; qty_per_batch: number; raw_materials: { name: string }[] | { name: string } | null }) => {
+            const rm = Array.isArray(row.raw_materials) ? row.raw_materials[0] : row.raw_materials;
+            const rmName = (rm?.name || '').toLowerCase();
             if (rmName.includes('maíz') || rmName.includes('maiz')) {
               maizMap[row.batch_type] = Number(row.qty_per_batch || 0);
             }
@@ -489,7 +490,7 @@ export const Production = () => {
       console.log('[GIFT] params:', { p_batch_id: selectedGiftBatchId, p_grams_used: giftGrams, p_gift_units: giftUnits });
 
       // Llamar al RPC
-      const { data, error } = await supabase.rpc('allocate_batch_gift', {
+      const { error } = await supabase.rpc('allocate_batch_gift', {
         p_batch_id: selectedGiftBatchId,
         p_grams_used: giftGrams,
         p_gift_units: giftUnits || 0,
