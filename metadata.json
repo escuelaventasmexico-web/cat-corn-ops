@@ -1,0 +1,5 @@
+{
+  "name": "Cat Corn OPS",
+  "description": "Operational system for Cat Corn gourmet popcorn business including POS, Inventory, and Production tracking.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --cc-bg: #1C1A1A;
+  --cc-surface: #2A2A2A;
+  --cc-primary: #F4C542;
+  --cc-primary-dark: #C89B1F;
+  --cc-accent: #F47BAA;
+  --cc-accent-soft: #FF8FB8;
+  --cc-cream: #F6E7C1;
+  --cc-text-main: #F5F5F5;
+  --cc-text-muted: #A3A3A3;
+}
+
+body {
+  background-color: var(--cc-bg);
+  color: var(--cc-text-main);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--cc-bg); 
+}
+::-webkit-scrollbar-thumb {
+  background: var(--cc-surface); 
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cc-primary-dark); 
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  background: rgba(42, 42, 42, 0.7);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
