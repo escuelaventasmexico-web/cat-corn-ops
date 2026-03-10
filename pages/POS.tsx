@@ -329,14 +329,21 @@ export const POS = () => {
         if (saleErr) throw saleErr;
 
         // 2. Insert sale_items
-        const saleItems = cart.map(item => ({
-          sale_id: sale.id,
-          product_id: item.id,
-          quantity: item.quantity,
-          price: item.price,
-          discount_amount: item.discount_amount || 0,
-          discount_reason: item.discount_reason || null,
-        }));
+        // Store the FINAL price after any discount so DB totals match cash collected
+        const saleItems = cart.map(item => {
+          const disc = item.discount_amount || 0;
+          const effectivePrice = item.quantity > 0
+            ? Math.round(((item.price * item.quantity) - disc) / item.quantity * 100) / 100
+            : item.price;
+          return {
+            sale_id: sale.id,
+            product_id: item.id,
+            quantity: item.quantity,
+            price: effectivePrice,
+            discount_amount: disc,
+            discount_reason: item.discount_reason || null,
+          };
+        });
 
         const { error: itemsErr } = await supabase
           .from('sale_items')

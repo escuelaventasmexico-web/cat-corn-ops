@@ -56,14 +56,17 @@ export const Dashboard = () => {
       const totalToday = salesToday?.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
       const ordersToday = salesToday?.length || 0;
 
-      // Calculate sales by payment method for chart
-      const cashTotal = salesToday?.filter(s => s.payment_method === 'cash').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const cardTotal = salesToday?.filter(s => s.payment_method === 'card').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      // Calculate sales by payment method for chart (case-insensitive)
+      const normPM = (m: string) => (m || '').toUpperCase().trim();
+      const cashTotal = salesToday?.filter(s => normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const cardTotal = salesToday?.filter(s => normPM(s.payment_method) === 'CARD').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const mixedTotal = salesToday?.filter(s => normPM(s.payment_method) === 'MIXED').reduce((sum, s) => sum + Number(s.total), 0) || 0;
       
       const paymentMethodChart = [
         { name: 'Efectivo', amount: cashTotal },
-        { name: 'Tarjeta', amount: cardTotal }
-      ];
+        { name: 'Tarjeta', amount: cardTotal },
+        { name: 'Mixto', amount: mixedTotal },
+      ].filter(d => d.amount > 0);
 
       // 2. Sales Yesterday - for percentage calculation
       const { data: salesYesterday } = await supabase
@@ -178,7 +181,7 @@ export const Dashboard = () => {
     }
   };
 
-  const StatCard = ({ title, value, icon: Icon, trend, color }: any) => (
+  const StatCard = ({ title, value, icon: Icon, trend, color, subtitle }: any) => (
     <div className="bg-cc-surface p-6 rounded-xl border border-white/5 shadow-lg">
         <div className="flex justify-between items-start">
             <div>
@@ -189,6 +192,12 @@ export const Dashboard = () => {
                 <Icon size={24} className="text-cc-bg" />
             </div>
         </div>
+        {subtitle && (
+            <div className="mt-3 pt-3 border-t border-white/5">
+                <p className="text-cc-text-muted text-xs font-medium mb-0.5">{subtitle.label}</p>
+                <p className="text-lg font-semibold text-cc-cream/80">{subtitle.value}</p>
+            </div>
+        )}
         {trend && (
             <div className="mt-4 flex items-center text-sm gap-1">
                 {stats.percentageChange.startsWith('+') ? (
@@ -228,6 +237,10 @@ export const Dashboard = () => {
                 value={stats.ordersToday} 
                 icon={ShoppingBag} 
                 color="bg-cc-accent"
+                subtitle={{
+                  label: 'Ticket Promedio',
+                  value: `$${stats.ordersToday > 0 ? (stats.salesToday / stats.ordersToday).toFixed(2) : '0.00'}`
+                }}
             />
             <StatCard 
                 title="Alerta Inventario" 
@@ -251,30 +264,37 @@ export const Dashboard = () => {
                     <p className="text-xs text-cc-text-muted">Total vendido hoy (MXN) por método de pago</p>
                 </div>
                 <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={chartData}>
-                            <XAxis 
-                                dataKey="name" 
-                                stroke="#999" 
-                                style={{ fontSize: '12px' }}
-                                label={{ value: 'Método de Pago', position: 'insideBottom', offset: -5, fill: '#999' }}
-                            />
-                            <YAxis 
-                                stroke="#999" 
-                                style={{ fontSize: '12px' }}
-                                label={{ value: 'Total (MXN)', angle: -90, position: 'insideLeft', fill: '#999' }}
-                            />
-                            <Tooltip 
-                                contentStyle={{ backgroundColor: '#2A2A2A', border: '1px solid #444', color: '#F5F5F5' }}
-                                formatter={(value: number) => `$${value.toFixed(2)}`}
-                            />
-                            <Bar dataKey="amount" fill="#F4C542" radius={[4, 4, 0, 0]}>
-                                {chartData.map((_entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={index === 0 ? '#F4C542' : '#4CAF50'} />
-                                ))}
-                            </Bar>
-                        </BarChart>
-                    </ResponsiveContainer>
+                    {chartData.length === 0 ? (
+                        <div className="flex items-center justify-center h-full text-cc-text-muted">
+                            No hay ventas registradas hoy
+                        </div>
+                    ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={chartData}>
+                                <XAxis 
+                                    dataKey="name" 
+                                    stroke="#999" 
+                                    style={{ fontSize: '12px' }}
+                                    label={{ value: 'Método de Pago', position: 'insideBottom', offset: -5, fill: '#999' }}
+                                />
+                                <YAxis 
+                                    stroke="#999" 
+                                    style={{ fontSize: '12px' }}
+                                    label={{ value: 'Total (MXN)', angle: -90, position: 'insideLeft', fill: '#999' }}
+                                />
+                                <Tooltip 
+                                    contentStyle={{ backgroundColor: '#2A2A2A', border: '1px solid #444', color: '#F5F5F5' }}
+                                    formatter={(value: number) => `$${value.toFixed(2)}`}
+                                />
+                                <Bar dataKey="amount" fill="#F4C542" radius={[4, 4, 0, 0]}>
+                                    {chartData.map((_entry: any, index: number) => {
+                                        const colors = ['#F4C542', '#4CAF50', '#2196F3'];
+                                        return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                                    })}
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                    )}
                 </div>
             </div>
 

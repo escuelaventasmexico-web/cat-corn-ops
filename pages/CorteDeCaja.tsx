@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Wallet, RefreshCw, Eye } from 'lucide-react';
 import { fetchSessionsHistory } from '../lib/cashRegister';
-import type { CashSessionSummary } from '../lib/cashRegister';
+import type { CashSessionSummary, CashRegisterStatus } from '../lib/cashRegister';
 import { formatDateTimeMX } from '../lib/datetime';
 import { CashSessionDetailModal } from '../components/CashSessionDetailModal';
+import { CloseCashRegisterModal } from '../components/CloseCashRegisterModal';
 
 export const CorteDeCaja = () => {
   const [sessions, setSessions] = useState<CashSessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSession, setSelectedSession] = useState<CashSessionSummary | null>(null);
+  const [closeStatus, setCloseStatus] = useState<CashRegisterStatus | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -18,6 +20,28 @@ export const CorteDeCaja = () => {
   };
 
   useEffect(() => { load(); }, []);
+
+  /** Build a CashRegisterStatus from a summary so CloseCashRegisterModal can work */
+  const handleCloseRegister = (summary: CashSessionSummary) => {
+    setSelectedSession(null); // close detail modal
+    setCloseStatus({
+      session_id: summary.session_id,
+      opening_cash: summary.opening_cash,
+      cash_sales_total: summary.cash_sales_total,
+      card_sales_total: summary.card_sales_total,
+      withdrawals_total: summary.withdrawals_total,
+      current_cash: summary.expected_cash,
+      needs_withdrawal: false,
+      opened_at: summary.opened_at,
+      opened_by: summary.opened_by,
+      notes: summary.notes,
+    });
+  };
+
+  const handleCloseSuccess = () => {
+    setCloseStatus(null);
+    load(); // refresh list
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -154,6 +178,20 @@ export const CorteDeCaja = () => {
         <CashSessionDetailModal
           session={selectedSession}
           onClose={() => setSelectedSession(null)}
+          onCloseRegister={
+            selectedSession.status === 'open'
+              ? () => handleCloseRegister(selectedSession)
+              : undefined
+          }
+        />
+      )}
+
+      {/* Close cash register modal (triggered from detail) */}
+      {closeStatus && (
+        <CloseCashRegisterModal
+          status={closeStatus}
+          onClose={() => setCloseStatus(null)}
+          onSuccess={handleCloseSuccess}
         />
       )}
     </div>

@@ -12,20 +12,23 @@ import {
   ShoppingBag,
   Download,
   Loader2,
+  Lock,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
+import { supabase } from '../supabase';
 import type {
   CashSessionSummary,
   CashSessionSale,
   CashSessionWithdrawal,
 } from '../lib/cashRegister';
-import { fetchSessionSales, fetchSessionWithdrawals } from '../lib/cashRegister';
 import { formatDateTimeMX } from '../lib/datetime';
 
 interface Props {
   session: CashSessionSummary;
   onClose: () => void;
+  /** When provided, shows a "Cerrar caja" button for open sessions */
+  onCloseRegister?: () => void;
 }
 
 const normalizePaymentLabel = (raw: string): string => {
@@ -43,7 +46,7 @@ const paymentColor = (raw: string): string => {
   return 'text-cc-text-muted';
 };
 
-export const CashSessionDetailModal = ({ session: s, onClose }: Props) => {
+export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }: Props) => {
   const [sales, setSales] = useState<CashSessionSale[]>([]);
   const [withdrawals, setWithdrawals] = useState<CashSessionWithdrawal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,10 +58,71 @@ export const CashSessionDetailModal = ({ session: s, onClose }: Props) => {
     try {
       const fmtDate = (d: string | null) => (d ? formatDateTimeMX(d) : '');
 
+      /** Translate promotion_code to a readable label */
+      const promoLabel = (code: string | null): string => {
+        if (!code) return '';
+        const c = code.toUpperCase();
+        if (c.includes('INSTAGRAM') && c.includes('15')) return 'Instagram 15%';
+        if (c.includes('INSTAGRAM')) return 'Instagram';
+        // Generic: strip underscores and capitalise
+        return code.replace(/_/g, ' ').replace(/PROMO\s*/i, '').trim() || code;
+      };
+
+      /** Build a short product summary for a sale given its items */
+      const buildExcelProductSummary = (
+        items: { quantity: number; name: string }[],
+      ): string => {
+        if (!items || items.length === 0) return 'Venta';
+        const grouped: Record<string, number> = {};
+        for (const it of items) {
+          const n = it.name || 'Producto';
+          grouped[n] = (grouped[n] || 0) + it.quantity;
+        }
+        const entries = Object.entries(grouped);
+        if (entries.length === 1) {
+          const [name, qty] = entries[0];
+          return qty > 1 ? `${qty} × ${name}` : name;
+        }
+        const parts = entries.map(([name, qty]) => (qty > 1 ? `${qty} × ${name}` : name));
+        const full = parts.join(' + ');
+        if (full.length <= 60) return full;
+        return `${parts[0]} + ${entries.length - 1} más`;
+      };
+
+      /* ── Fetch sale_items with product names for all session sales ── */
+      let saleItemsMap: Record<string, { quantity: number; name: string }[]> = {};
+      if (supabase && sales.length > 0) {
+        try {
+          const saleIds = sales.map((sa) => sa.id);
+          const { data: siData } = await supabase
+            .from('sale_items')
+            .select('sale_id, quantity, products(name, flavor, size, grams)')
+            .in('sale_id', saleIds);
+          if (siData) {
+            for (const row of siData as any[]) {
+              const sid = String(row.sale_id);
+              if (!saleItemsMap[sid]) saleItemsMap[sid] = [];
+              const p = Array.isArray(row.products) ? row.products[0] : row.products;
+              const nameParts: string[] = [];
+              if (p?.flavor) nameParts.push(p.flavor);
+              if (p?.name) nameParts.push(p.name);
+              if (p?.size) nameParts.push(p.size);
+              if (p?.grams) nameParts.push(`${p.grams}g`);
+              saleItemsMap[sid].push({
+                quantity: Number(row.quantity ?? 1),
+                name: nameParts.length > 0 ? nameParts.join(' ') : (p?.name || 'Producto'),
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('[EXPORT] Could not fetch sale_items for Excel:', err);
+        }
+      }
+
       /* ── Hoja 1: Resumen ─────────────────────────────────── */
       const resumenData = [
         ['Campo', 'Valor'],
-        ['ID sesión', s.session_id],
+        ['ID sesión', resolvedSessionId || s.session_id],
         ['Estado', s.status === 'open' ? 'Abierta' : 'Cerrada'],
         ['Fecha apertura', fmtDate(s.opened_at)],
         ['Fecha cierre', fmtDate(s.closed_at)],
@@ -80,18 +144,16 @@ export const CashSessionDetailModal = ({ session: s, onClose }: Props) => {
       /* ── Hoja 2: Ventas ──────────────────────────────────── */
       const ventasRows = sales.map((sale) => ({
         'Fecha / hora': fmtDate(sale.created_at),
-        'ID venta': sale.id,
+        'Productos vendidos': buildExcelProductSummary(saleItemsMap[sale.id] || []),
         'Método de pago': normalizePaymentLabel(sale.payment_method),
+        'Promoción': promoLabel(sale.promotion_code),
+        'Descuento': sale.loyalty_discount_amount > 0 ? sale.loyalty_discount_amount : '',
         Total: sale.total,
-        'Cliente ID': sale.customer_id ?? '',
-        promotion_code: sale.promotion_code ?? '',
-        loyalty_reward_applied: sale.loyalty_reward_applied ? 'Sí' : 'No',
-        loyalty_discount_amount: sale.loyalty_discount_amount,
       }));
       const wsVentas = XLSX.utils.json_to_sheet(ventasRows);
       wsVentas['!cols'] = [
-        { wch: 22 }, { wch: 38 }, { wch: 14 }, { wch: 12 },
-        { wch: 38 }, { wch: 18 }, { wch: 22 }, { wch: 22 },
+        { wch: 22 }, { wch: 44 }, { wch: 16 }, { wch: 18 },
+        { wch: 12 }, { wch: 12 },
       ];
 
       /* ── Hoja 3: Retiros ─────────────────────────────────── */
@@ -135,23 +197,130 @@ export const CashSessionDetailModal = ({ session: s, onClose }: Props) => {
     }
   }, [loading, s, sales, withdrawals]);
 
+  // Resolve the real UUID — the view may expose it as 'id' or 'session_id'
+  const resolvedSessionId =
+    (s.session_id && s.session_id.length > 8 ? s.session_id : null)
+    ?? ((s as unknown as Record<string, unknown>).id
+      ? String((s as unknown as Record<string, unknown>).id)
+      : null);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       setLoading(true);
-      const [salesData, wdData] = await Promise.all([
-        fetchSessionSales(s.session_id),
-        fetchSessionWithdrawals(s.session_id),
-      ]);
+
+      console.log('[CORTE FIX] session recibido:', s);
+      console.log('[CORTE FIX] resolvedSessionId:', resolvedSessionId);
+
+      if (!resolvedSessionId) {
+        console.error('[CORTE FIX] No valid session id found', s);
+        setSales([]);
+        setWithdrawals([]);
+        setLoading(false);
+        return;
+      }
+
+      let loadedSales: CashSessionSale[] = [];
+      let loadedWithdrawals: CashSessionWithdrawal[] = [];
+
+      if (supabase) {
+        // ── Sales: query view directly ──────────────────────
+        try {
+          const { data: salesData, error: salesErr } = await supabase
+            .from('v_cash_register_session_sales')
+            .select('*')
+            .eq('session_id', resolvedSessionId);
+
+          console.log('[CORTE] sales view error:', salesErr?.message ?? 'none');
+          console.log('[CORTE] sales view data:', salesData?.length ?? 0, 'rows');
+
+          if (!salesErr && salesData) {
+            loadedSales = salesData.map((d: Record<string, unknown>) => ({
+              id: String(d.sale_id ?? d.id ?? ''),
+              created_at: String(d.created_at ?? ''),
+              payment_method: String(d.payment_method ?? ''),
+              total: Number(d.total ?? 0),
+              customer_id: d.customer_id ? String(d.customer_id) : null,
+              promotion_code: d.promotion_code ? String(d.promotion_code) : null,
+              loyalty_reward_applied: Boolean(d.loyalty_reward_applied),
+              loyalty_discount_amount: Number(d.loyalty_discount_amount ?? 0),
+            }));
+          } else {
+            // Fallback: query sales table directly
+            console.warn('[CORTE] Falling back to sales table');
+            const { data: fallback } = await supabase
+              .from('sales')
+              .select('id, created_at, payment_method, total, customer_id, promotion_code, loyalty_reward_applied, loyalty_discount_amount')
+              .eq('cash_session_id', resolvedSessionId);
+            if (fallback) {
+              loadedSales = fallback.map((d: Record<string, unknown>) => ({
+                id: String(d.id ?? ''),
+                created_at: String(d.created_at ?? ''),
+                payment_method: String(d.payment_method ?? ''),
+                total: Number(d.total ?? 0),
+                customer_id: d.customer_id ? String(d.customer_id) : null,
+                promotion_code: d.promotion_code ? String(d.promotion_code) : null,
+                loyalty_reward_applied: Boolean(d.loyalty_reward_applied),
+                loyalty_discount_amount: Number(d.loyalty_discount_amount ?? 0),
+              }));
+            }
+          }
+        } catch (err) {
+          console.error('[CORTE] Exception loading sales:', err);
+        }
+
+        // ── Withdrawals: query view directly ────────────────
+        try {
+          const { data: wdData, error: wdErr } = await supabase
+            .from('v_cash_register_session_withdrawals')
+            .select('*')
+            .eq('session_id', resolvedSessionId);
+
+          console.log('[CORTE] withdrawals view error:', wdErr?.message ?? 'none');
+          console.log('[CORTE] withdrawals view data:', wdData?.length ?? 0, 'rows');
+
+          if (!wdErr && wdData) {
+            loadedWithdrawals = wdData.map((d: Record<string, unknown>) => ({
+              id: String(d.withdrawal_id ?? d.id ?? ''),
+              withdrawn_at: String(d.withdrawn_at ?? ''),
+              amount: Number(d.amount ?? 0),
+              reason: String(d.reason ?? ''),
+              trigger_type: String(d.trigger_type ?? ''),
+              notes: d.notes ? String(d.notes) : null,
+            }));
+          } else {
+            // Fallback: query cash_withdrawals table directly
+            console.warn('[CORTE] Falling back to cash_withdrawals table');
+            const { data: fallback } = await supabase
+              .from('cash_withdrawals')
+              .select('id, withdrawn_at, amount, reason, trigger_type, notes')
+              .eq('session_id', resolvedSessionId);
+            if (fallback) {
+              loadedWithdrawals = fallback.map((d: Record<string, unknown>) => ({
+                id: String(d.id ?? ''),
+                withdrawn_at: String(d.withdrawn_at ?? ''),
+                amount: Number(d.amount ?? 0),
+                reason: String(d.reason ?? ''),
+                trigger_type: String(d.trigger_type ?? ''),
+                notes: d.notes ? String(d.notes) : null,
+              }));
+            }
+          }
+        } catch (err) {
+          console.error('[CORTE] Exception loading withdrawals:', err);
+        }
+      }
+
       if (!cancelled) {
-        setSales(salesData);
-        setWithdrawals(wdData);
+        console.log('[CORTE] Setting state — sales:', loadedSales.length, 'withdrawals:', loadedWithdrawals.length);
+        setSales(loadedSales);
+        setWithdrawals(loadedWithdrawals);
         setLoading(false);
       }
     };
     load();
     return () => { cancelled = true; };
-  }, [s.session_id]);
+  }, [resolvedSessionId]);
 
   const isOpen = s.status === 'open';
   const diff = s.difference;
@@ -170,7 +339,7 @@ export const CashSessionDetailModal = ({ session: s, onClose }: Props) => {
           <div>
             <h3 className="text-xl font-bold text-cc-cream mb-1">Detalle del Corte</h3>
             <div className="flex items-center gap-3 text-xs text-cc-text-muted flex-wrap">
-              <span className="font-mono">#{s.session_id.substring(0, 8).toUpperCase()}</span>
+              <span className="font-mono">#{(resolvedSessionId || '').substring(0, 8).toUpperCase()}</span>
               <span>•</span>
               {isOpen ? (
                 <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full">
@@ -192,6 +361,17 @@ export const CashSessionDetailModal = ({ session: s, onClose }: Props) => {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {isOpen && onCloseRegister && (
+              <button
+                onClick={onCloseRegister}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all
+                  bg-red-500/15 text-red-400 border border-red-500/30
+                  hover:bg-red-500/25 hover:border-red-500/50"
+              >
+                <Lock size={14} />
+                Cerrar caja
+              </button>
+            )}
             <button
               onClick={handleExportCashSessionExcel}
               disabled={loading || exporting}

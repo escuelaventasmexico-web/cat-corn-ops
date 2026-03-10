@@ -4,11 +4,17 @@ import { Receipt, X, CreditCard, Banknote, Download, Calendar, Filter } from 'lu
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { formatDateTimeMX } from '../lib/datetime';
 
+interface SaleItemPreview {
+  quantity: number;
+  products: { name: string } | null;
+}
+
 interface Sale {
   id: string;
   total: number;
   payment_method: string;
   created_at: string;
+  sale_items?: SaleItemPreview[];
 }
 
 interface SaleItem {
@@ -19,6 +25,8 @@ interface SaleItem {
   products: {
     name: string;
     size: string;
+    flavor: string | null;
+    grams: number | null;
   } | null;
 }
 
@@ -50,6 +58,37 @@ export const SalesHistory = () => {
     if (m.includes('efect') || m === 'cash') return 'cash';
     if (m.includes('tarj') || m.includes('card')) return 'card';
     return 'other';
+  };
+
+  /** Builds a short summary of product names for a sale card */
+  const buildProductSummary = (items?: SaleItemPreview[]): string => {
+    if (!items || items.length === 0) return 'Venta';
+    const grouped: Record<string, number> = {};
+    for (const item of items) {
+      const name = item.products?.name || 'Producto';
+      grouped[name] = (grouped[name] || 0) + item.quantity;
+    }
+    const entries = Object.entries(grouped);
+    if (entries.length === 1) {
+      const [name, qty] = entries[0];
+      return qty > 1 ? `${qty} × ${name}` : name;
+    }
+    const parts = entries.map(([name, qty]) => qty > 1 ? `${qty} × ${name}` : name);
+    const full = parts.join(' + ');
+    if (full.length <= 60) return full;
+    const first = parts[0];
+    const remaining = entries.length - 1;
+    return `${first} + ${remaining} más`;
+  };
+
+  /** Builds a readable description line from product fields */
+  const buildProductDescription = (p: SaleItem['products']): string => {
+    if (!p) return '';
+    const parts: string[] = [];
+    if (p.flavor) parts.push(p.flavor);
+    if (p.size) parts.push(p.size);
+    if (p.grams) parts.push(`${p.grams}g`);
+    return parts.join(' · ');
   };
 
   useEffect(() => {
@@ -99,7 +138,7 @@ export const SalesHistory = () => {
       
       let query = supabase
         .from('sales')
-        .select('id, total, payment_method, created_at')
+        .select('id, total, payment_method, created_at, sale_items(quantity, products(name))')
         .order('created_at', { ascending: false });
 
       // Si hay alguna fecha seleccionada, aplica filtros
@@ -120,8 +159,18 @@ export const SalesHistory = () => {
       if (error) throw error;
       console.log('SALES COUNT', data?.length);
       console.log('[SALES] raw sales', data);
-      console.log('[SALES] payment methods', data?.map(s => s.payment_method));
-      setSales(data || []);
+      console.log('[SALES] payment methods', data?.map((s: any) => s.payment_method));
+      const salesData: Sale[] = (data || []).map((s: any) => ({
+        id: s.id,
+        total: s.total,
+        payment_method: s.payment_method,
+        created_at: s.created_at,
+        sale_items: (s.sale_items || []).map((si: any) => ({
+          quantity: si.quantity,
+          products: Array.isArray(si.products) ? (si.products[0] || null) : (si.products || null)
+        }))
+      }));
+      setSales(salesData);
     } catch (error) {
       console.error('Error loading sales:', error);
     } finally {
@@ -182,7 +231,9 @@ export const SalesHistory = () => {
           price,
           products (
             name,
-            size
+            size,
+            flavor,
+            grams
           )
         `)
         .eq('sale_id', sale.id);
@@ -190,15 +241,23 @@ export const SalesHistory = () => {
       if (error) throw error;
       
       // Transform data to match SaleItem type
-      const items: SaleItem[] = (data || []).map(item => ({
-        id: item.id,
-        product_id: item.product_id,
-        quantity: item.quantity,
-        price: item.price,
-        products: Array.isArray(item.products) && item.products.length > 0
+      const items: SaleItem[] = (data || []).map((item: any) => {
+        const raw = Array.isArray(item.products) && item.products.length > 0
           ? item.products[0]
-          : null
-      }));
+          : item.products;
+        return {
+          id: item.id,
+          product_id: item.product_id,
+          quantity: item.quantity,
+          price: item.price,
+          products: raw ? {
+            name: raw.name || '',
+            size: raw.size || '',
+            flavor: raw.flavor || null,
+            grams: raw.grams || null,
+          } : null
+        };
+      });
       
       setSaleItems(items);
     } catch (error) {
@@ -486,17 +545,21 @@ export const SalesHistory = () => {
                     <Receipt size={24} className="text-cc-primary" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-mono text-sm text-cc-text-muted">
+                    <div className="font-semibold text-cc-text-main mb-1 line-clamp-1">
+                      {buildProductSummary(sale.sale_items)}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-cc-text-muted">
                         #{sale.id.substring(0, 8).toUpperCase()}
                       </span>
-                      <span className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-white/5">
+                      <span className="text-cc-text-muted text-xs">•</span>
+                      <span className="text-xs text-cc-text-muted">
+                        {formatDateTimeMX(sale.created_at)}
+                      </span>
+                      <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-white/5">
                         {getPaymentIcon(sale.payment_method)}
                         <span className="text-cc-text-muted">{getPaymentLabel(sale.payment_method)}</span>
                       </span>
-                    </div>
-                    <div className="text-sm text-cc-text-muted">
-                      {formatDateTimeMX(sale.created_at)}
                     </div>
                   </div>
                 </div>
@@ -603,19 +666,24 @@ export const SalesHistory = () => {
                 <div className="space-y-3">
                   {saleItems.map((item) => {
                     const itemTotal = Number(item.price) * Number(item.quantity);
+                    const description = buildProductDescription(item.products);
                     return (
                       <div
                         key={item.id}
-                        className="flex justify-between items-center p-4 bg-black/20 rounded-lg border border-white/5"
+                        className="p-4 bg-black/20 rounded-lg border border-white/5 space-y-3"
                       >
-                        <div className="flex-1">
-                          <div className="font-medium text-cc-text-main">
+                        {/* Product name + description */}
+                        <div>
+                          <div className="font-semibold text-cc-text-main">
                             {item.products?.name || 'Producto'}
                           </div>
-                          <div className="text-xs text-cc-text-muted">
-                            {item.products?.size || ''}
-                          </div>
+                          {description && (
+                            <div className="text-xs text-cc-text-muted mt-0.5">
+                              {description}
+                            </div>
+                          )}
                         </div>
+                        {/* Quantity / Price / Subtotal row */}
                         <div className="flex items-center gap-6 text-sm">
                           <div className="text-center">
                             <div className="text-cc-text-muted text-xs">Cantidad</div>
@@ -625,7 +693,7 @@ export const SalesHistory = () => {
                             <div className="text-cc-text-muted text-xs">Precio Unit.</div>
                             <div className="font-bold text-cc-text-main">${Number(item.price).toFixed(2)}</div>
                           </div>
-                          <div className="text-center">
+                          <div className="ml-auto text-center">
                             <div className="text-cc-text-muted text-xs">Subtotal</div>
                             <div className="font-bold text-cc-primary">${itemTotal.toFixed(2)}</div>
                           </div>
