@@ -21,7 +21,10 @@ import {
   ShoppingCart,
   TrendingUp,
   Popcorn,
+  Download,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { saveAs } from 'file-saver';
 import { supabase } from '../supabase';
 import type { Product } from '../supabase';
 import { getOpenSessionId } from '../lib/cashRegister';
@@ -333,6 +336,81 @@ export const Pedidos = () => {
     }
   };
 
+  /* ── Export orders to Excel ── */
+  const handleExportOrdersExcel = useCallback(() => {
+    if (orders.length === 0) {
+      alert('No hay pedidos para exportar');
+      return;
+    }
+
+    const statusLabel = (s: OrderStatus) => STATUS_CFG[s]?.label ?? s;
+
+    /* ── Sheet 1: Pedidos Detalle ── */
+    const detailRows = orders.map((o) => ({
+      'Fecha de entrega': fmtDateShort(o.delivery_date),
+      'Cliente': o.customer_name,
+      'Teléfono': o.customer_phone || '—',
+      'Tipo de palomita': o.product_type || '—',
+      'Presentación / tamaño': o.products?.name || '—',
+      'Cantidad': o.quantity,
+      'Notas': o.notes || '—',
+      'Estado': statusLabel(o.status),
+    }));
+
+    const wsDetail = XLSX.utils.json_to_sheet(detailRows);
+    wsDetail['!cols'] = [
+      { wch: 16 }, { wch: 20 }, { wch: 14 }, { wch: 14 },
+      { wch: 26 }, { wch: 10 }, { wch: 30 }, { wch: 12 },
+    ];
+
+    /* ── Sheet 2: Resumen Producción ── */
+    // Group by product_type → product name → sum quantity
+    const grouped: Record<string, Record<string, number>> = {};
+    for (const o of orders) {
+      if (o.status === 'cancelled') continue;
+      const tipo = o.product_type || 'Sin tipo';
+      const pres = o.products?.name || '(sin presentación)';
+      if (!grouped[tipo]) grouped[tipo] = {};
+      grouped[tipo][pres] = (grouped[tipo][pres] || 0) + o.quantity;
+    }
+
+    const summaryAoa: (string | number)[][] = [
+      ['Tipo', 'Presentación', 'Cantidad'],
+    ];
+    let grandTotal = 0;
+    for (const tipo of Object.keys(grouped).sort()) {
+      let tipoTotal = 0;
+      const entries = Object.entries(grouped[tipo]).sort((a, b) => a[0].localeCompare(b[0]));
+      for (const [pres, qty] of entries) {
+        summaryAoa.push([tipo, pres, qty]);
+        tipoTotal += qty;
+      }
+      summaryAoa.push([tipo, 'SUBTOTAL', tipoTotal]);
+      summaryAoa.push([]);
+      grandTotal += tipoTotal;
+    }
+    summaryAoa.push(['', 'TOTAL GENERAL', grandTotal]);
+
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryAoa);
+    wsSummary['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 12 }];
+
+    /* ── Workbook ── */
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsDetail, 'Pedidos Detalle');
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen Producción');
+
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const datePart = selectedDate || todayISO();
+    const fileName = selectedDate
+      ? `pedidos_${datePart}.xlsx`
+      : `pedidos_proximos_${datePart}.xlsx`;
+
+    saveAs(
+      new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      fileName,
+    );
+  }, [orders, selectedDate]);
+
   /* ── Computed: total for checkout modal ── */
   const checkoutTotal = useMemo(() => {
     if (!orderToCheckout) return 0;
@@ -533,6 +611,15 @@ export const Pedidos = () => {
                 <X size={16} className="text-cc-text-muted hover:text-cc-text-main" />
               </button>
             )}
+            <button
+              onClick={handleExportOrdersExcel}
+              disabled={orders.length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-cc-primary text-cc-bg font-bold rounded-lg text-xs hover:bg-cc-primary/90 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Exportar pedidos a Excel"
+            >
+              <Download size={14} />
+              Excel
+            </button>
           </div>
         </div>
 
