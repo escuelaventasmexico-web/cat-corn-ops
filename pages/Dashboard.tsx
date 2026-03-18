@@ -21,6 +21,8 @@ export const Dashboard = () => {
     percentageChange: '—'
   });
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
+  const [topMonthProducts, setTopMonthProducts] = useState<TopProduct[]>([]);
+  const [topMode, setTopMode] = useState<'day' | 'month'>('day');
   const [chartData, setChartData] = useState<any[]>([]);
 
   useEffect(() => {
@@ -166,6 +168,68 @@ export const Dashboard = () => {
           .slice(0, 4);
       }
 
+      // 5. Top Products This Month
+      const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+      const monthStartStr = monthStart.toISOString();
+
+      const { data: monthSales } = await supabase
+        .from('sales')
+        .select('id')
+        .gte('created_at', monthStartStr)
+        .lt('created_at', tomorrowStr);
+
+      const monthSaleIds = monthSales?.map(s => s.id) || [];
+      let topMonthList: TopProduct[] = [];
+
+      if (monthSaleIds.length > 0) {
+        const { data: monthItems } = await supabase
+          .from('sale_items')
+          .select(`
+            quantity,
+            price,
+            product_id,
+            products (
+              id,
+              name,
+              size,
+              flavor
+            )
+          `)
+          .in('sale_id', monthSaleIds);
+
+        const monthMap = new Map<string, { name: string; size: string; flavor: string; revenue: number; units: number }>();
+
+        if (monthItems) {
+          for (const item of monthItems) {
+            if (!item.products) continue;
+            const productId = item.product_id;
+            const revenue = Number(item.price) * Number(item.quantity);
+            const units = Number(item.quantity);
+            const prod = Array.isArray(item.products) ? item.products[0] : item.products;
+            if (!prod) continue;
+
+            if (monthMap.has(productId)) {
+              const existing = monthMap.get(productId)!;
+              existing.revenue += revenue;
+              existing.units += units;
+            } else {
+              monthMap.set(productId, {
+                name: prod.name || '',
+                size: prod.size || '',
+                flavor: prod.flavor || '',
+                revenue,
+                units
+              });
+            }
+          }
+        }
+
+        topMonthList = Array.from(monthMap.entries())
+          .map(([id, data]) => ({ id, ...data }))
+          .sort((a, b) => b.units - a.units || b.revenue - a.revenue)
+          .slice(0, 6);
+      }
+
       setStats({
         salesToday: totalToday,
         ordersToday,
@@ -173,6 +237,7 @@ export const Dashboard = () => {
         percentageChange
       });
       setTopProducts(topProductsList);
+      setTopMonthProducts(topMonthList);
       setChartData(paymentMethodChart);
     } catch (error) {
       console.error('Error loading dashboard data:', error);
@@ -299,14 +364,45 @@ export const Dashboard = () => {
             </div>
 
             <div className="bg-cc-surface p-6 rounded-xl border border-white/5">
-                <h3 className="text-lg font-bold text-cc-cream mb-4">Top Productos</h3>
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-cc-cream">Top Productos</h3>
+                    <div className="flex bg-white/5 rounded-lg p-0.5">
+                        <button
+                            onClick={() => setTopMode('day')}
+                            className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+                                topMode === 'day'
+                                    ? 'bg-cc-primary text-cc-bg'
+                                    : 'text-cc-text-muted hover:text-cc-cream'
+                            }`}
+                        >
+                            Hoy
+                        </button>
+                        <button
+                            onClick={() => setTopMode('month')}
+                            className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${
+                                topMode === 'month'
+                                    ? 'bg-cc-primary text-cc-bg'
+                                    : 'text-cc-text-muted hover:text-cc-cream'
+                            }`}
+                        >
+                            Mes
+                        </button>
+                    </div>
+                </div>
+                {topMode === 'month' && (
+                    <p className="text-xs text-cc-text-muted mb-3">
+                        {new Date().toLocaleDateString('es-MX', { month: 'long', year: 'numeric' }).replace(/^./, c => c.toUpperCase())}
+                    </p>
+                )}
                 <div className="space-y-4">
                     {loading ? (
                         <div className="text-cc-text-muted text-center py-8">Cargando...</div>
-                    ) : topProducts.length === 0 ? (
-                        <div className="text-cc-text-muted text-center py-8">Sin ventas hoy</div>
+                    ) : (topMode === 'day' ? topProducts : topMonthProducts).length === 0 ? (
+                        <div className="text-cc-text-muted text-center py-8">
+                            {topMode === 'day' ? 'Sin ventas hoy' : 'Sin ventas este mes'}
+                        </div>
                     ) : (
-                        topProducts.map((product, index) => (
+                        (topMode === 'day' ? topProducts : topMonthProducts).map((product, index) => (
                             <div key={product.id} className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded bg-cc-primary/20 flex items-center justify-center text-cc-primary font-bold">
