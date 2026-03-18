@@ -20,7 +20,8 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
   const [error, setError] = useState<string | null>(null);
   const [closeResult, setCloseResult] = useState<CloseResult | null>(null);
 
-  const expectedCash = status.current_cash;
+  // Expected = cash sales + card sales − withdrawals (fondo NOT included)
+  const expectedCash = status.cash_sales_total + status.card_sales_total - status.withdrawals_total;
 
   const handleSubmit = async () => {
     if (!status.session_id) return;

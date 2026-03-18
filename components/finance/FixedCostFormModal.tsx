@@ -60,9 +60,9 @@ export const FixedCostFormModal = ({ fixedCost, onClose }: FixedCostFormModalPro
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-cc-surface rounded-2xl border border-white/10 max-w-lg w-full overflow-hidden shadow-2xl">
-        <div className="p-6 border-b border-white/10 flex justify-between items-center bg-white/5">
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4">
+      <div className="bg-[#2A2A2A] rounded-2xl border border-white/10 max-w-lg w-full overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.8)]">
+        <div className="p-6 border-b border-white/10 flex justify-between items-center bg-[#242424]">
           <h3 className="text-2xl font-bold text-cc-cream">
             {fixedCost ? 'Editar Gasto Fijo' : 'Nuevo Gasto Fijo'}
           </h3>
@@ -78,7 +78,7 @@ export const FixedCostFormModal = ({ fixedCost, onClose }: FixedCostFormModalPro
               type="text"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
+              className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
               placeholder="Ej: Renta, Luz, Internet..."
               required
             />
@@ -92,7 +92,7 @@ export const FixedCostFormModal = ({ fixedCost, onClose }: FixedCostFormModalPro
               min="0"
               value={formData.amount_mxn}
               onChange={(e) => setFormData({ ...formData, amount_mxn: parseFloat(e.target.value) || 0 })}
-              className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
+              className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
               required
             />
           </div>
@@ -103,7 +103,7 @@ export const FixedCostFormModal = ({ fixedCost, onClose }: FixedCostFormModalPro
                 type="checkbox"
                 checked={formData.active}
                 onChange={(e) => setFormData({ ...formData, active: e.target.checked })}
-                className="w-4 h-4 rounded border-white/10 bg-black/20 text-cc-primary focus:ring-2 focus:ring-cc-primary"
+                className="w-4 h-4 rounded border-white/10 bg-[#1C1A1A] text-cc-primary focus:ring-2 focus:ring-cc-primary"
               />
               <span className="text-sm text-cc-text-muted">Activo</span>
             </label>
@@ -114,7 +114,7 @@ export const FixedCostFormModal = ({ fixedCost, onClose }: FixedCostFormModalPro
             <textarea
               value={formData.notes}
               onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-              className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
+              className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
               rows={3}
               placeholder="Información adicional..."
             />
@@ -124,7 +124,7 @@ export const FixedCostFormModal = ({ fixedCost, onClose }: FixedCostFormModalPro
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-cc-text-muted transition-colors"
+              className="px-4 py-2 bg-[#363636] hover:bg-[#404040] border border-white/10 rounded-lg text-cc-text-muted transition-colors"
             >
               Cancelar
             </button>

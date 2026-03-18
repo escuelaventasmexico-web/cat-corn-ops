@@ -29,7 +29,7 @@ export interface CashSessionSummary {
   card_sales_total: number;
   /** Calculated from actual cash_withdrawals rows */
   withdrawals_total: number;
-  /** opening_cash + cash_sales - withdrawals */
+  /** cash_sales + card_sales - withdrawals (fondo NOT included) */
   expected_cash: number;
   counted_cash: number | null;
   /** counted_cash - expected_cash */
@@ -365,7 +365,8 @@ export async function fetchSessionsHistory(): Promise<CashSessionSummary[]> {
     const cardSales = Number(d.calculated_card_sales ?? d.card_sales_total ?? 0);
     const wdTotal = Number(d.calculated_withdrawals_total ?? d.withdrawals_total ?? 0);
     const openingCash = Number(d.opening_cash ?? 0);
-    const expectedCash = Number(d.calculated_expected_cash_on_hand ?? d.expected_cash ?? (openingCash + cashSales - wdTotal));
+    // expected = cash sales + card sales − withdrawals (fondo NOT included)
+    const expectedCash = Number(d.calculated_expected_cash_on_hand ?? d.expected_cash ?? (cashSales + cardSales - wdTotal));
     const countedCash = d.counted_cash != null ? Number(d.counted_cash) : null;
     const diff = d.calculated_cash_difference != null
       ? Number(d.calculated_cash_difference)

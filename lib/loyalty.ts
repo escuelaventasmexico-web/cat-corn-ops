@@ -56,7 +56,7 @@ export async function createCustomerRecord(
   if (!supabase) throw new Error('Supabase not configured');
   const { data, error } = await supabase
     .from('customers')
-    .insert({ first_name, last_name, phone })
+    .insert({ first_name, last_name, phone, stamps: 1, reward_available: false })
     .select()
     .single();
   if (error) throw error;

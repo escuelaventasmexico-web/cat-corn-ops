@@ -22,6 +22,7 @@ export interface FinanceDocument {
   file_size_bytes: number | null;
   storage_bucket: string;
   storage_path: string;
+  document_kind: string | null;
   linked_expense_id: string | null;
   linked_fixed_cost_id: string | null;
   tags: string[] | null;

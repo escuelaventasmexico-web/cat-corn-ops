@@ -30,7 +30,8 @@ export const CorteDeCaja = () => {
       cash_sales_total: summary.cash_sales_total,
       card_sales_total: summary.card_sales_total,
       withdrawals_total: summary.withdrawals_total,
-      current_cash: summary.expected_cash,
+      // current_cash = what's physically in register (for status panel display only)
+      current_cash: summary.opening_cash + summary.cash_sales_total - summary.withdrawals_total,
       needs_withdrawal: false,
       opened_at: summary.opened_at,
       opened_by: summary.opened_by,

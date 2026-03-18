@@ -791,12 +791,12 @@ export const POS = () => {
                 </div>
                 <div className="flex items-center gap-3 mt-0.5">
                   <span className="text-xs text-cc-text-muted">{customer.phone}</span>
-                  <span className="text-xs text-cc-text-muted">Compras: <span className="font-bold text-cc-primary">{customer.stamps}</span>/3</span>
-                  {customer.reward_available && (
-                    <span className="flex items-center gap-1 text-[10px] font-bold bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full">
-                      <Gift size={10} /> Reward
-                    </span>
-                  )}
+                  {customer.reward_available
+                    ? <span className="flex items-center gap-1 text-[10px] font-bold bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full">
+                        <Gift size={10} /> Reward lista
+                      </span>
+                    : <span className="text-xs text-cc-text-muted">Compras: <span className="font-bold text-cc-primary">{customer.stamps}</span>/3</span>
+                  }
                 </div>
               </div>
               <button onClick={clearCustomer} className="text-xs text-cc-text-muted hover:text-red-400 transition-colors p-1">
@@ -1209,7 +1209,7 @@ export const POS = () => {
                   <thead>
                     <tr className="text-cc-text-muted border-b border-white/10">
                       <th className="text-left py-1.5 font-medium">Nombre</th>
-                      <th className="text-left py-1.5 font-medium">Tel\u00e9fono</th>
+                      <th className="text-left py-1.5 font-medium">Teléfono</th>
                       <th className="text-center py-1.5 font-medium">Stamps</th>
                       <th className="text-center py-1.5 font-medium">Reward</th>
                       <th className="py-1.5"></th>
@@ -1220,10 +1220,14 @@ export const POS = () => {
                       <tr key={c.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                         <td className="py-2 text-cc-text-main">{c.first_name} {c.last_name}</td>
                         <td className="py-2 text-cc-text-muted">{c.phone}</td>
-                        <td className="py-2 text-center"><span className="font-bold text-cc-primary">{c.stamps}</span>/3</td>
                         <td className="py-2 text-center">
                           {c.reward_available
-                            ? <span className="text-green-400 font-bold">S\u00ed</span>
+                            ? <span className="font-bold text-green-400">3/3 ✓</span>
+                            : <span><span className="font-bold text-cc-primary">{c.stamps}</span>/3</span>}
+                        </td>
+                        <td className="py-2 text-center">
+                          {c.reward_available
+                            ? <span className="text-green-400 font-bold">Sí</span>
                             : <span className="text-cc-text-muted">No</span>}
                         </td>
                         <td className="py-2 text-right">
