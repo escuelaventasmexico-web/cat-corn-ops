@@ -394,10 +394,56 @@ export const Pedidos = () => {
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryAoa);
     wsSummary['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 12 }];
 
+    /* ── Sheet 3: Producción por Sabor ── */
+    const flavorMap = new Map<string, number>(); // key = "producto||sabor"
+    for (const o of orders) {
+      if (o.status === 'cancelled') continue;
+      const producto = o.products?.name || '(sin presentación)';
+      const rawNotes = (o.notes ?? '').trim();
+      const notesEmpty = !rawNotes || rawNotes === '—';
+
+      let sabor: string;
+      if (o.product_type === 'Sabores') {
+        sabor = notesEmpty ? 'Sabores (sin especificar)' : rawNotes;
+      } else if (!notesEmpty) {
+        // Nota presente en Salada/Caramelo → usar nota como sabor específico
+        sabor = rawNotes;
+      } else {
+        // Sin nota → el sabor es el tipo mismo
+        sabor = o.product_type || 'Sin tipo';
+      }
+      // Capitalize first letter
+      sabor = sabor.charAt(0).toUpperCase() + sabor.slice(1);
+
+      const key = `${producto}||${sabor}`;
+      flavorMap.set(key, (flavorMap.get(key) || 0) + o.quantity);
+    }
+
+    const flavorAoa: (string | number)[][] = [
+      ['Producto', 'Sabor', 'Cantidad'],
+    ];
+    const sortedFlavors = Array.from(flavorMap.entries()).sort((a, b) => {
+      const [pA, sA] = a[0].split('||');
+      const [pB, sB] = b[0].split('||');
+      return pA.localeCompare(pB) || sA.localeCompare(sB);
+    });
+    let flavorGrandTotal = 0;
+    for (const [key, qty] of sortedFlavors) {
+      const [producto, sabor] = key.split('||');
+      flavorAoa.push([producto, sabor, qty]);
+      flavorGrandTotal += qty;
+    }
+    flavorAoa.push([]);
+    flavorAoa.push(['', 'TOTAL', flavorGrandTotal]);
+
+    const wsFlavor = XLSX.utils.aoa_to_sheet(flavorAoa);
+    wsFlavor['!cols'] = [{ wch: 28 }, { wch: 24 }, { wch: 12 }];
+
     /* ── Workbook ── */
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, wsDetail, 'Pedidos Detalle');
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen Producción');
+    XLSX.utils.book_append_sheet(wb, wsFlavor, 'Producción por Sabor');
 
     const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     const datePart = selectedDate || todayISO();

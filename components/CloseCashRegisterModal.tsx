@@ -33,11 +33,12 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
         countedCash,
         notes.trim() || undefined,
       );
-      // If the RPC returned zeroed-out data, use our local knowledge
+      // Always use our local expectedCash — the RPC may still have the old
+      // formula that includes opening_cash (fondo) in expected.
       const finalResult: CloseResult = {
-        expected_cash: result.expected_cash || expectedCash,
+        expected_cash: expectedCash,
         counted_cash: result.counted_cash || countedCash,
-        difference: result.difference !== 0 ? result.difference : (countedCash - expectedCash),
+        difference: countedCash - expectedCash,
       };
       setCloseResult(finalResult);
     } catch (err: unknown) {

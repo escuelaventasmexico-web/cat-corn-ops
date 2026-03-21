@@ -366,15 +366,11 @@ export async function fetchSessionsHistory(): Promise<CashSessionSummary[]> {
     const wdTotal = Number(d.calculated_withdrawals_total ?? d.withdrawals_total ?? 0);
     const openingCash = Number(d.opening_cash ?? 0);
     // expected = cash sales + card sales − withdrawals (fondo NOT included)
-    const expectedCash = Number(d.calculated_expected_cash_on_hand ?? d.expected_cash ?? (cashSales + cardSales - wdTotal));
+    // Always compute in JS — the DB view may still have the old formula that includes opening_cash
+    const expectedCash = cashSales + cardSales - wdTotal;
     const countedCash = d.counted_cash != null ? Number(d.counted_cash) : null;
-    const diff = d.calculated_cash_difference != null
-      ? Number(d.calculated_cash_difference)
-      : d.difference != null
-        ? Number(d.difference)
-        : countedCash != null
-          ? countedCash - expectedCash
-          : null;
+    // Always compute difference from our JS expected — DB columns may have old formula
+    const diff = countedCash != null ? countedCash - expectedCash : null;
 
     return {
       session_id: String(d.session_id ?? d.id ?? ''),
