@@ -464,6 +464,19 @@ export const Pedidos = () => {
     return price * orderToCheckout.quantity;
   }, [orderToCheckout]);
 
+  /* ── Computed: economic summary of visible orders ── */
+  const economicSummary = useMemo(() => {
+    let totalOrders = 0;
+    let totalPieces = 0;
+    let totalAmount = 0;
+    for (const o of orders) {
+      totalOrders += 1;
+      totalPieces += o.quantity;
+      totalAmount += (o.products?.price ?? 0) * o.quantity;
+    }
+    return { totalOrders, totalPieces, totalAmount };
+  }, [orders]);
+
   /* ── Render ───────────────────────────────────────────────────────────── */
   return (
     <div className="space-y-6">
@@ -760,6 +773,35 @@ export const Pedidos = () => {
           </div>
         )}
       </div>
+
+      {/* ── Economic summary of visible orders ── */}
+      {orders.length > 0 && (
+        <div className="bg-cc-surface border border-white/10 rounded-2xl p-5">
+          <h2 className="text-xs font-bold text-cc-text-muted uppercase tracking-wide flex items-center gap-2 mb-3">
+            <Banknote size={14} className="text-green-400" /> Resumen económico{selectedDate ? ` — ${new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })}` : ' — Próximos'}
+          </h2>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="px-4 py-3 bg-black/30 rounded-lg border border-white/5">
+              <div className="text-[10px] text-cc-text-muted uppercase mb-0.5 flex items-center gap-1">
+                <ClipboardList size={12} /> Total de pedidos
+              </div>
+              <div className="text-2xl font-bold text-cc-primary">{economicSummary.totalOrders}</div>
+            </div>
+            <div className="px-4 py-3 bg-black/30 rounded-lg border border-white/5">
+              <div className="text-[10px] text-cc-text-muted uppercase mb-0.5 flex items-center gap-1">
+                <Package size={12} /> Piezas totales
+              </div>
+              <div className="text-2xl font-bold text-cc-cream">{economicSummary.totalPieces}</div>
+            </div>
+            <div className="px-4 py-3 bg-black/30 rounded-lg border border-white/5">
+              <div className="text-[10px] text-cc-text-muted uppercase mb-0.5 flex items-center gap-1">
+                <Banknote size={12} /> Monto total estimado
+              </div>
+              <div className="text-2xl font-bold text-green-400">${economicSummary.totalAmount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Checkout order modal ── */}
       {orderToCheckout && (
