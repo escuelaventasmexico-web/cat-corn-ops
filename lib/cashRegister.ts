@@ -151,7 +151,7 @@ export async function fetchCashStatus(): Promise<CashRegisterStatus> {
   // Aggregate sales for this session
   const { data: salesRows } = await supabase
     .from('sales')
-    .select('payment_method, total')
+    .select('payment_method, total, cash_amount, card_amount')
     .eq('cash_session_id', sessionId);
 
   let cashSalesTotal = 0;
@@ -159,9 +159,19 @@ export async function fetchCashStatus(): Promise<CashRegisterStatus> {
   for (const sale of salesRows || []) {
     const method = String(sale.payment_method ?? '').toUpperCase();
     const amount = Number(sale.total ?? 0);
-    if (method === 'CASH') cashSalesTotal += amount;
-    else if (method === 'CARD') cardSalesTotal += amount;
-    else if (method === 'MIXED') cashSalesTotal += amount; // physical cash received
+    const cashAmt = sale.cash_amount != null ? Number(sale.cash_amount) : null;
+    const cardAmt = sale.card_amount != null ? Number(sale.card_amount) : null;
+    if (method === 'MIXED' && cashAmt != null && cardAmt != null) {
+      cashSalesTotal += cashAmt;
+      cardSalesTotal += cardAmt;
+    } else if (method === 'CASH') {
+      cashSalesTotal += amount;
+    } else if (method === 'CARD') {
+      cardSalesTotal += amount;
+    } else {
+      // Legacy MIXED without split columns — attribute to cash
+      cashSalesTotal += amount;
+    }
   }
 
   // Aggregate withdrawals

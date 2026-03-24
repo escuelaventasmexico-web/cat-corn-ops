@@ -43,9 +43,9 @@ export const POS = () => {
   const [customersListError, setCustomersListError] = useState<string | null>(null);
   const [customersListFilter, setCustomersListFilter] = useState('');
 
-  // Cash payment state
-  const [showCashInput, setShowCashInput] = useState(false);
-  const [cashReceived, setCashReceived] = useState<number>(0);
+  // Payment input state
+  const [cashInput, setCashInput] = useState<number>(0);
+  const [cardInput, setCardInput] = useState<number>(0);
 
   // Instagram promo state
   const [instagramPromoActive, setInstagramPromoActive] = useState(false);
@@ -274,23 +274,32 @@ export const POS = () => {
     };
   }, [instagramPromoActive, cart]);
 
-  // Cash payment derived values
-  const changeAmount = cashReceived - cartTotal;
-  const isCashSufficient = cashReceived >= cartTotal;
+  // Split-payment derived values
+  const paymentTotal = cashInput + cardInput;
+  const paymentRemaining = cartTotal - paymentTotal;
+  const changeAmount = paymentTotal > cartTotal ? paymentTotal - cartTotal : 0;
+  const isPaymentSufficient = paymentTotal >= cartTotal && cartTotal > 0;
 
   // Promo/loyalty mutual exclusion
   const loyaltyBlocked = !!activePromoCode || hasPromoApplied || instagramPromoActive;
   const promoBlocked = hasRewardApplied || instagramPromoActive;
   const instagramBlocked = hasRewardApplied || !!activePromoCode || hasPromoApplied;
 
-  const handleCheckout = async (method: 'cash' | 'card' | 'mixed') => {
+  const handleCheckout = async () => {
     if (cart.length === 0 || !supabase) return;
+    if (!isPaymentSufficient) return;
 
     // Block if no cash register is open
     if (!cashRegisterOpen) {
       alert('Debes abrir una caja antes de registrar ventas.');
       return;
     }
+
+    // Determine actual amounts (change only applies to cash)
+    const effectiveCash = Math.min(cashInput, cartTotal - cardInput);
+    const effectiveCard = cardInput;
+    const method = effectiveCash > 0 && effectiveCard > 0 ? 'MIXED'
+      : effectiveCard > 0 ? 'CARD' : 'CASH';
 
     setProcessing(true);
 
@@ -304,12 +313,13 @@ export const POS = () => {
 
         const rewardApplied = cart.some(i => i.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM');
         const discountTotal = cart.reduce((s, i) => s + (i.discount_amount || 0), 0);
-        const paymentMethod = method === 'cash' ? 'CASH' : method === 'card' ? 'CARD' : 'MIXED';
 
         // 1. Insert sale (linked to cash session)
         const salePayload: Record<string, unknown> = {
             total: cartTotal,
-            payment_method: paymentMethod,
+            payment_method: method,
+            cash_amount: effectiveCash,
+            card_amount: effectiveCard,
             cashier_id: user.id,
             customer_id: customer?.id || null,
             loyalty_reward_applied: rewardApplied,
@@ -364,8 +374,8 @@ export const POS = () => {
         setCart([]);
         setActivePromoCode(null);
         setInstagramPromoActive(false);
-        setShowCashInput(false);
-        setCashReceived(0);
+        setCashInput(0);
+        setCardInput(0);
         alert('¡Venta realizada con éxito! Ticket #' + sale.id.slice(0, 8));
 
     } catch (err: any) {
@@ -947,108 +957,127 @@ export const POS = () => {
               )}
             </div>
 
-            {/* Payment method selection */}
+            {/* Payment inputs */}
             {!cashRegisterOpen && !cashLoading && (
               <div className="text-center py-2 mb-2">
                 <p className="text-xs text-red-400 font-medium">Abre una caja para cobrar</p>
               </div>
             )}
-            {!showCashInput ? (
+            <div className="space-y-3">
+              {/* Cash + Card inputs */}
               <div className="grid grid-cols-2 gap-3">
-                <button 
-                    onClick={() => { setShowCashInput(true); setCashReceived(0); }}
-                    disabled={processing || cart.length === 0 || !cashRegisterOpen}
-                    className="flex flex-col items-center justify-center py-3 px-4 bg-white/5 hover:bg-cc-primary hover:text-cc-bg rounded-lg border border-white/10 transition-all text-cc-text-main disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                    <Banknote size={24} className="mb-1" />
-                    <span className="text-xs font-bold">EFECTIVO</span>
-                </button>
-                <button 
-                    onClick={() => handleCheckout('card')}
-                    disabled={processing || cart.length === 0 || !cashRegisterOpen}
-                    className="flex flex-col items-center justify-center py-3 px-4 bg-white/5 hover:bg-cc-accent hover:text-white rounded-lg border border-white/10 transition-all text-cc-text-main disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                    <CreditCard size={24} className="mb-1" />
-                    <span className="text-xs font-bold">TARJETA</span>
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {/* Cash received input */}
                 <div>
-                  <label className="block text-xs font-medium text-cc-text-muted mb-1.5">Con cuánto paga</label>
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-cc-text-muted mb-1.5">
+                    <Banknote size={12} className="text-cc-primary" /> Efectivo
+                  </label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cc-text-muted font-semibold">$</span>
                     <input
                       type="number"
                       min="0"
                       step="0.01"
-                      value={cashReceived || ''}
-                      onChange={(e) => setCashReceived(parseFloat(e.target.value) || 0)}
-                      className="w-full bg-black/30 border border-white/10 rounded-lg pl-7 pr-4 py-2.5 text-xl font-bold text-cc-cream focus:ring-2 focus:ring-cc-primary outline-none text-right"
+                      value={cashInput || ''}
+                      onChange={(e) => setCashInput(parseFloat(e.target.value) || 0)}
+                      className="w-full bg-black/30 border border-white/10 rounded-lg pl-7 pr-3 py-2.5 text-lg font-bold text-cc-cream focus:ring-2 focus:ring-cc-primary outline-none text-right"
                       placeholder="0.00"
-                      autoFocus
                     />
                   </div>
                 </div>
-
-                {/* Quick amount buttons */}
-                <div className="grid grid-cols-5 gap-1.5">
-                  {[50, 100, 200, 500, 1000].map((amount) => (
-                    <button
-                      key={amount}
-                      onClick={() => setCashReceived(amount)}
-                      className={`py-1.5 px-1 text-xs font-bold rounded-md border transition-all ${
-                        cashReceived === amount
-                          ? 'bg-cc-primary/20 border-cc-primary text-cc-primary'
-                          : 'bg-white/5 border-white/10 text-cc-text-muted hover:bg-white/10 hover:text-cc-text-main'
-                      }`}
-                    >
-                      ${amount}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Change / remaining display */}
-                {cashReceived > 0 && (
-                  <div className={`flex justify-between items-center px-3 py-2.5 rounded-lg border ${
-                    isCashSufficient
-                      ? 'bg-green-500/10 border-green-500/30'
-                      : 'bg-red-500/10 border-red-500/30'
-                  }`}>
-                    <span className={`text-sm font-medium ${
-                      isCashSufficient ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      {isCashSufficient ? 'Cambio' : 'Faltan'}
-                    </span>
-                    <span className={`text-lg font-bold ${
-                      isCashSufficient ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      ${Math.abs(changeAmount).toFixed(2)}
-                    </span>
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-cc-text-muted mb-1.5">
+                    <CreditCard size={12} className="text-cc-accent" /> Tarjeta
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cc-text-muted font-semibold">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={cardInput || ''}
+                      onChange={(e) => setCardInput(parseFloat(e.target.value) || 0)}
+                      className="w-full bg-black/30 border border-white/10 rounded-lg pl-7 pr-3 py-2.5 text-lg font-bold text-cc-cream focus:ring-2 focus:ring-cc-accent outline-none text-right"
+                      placeholder="0.00"
+                    />
                   </div>
-                )}
-
-                {/* Confirm / Cancel buttons */}
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => { setShowCashInput(false); setCashReceived(0); }}
-                    disabled={processing}
-                    className="py-2.5 px-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-cc-text-muted text-sm font-medium transition-all"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={() => { handleCheckout('cash'); setShowCashInput(false); setCashReceived(0); }}
-                    disabled={processing || !isCashSufficient || cart.length === 0 || cashReceived <= 0 || !cashRegisterOpen}
-                    className="py-2.5 px-3 bg-cc-primary hover:bg-cc-primary/90 text-cc-bg rounded-lg text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-                  >
-                    <Banknote size={16} />
-                    Cobrar efectivo
-                  </button>
                 </div>
               </div>
-            )}
+
+              {/* Quick amount buttons (apply to cash) */}
+              <div className="grid grid-cols-5 gap-1.5">
+                {[50, 100, 200, 500, 1000].map((amount) => (
+                  <button
+                    key={amount}
+                    onClick={() => setCashInput(amount)}
+                    className={`py-1.5 px-1 text-xs font-bold rounded-md border transition-all ${
+                      cashInput === amount
+                        ? 'bg-cc-primary/20 border-cc-primary text-cc-primary'
+                        : 'bg-white/5 border-white/10 text-cc-text-muted hover:bg-white/10 hover:text-cc-text-main'
+                    }`}
+                  >
+                    ${amount}
+                  </button>
+                ))}
+              </div>
+
+              {/* Quick: pay full with one method */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => { setCashInput(cartTotal); setCardInput(0); }}
+                  disabled={cart.length === 0}
+                  className="py-1.5 text-[10px] font-bold rounded-md border bg-white/5 border-white/10 text-cc-text-muted hover:bg-cc-primary/15 hover:text-cc-primary hover:border-cc-primary/30 transition-all disabled:opacity-30"
+                >
+                  Todo efectivo
+                </button>
+                <button
+                  onClick={() => { setCardInput(cartTotal); setCashInput(0); }}
+                  disabled={cart.length === 0}
+                  className="py-1.5 text-[10px] font-bold rounded-md border bg-white/5 border-white/10 text-cc-text-muted hover:bg-cc-accent/15 hover:text-cc-accent hover:border-cc-accent/30 transition-all disabled:opacity-30"
+                >
+                  Todo tarjeta
+                </button>
+              </div>
+
+              {/* Payment summary */}
+              {(cashInput > 0 || cardInput > 0) && (
+                <div className="space-y-1.5 px-3 py-2.5 bg-black/30 rounded-lg border border-white/10">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-cc-text-muted">Capturado</span>
+                    <span className="text-cc-cream font-semibold">${paymentTotal.toFixed(2)}</span>
+                  </div>
+                  {paymentRemaining > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-red-400 font-medium">Faltan</span>
+                      <span className="text-red-400 font-bold">${paymentRemaining.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {changeAmount > 0 && (
+                    <div className="flex justify-between text-xs">
+                      <span className="text-green-400 font-medium">Cambio</span>
+                      <span className="text-green-400 font-bold">${changeAmount.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {cashInput > 0 && cardInput > 0 && (
+                    <div className="flex justify-between text-xs pt-1 border-t border-white/5">
+                      <span className="text-cc-text-muted">Método</span>
+                      <span className="text-cc-accent font-semibold">Mixto</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Confirm button */}
+              <button
+                onClick={() => handleCheckout()}
+                disabled={processing || !isPaymentSufficient || cart.length === 0 || !cashRegisterOpen}
+                className="w-full py-3 bg-cc-primary hover:bg-cc-primary/90 text-cc-bg rounded-lg text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {processing ? (
+                  <><span className="animate-spin">⏳</span> Procesando…</>
+                ) : (
+                  <><ShoppingBag size={16} /> Cobrar ${cartTotal.toFixed(2)}</>
+                )}
+              </button>
+            </div>
         </div>
       </div>
 

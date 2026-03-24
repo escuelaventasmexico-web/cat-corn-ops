@@ -284,6 +284,8 @@ export const Pedidos = () => {
       const salePayload: Record<string, unknown> = {
         total,
         payment_method: checkoutPaymentMethod,
+        cash_amount: checkoutPaymentMethod === 'CASH' ? total : 0,
+        card_amount: checkoutPaymentMethod === 'CARD' ? total : 0,
         customer_id: null,
         loyalty_reward_applied: false,
         loyalty_discount_amount: 0,
