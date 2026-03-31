@@ -5,18 +5,21 @@
  * QZ Tray must be installed and running on the local machine.
  * Download: https://qz.io/download/
  *
- * ── Security ────────────────────────────────────────────────────────
+ * ── Security (Trusted Mode) ────────────────────────────────────────
  * QZ Tray uses a certificate + signature model to identify websites.
  *
- * DEV  (default): Self-signed certificate embedded below.
- *       QZ Tray shows "Cat Corn OPS" as identity and asks for Allow
- *       ONCE — the user can tick "Remember this decision" and it sticks.
- *       Signature is empty (no signing server yet), so the request is
- *       "identified but unsigned". This is fine for localhost/dev.
+ * Certificate: fetched from /qz/digital-certificate.txt (static file)
+ * Signature:   POST /api/qz-sign → Vercel serverless function that
+ *              signs with the private key via RSA-SHA512
+ * Algorithm:   SHA512 (set via qz.security.setSignatureAlgorithm)
  *
- * PROD: Set VITE_QZ_CERT_URL + VITE_QZ_SIGN_URL env vars.
- *       The app fetches the cert from a URL and sends signing requests
- *       to a backend that holds the private key. Fully trusted/auto-allowed.
+ * This eliminates: "Anonymous request", "Signature Missing",
+ * "Invalid Signature", and "Untrusted website" dialogs.
+ *
+ * Setup:
+ *   1. Place your QZ digital-certificate.txt in public/qz/
+ *   2. Add QZ_PRIVATE_KEY env var in Vercel (contents of private-key.pem)
+ *   3. Deploy — QZ Tray will auto-allow requests from your domain.
  */
 import qz from 'qz-tray';
 
@@ -25,46 +28,11 @@ import qz from 'qz-tray';
 const TAG = '[QZ Tray]';
 const PRINTER_KEY = 'catcorn_thermal_printer';
 
-/**
- * Optional env vars for production signing.
- *   VITE_QZ_CERT_URL  → URL that returns the PEM certificate text
- *   VITE_QZ_SIGN_URL  → POST endpoint: { toSign } → { signature }
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const _env: Record<string, string | undefined> = (import.meta as any).env ?? {};
-const QZ_CERT_URL = _env.VITE_QZ_CERT_URL;
-const QZ_SIGN_URL = _env.VITE_QZ_SIGN_URL;
-const IS_PROD_SIGNING = !!(QZ_CERT_URL && QZ_SIGN_URL);
+/** Path where the QZ Tray certificate is served (Vite public/ → root) */
+const CERT_PATH = '/qz/digital-certificate.txt';
 
-// ─── Self-signed certificate for development ────────────────────────
-// Generated with:
-//   openssl req -x509 -newkey rsa:2048 -keyout catcorn-qz.key \
-//     -out catcorn-qz.crt -days 3650 -nodes \
-//     -subj "/CN=Cat Corn OPS/O=Cat Corn/L=CDMX/C=MX"
-//
-// This cert identifies the app to QZ Tray so it can show "Cat Corn OPS"
-// instead of "Anonymous request" and remember the user's Allow decision.
-// The private key (certs/catcorn-qz.key) is NOT shipped to the browser.
-// ─────────────────────────────────────────────────────────────────────
-const DEV_CERTIFICATE = `-----BEGIN CERTIFICATE-----
-MIIDCDCCAfACCQDI5RWP2ygeHzANBgkqhkiG9w0BAQsFADBGMRUwEwYDVQQDDAxD
-YXQgQ29ybiBPUFMxETAPBgNVBAoMCENhdCBDb3JuMQ0wCwYDVQQHDARDRE1YMQsw
-CQYDVQQGEwJNWDAeFw0yNjAzMzEyMTM4MzNaFw0zNjAzMjgyMTM4MzNaMEYxFTAT
-BgNVBAMMDENhdCBDb3JuIE9QUzERMA8GA1UECgwIQ2F0IENvcm4xDTALBgNVBAcM
-BENETVgxCzAJBgNVBAYTAk1YMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
-AQEA4y6hwH6XAQvSgXtcLl7W6uiTzA4IGqcJzykzmjhQIL1oz6wV8EOszMYxiAqX
-ohtdz/2NfptPh6hO4Bu2dm81uOPYXliuzjVnA0llP7mWTMuHx95JJNHLOvX92fuE
-JvoPdXQTdGfKVbVpwS028emrxGpoX2kvJmZ/Ais6y4Iup148U17YZPvHAFZHkXPr
-KpvOTLFxv0LuSfQj6zKA/Qm/KAc0ZIl0qYZzEORzO0X6BA3dw9JgIuBau2nYHw8y
-HMoMzLvJMUkAQ7eTFuogMwlCLd5Wj972nZfATzbAPMhJCj5Tj8w+pnCzzi30SXR5
-h4gZz7Lg8Pkfh3d2KNr7vUraOwIDAQABMA0GCSqGSIb3DQEBCwUAA4IBAQA6OOuE
-6zxFvooZPAh1xoNcKtwTk6iPfB+exNunKs6QksFQce1nLy/2YQZXjyl3nzBsFZx8
-sS426m0AtKJGQeTIL5PYbhopkuakZG7pErvC8UUJ1dZ5quLT/rD+WC7yXUrUmsNv
-tz/96zdfCKTetIKg1iVTSFT+YQ5WqU91SCUb14s6QeUDPZztZvkEFDdib8HQRbZN
-g4AD7xDN2lfDC3lvl8dFwhMqeEBjRJBOKDx9wnhTlEbrRXKLVuqxmeL6f0pvibJm
-ztw+6FE9sdgndxIky2LYScO9eUwbpt5/q3EBrLm58DCCmH4MY7ZSxh6h00KKfJA+
-o+mugSws1QboMugZ
------END CERTIFICATE-----`;
+/** Endpoint for the Vercel serverless signing function */
+const SIGN_ENDPOINT = '/api/qz-sign';
 
 // ─── Connection state ────────────────────────────────────────────────
 
@@ -76,90 +44,75 @@ let securityConfigured = false;
 /**
  * Configure QZ Tray security ONCE before the first connection.
  *
- * DEV mode  → Self-signed cert (embedded above) + empty signature.
- *   QZ Tray shows "Cat Corn OPS" identity → user clicks Allow →
- *   "Remember this decision" WORKS (cert fingerprint is stored).
+ * 1. Certificate: fetched from /qz/digital-certificate.txt
+ * 2. Algorithm:   SHA512
+ * 3. Signature:   POST /api/qz-sign → Vercel serverless function
  *
- * PROD mode → Fetches cert from VITE_QZ_CERT_URL, signs requests
- *   via VITE_QZ_SIGN_URL. Fully trusted = auto-allowed.
+ * This provides full trusted mode — no "Anonymous request",
+ * no "Signature Missing", no "Untrusted website" dialogs.
  */
 function configureSecurity(): void {
   if (securityConfigured) return;
   securityConfigured = true;
 
-  if (IS_PROD_SIGNING) {
-    // ── Production: real certificate + backend signing ──────────────
-    console.info(TAG, '🔐 Modo PRODUCCIÓN — certificado + firma remota');
-    console.info(TAG, `   CERT: ${QZ_CERT_URL}`);
-    console.info(TAG, `   SIGN: ${QZ_SIGN_URL}`);
+  console.info(TAG, '🔐 Inicializando QZ Tray en modo TRUSTED');
+  console.info(TAG, `   Certificado: ${CERT_PATH}`);
+  console.info(TAG, `   Firma:       POST ${SIGN_ENDPOINT}`);
+  console.info(TAG, '   Algoritmo:   SHA512');
 
-    qz.security.setCertificatePromise((
-      resolve: (cert: string) => void,
-      reject: (err: Error) => void,
+  // ── 1. Certificate: fetch from static file ──────────────────────
+  qz.security.setCertificatePromise((
+    resolve: (cert: string) => void,
+    reject: (err: Error) => void,
+  ) => {
+    console.info(TAG, '📄 Cargando certificado desde', CERT_PATH, '...');
+    fetch(CERT_PATH)
+      .then((r) => {
+        if (!r.ok) throw new Error(`Certificate fetch failed: ${r.status} ${r.statusText}`);
+        return r.text();
+      })
+      .then((cert) => {
+        console.info(TAG, '✅ Certificate loaded (' + cert.length + ' bytes)');
+        resolve(cert);
+      })
+      .catch((err) => {
+        console.error(TAG, '❌ ERROR cargando certificado:', err);
+        reject(err);
+      });
+  });
+
+  // ── 2. Signature algorithm ──────────────────────────────────────
+  qz.security.setSignatureAlgorithm('SHA512');
+  console.info(TAG, '🔑 Signature algorithm set: SHA512');
+
+  // ── 3. Signature: call Vercel serverless function ───────────────
+  qz.security.setSignaturePromise((toSign: string) => {
+    return (
+      resolve: (sig: string) => void,
+      reject?: (err: Error) => void,
     ) => {
-      console.info(TAG, '📄 Solicitando certificado desde', QZ_CERT_URL);
-      fetch(QZ_CERT_URL!)
-        .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`Cert fetch ${r.status}`))))
-        .then((cert) => {
-          console.info(TAG, '✅ Certificado de producción cargado (' + cert.length + ' bytes)');
-          resolve(cert);
+      console.info(TAG, '🔑 Signature request received (' + toSign.length + ' chars), calling', SIGN_ENDPOINT, '...');
+      fetch(SIGN_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request: toSign }),
+      })
+        .then((r) => {
+          if (!r.ok) throw new Error(`Sign endpoint ${r.status} ${r.statusText}`);
+          return r.json();
+        })
+        .then((json: { signature: string }) => {
+          console.info(TAG, '✅ Signature generated (' + json.signature.length + ' chars base64)');
+          resolve(json.signature);
         })
         .catch((err) => {
-          console.error(TAG, '❌ ERROR CERTIFICADO producción:', err);
-          reject(err);
+          console.error(TAG, '❌ ERROR al firmar:', err);
+          reject?.(err);
         });
-    });
+    };
+  });
 
-    qz.security.setSignaturePromise((toSign: string) => {
-      return (
-        resolve: (sig: string) => void,
-        reject?: (err: Error) => void,
-      ) => {
-        console.info(TAG, '🔑 Solicitando firma al servidor...');
-        fetch(QZ_SIGN_URL!, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ toSign }),
-        })
-          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Sign fetch ${r.status}`))))
-          .then((json: { signature: string }) => {
-            console.info(TAG, '✅ Firma generada (' + json.signature.length + ' chars)');
-            resolve(json.signature);
-          })
-          .catch((err) => {
-            console.error(TAG, '❌ ERROR FIRMA producción:', err);
-            reject?.(err);
-          });
-      };
-    });
-  } else {
-    // ── Development: self-signed cert, no signature ─────────────────
-    console.info(TAG, '🛠️ Modo DESARROLLO — certificado self-signed');
-    console.info(TAG, '   Identidad: "Cat Corn OPS" (CN)');
-    console.info(TAG, '   La primera vez QZ Tray pedirá Allow.');
-    console.info(TAG, '   Marca "Remember this decision" → no vuelve a preguntar.');
-
-    // ★ Certificate: provide the embedded self-signed cert.
-    // This gives QZ Tray a fingerprint to identify this site,
-    // so "Remember this decision" actually works.
-    // Previously this was resolve('') → "Anonymous request" → can't remember.
-    qz.security.setCertificatePromise((
-      resolve: (cert: string) => void,
-    ) => {
-      console.info(TAG, '📄 Certificado: self-signed Cat Corn OPS (' + DEV_CERTIFICATE.length + ' bytes)');
-      resolve(DEV_CERTIFICATE);
-    });
-
-    // ★ Signature: empty (no signing server in dev).
-    // QZ Tray marks request as "identified but unsigned" which is
-    // fine for dev — the user clicks Allow once and it remembers.
-    qz.security.setSignaturePromise((_toSign: string) => {
-      return (resolve: (sig: string) => void) => {
-        console.debug(TAG, '🔑 Firma: omitida (modo desarrollo, sin servidor de firma)');
-        resolve('');
-      };
-    });
-  }
+  console.info(TAG, '✅ QZ Tray trusted mode initialized');
 }
 
 // ─── Public helpers ──────────────────────────────────────────────────
@@ -187,13 +140,13 @@ export async function connectQZ(): Promise<void> {
         const msg = String(err?.message ?? err).toLowerCase();
         if (msg.includes('sign')) {
           console.error(TAG, '❌ ERROR DE FIRMA:', err);
-          console.error(TAG, 'Solución: verifica que el certificado sea válido y QZ Tray esté actualizado.');
+          console.error(TAG, 'Verifica que QZ_PRIVATE_KEY esté configurada en Vercel y que /api/qz-sign responda.');
         } else if (msg.includes('cert')) {
           console.error(TAG, '❌ ERROR DE CERTIFICADO:', err);
-          console.error(TAG, 'El certificado embebido puede estar corrupto o expirado.');
+          console.error(TAG, 'Verifica que /qz/digital-certificate.txt exista y contenga el PEM válido.');
         } else if (msg.includes('untrusted') || msg.includes('denied') || msg.includes('block')) {
           console.error(TAG, '❌ SOLICITUD DENEGADA por QZ Tray:', err);
-          console.error(TAG, 'Solución: cuando QZ pregunte, marca "Remember" y click "Allow".');
+          console.error(TAG, 'QZ Tray rechazó la conexión. Revisa que el certificado y la firma sean correctos.');
         } else {
           console.error(
             TAG,

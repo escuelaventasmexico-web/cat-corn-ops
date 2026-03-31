@@ -1,0 +1,11 @@
+REEMPLAZA ESTE ARCHIVO con el contenido de tu digital-certificate.txt de QZ Tray.
+
+El archivo debe comenzar con:
+-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----
+
+Pasos:
+1. Copia tu archivo digital-certificate.txt aquí
+2. Haz commit y push a Vercel
+3. Verifica que sea accesible en: https://tu-dominio.vercel.app/qz/digital-certificate.txt
