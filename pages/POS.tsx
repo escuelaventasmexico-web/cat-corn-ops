@@ -4,10 +4,14 @@ import type { Customer } from '../supabase';
 import { normalizePhone, fetchCustomerByPhoneNorm, fetchCustomerById, createCustomerRecord, fetchCustomersList } from '../lib/loyalty';
 import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion } from '../lib/promotions';
 import type { PromotionCode } from '../lib/promotions';
-import { Search, Plus, Minus, CreditCard, Banknote, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users } from 'lucide-react';
+import { Search, Plus, Minus, CreditCard, Banknote, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings } from 'lucide-react';
 import { fetchCashStatus, getOpenSessionId, EMPTY_CASH_STATUS } from '../lib/cashRegister';
 import type { CashRegisterStatus } from '../lib/cashRegister';
 import { CashRegisterStatusPanel } from '../components/CashRegisterStatus';
+import { printSaleReceipt } from '../lib/printReceipt';
+import type { ReceiptData } from '../components/TicketReceipt';
+import { listPrinters, getSavedPrinterName, savePrinterName, printTestRawReceipt } from '../lib/qzService';
+import type { TestPrintResult } from '../lib/qzService';
 import { OpenCashRegisterModal } from '../components/OpenCashRegisterModal';
 import { WithdrawalModal } from '../components/WithdrawalModal';
 import { CloseCashRegisterModal } from '../components/CloseCashRegisterModal';
@@ -49,6 +53,23 @@ export const POS = () => {
 
   // Instagram promo state
   const [instagramPromoActive, setInstagramPromoActive] = useState(false);
+
+  // Print-ticket modal state
+  const [pendingReceipt, setPendingReceipt] = useState<ReceiptData | null>(null);
+
+  // Reprint last ticket state
+  const [reprintLoading, setReprintLoading] = useState(false);
+  const [printingTicket, setPrintingTicket] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
+
+  // Printer config state
+  const [showPrinterModal, setShowPrinterModal] = useState(false);
+  const [availablePrinters, setAvailablePrinters] = useState<string[]>([]);
+  const [printersLoading, setPrintersLoading] = useState(false);
+  const [printersError, setPrintersError] = useState<string | null>(null);
+  const [selectedPrinter, setSelectedPrinter] = useState<string>(getSavedPrinterName() || '');
+  const [testPrintLoading, setTestPrintLoading] = useState(false);
+  const [testPrintResults, setTestPrintResults] = useState<TestPrintResult[] | null>(null);
 
   // Cash register state
   const [cashStatus, setCashStatus] = useState<CashRegisterStatus>(EMPTY_CASH_STATUS);
@@ -370,19 +391,136 @@ export const POS = () => {
         // Refresh cash register status after sale
         loadCashStatus();
 
-        // Success
+        // Build receipt data BEFORE clearing the cart
+        const receiptData: ReceiptData = {
+          saleId: sale.id,
+          date: new Date(),
+          items: cart.map(item => ({
+            name: item.product_name || item.name,
+            size: item.size,
+            quantity: item.quantity,
+            unitPrice: item.price,
+            lineTotal: item.price * item.quantity,
+            discount: item.discount_amount || 0,
+            discountReason: item.discount_reason || undefined,
+          })),
+          subtotal: cartSubtotal,
+          totalDiscount: totalDiscount,
+          total: cartTotal,
+          method: method as 'CASH' | 'CARD' | 'MIXED',
+          cashAmount: effectiveCash,
+          cardAmount: effectiveCard,
+          changeAmount,
+          customerName: customer ? `${customer.first_name} ${customer.last_name}`.trim() : undefined,
+        };
+
+        // Clear cart & payment state
         setCart([]);
         setActivePromoCode(null);
         setInstagramPromoActive(false);
         setCashInput(0);
         setCardInput(0);
-        alert('¡Venta realizada con éxito! Ticket #' + sale.id.slice(0, 8));
+
+        // Show print-ticket modal
+        console.info('[POS] ✅ Venta guardada — Folio:', sale.id.slice(0, 8).toUpperCase(), 'Total: $' + cartTotal.toFixed(2));
+        setPrintError(null);
+        setPendingReceipt(receiptData);
 
     } catch (err: any) {
         console.error(err);
         alert('Error procesando venta: ' + err.message);
     } finally {
         setProcessing(false);
+    }
+  };
+
+  // --- Reprint last ticket ---
+
+  const handleReprintLastTicket = async () => {
+    if (!supabase) return;
+    setReprintLoading(true);
+    try {
+      // 1. Fetch latest sale
+      const { data: sale, error: saleErr } = await supabase
+        .from('sales')
+        .select('id, total, payment_method, cash_amount, card_amount, created_at, customer_id')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (saleErr || !sale) {
+        alert('No hay tickets recientes para reimprimir');
+        return;
+      }
+
+      // 2. Fetch sale items with product info
+      const { data: items, error: itemsErr } = await supabase
+        .from('sale_items')
+        .select('quantity, price, discount_amount, discount_reason, product_id, products(product_name, name, size)')
+        .eq('sale_id', sale.id);
+
+      if (itemsErr) throw itemsErr;
+
+      // 3. Optionally fetch customer name
+      let customerName: string | undefined;
+      if (sale.customer_id) {
+        const { data: cust } = await supabase
+          .from('customers')
+          .select('first_name, last_name')
+          .eq('id', sale.customer_id)
+          .single();
+        if (cust) customerName = `${cust.first_name} ${cust.last_name}`.trim();
+      }
+
+      // 4. Build receipt items
+      const receiptItems = (items || []).map((it: any) => {
+        const prod = it.products || {};
+        const productName = prod.product_name || prod.name || 'Producto';
+        const size = prod.size || '';
+        const qty = it.quantity || 1;
+        const unitPrice = it.price || 0;
+        const disc = it.discount_amount || 0;
+        return {
+          name: productName,
+          size,
+          quantity: qty,
+          unitPrice,
+          lineTotal: unitPrice * qty,
+          discount: disc,
+          discountReason: it.discount_reason || undefined,
+        };
+      });
+
+      const subtotal = receiptItems.reduce((s: number, i: any) => s + i.lineTotal, 0);
+      const totalDiscount = receiptItems.reduce((s: number, i: any) => s + (i.discount || 0), 0);
+
+      const method = (sale.payment_method || 'CASH').toUpperCase() as 'CASH' | 'CARD' | 'MIXED';
+      const cashAmt = sale.cash_amount || (method === 'CARD' ? 0 : sale.total);
+      const cardAmt = sale.card_amount || (method === 'CARD' ? sale.total : 0);
+      const change = method !== 'CARD' ? Math.max(0, cashAmt + cardAmt - sale.total) : 0;
+
+      const receiptData: ReceiptData = {
+        saleId: sale.id,
+        date: new Date(sale.created_at),
+        items: receiptItems,
+        subtotal,
+        totalDiscount,
+        total: sale.total,
+        method,
+        cashAmount: cashAmt,
+        cardAmount: cardAmt,
+        changeAmount: change,
+        customerName,
+      };
+
+      console.info('[POS] 🔄 Reimprimiendo ticket — Folio:', sale.id.slice(0, 8).toUpperCase());
+      await printSaleReceipt(receiptData);
+      console.info('[POS] ✅ Reimpresión completada');
+    } catch (err: any) {
+      console.error('[POS] ❌ Error reimprimiendo:', err);
+      alert('Error al reimprimir: ' + (err?.message || err));
+    } finally {
+      setReprintLoading(false);
     }
   };
 
@@ -737,7 +875,8 @@ export const POS = () => {
       </div>
 
       {/* Cart Sidebar */}
-      <div className="w-80 bg-cc-surface rounded-xl border border-white/5 flex flex-col shadow-2xl">
+      <div className="w-80 bg-cc-surface rounded-xl border border-white/5 flex flex-col min-h-0 shadow-2xl">
+        <div className="flex-shrink-0">
         <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/5 rounded-t-xl">
             <h2 className="font-bold text-lg text-cc-cream">Orden Actual</h2>
             <div className="text-xs text-cc-text-muted">{cart.length} items</div>
@@ -845,8 +984,9 @@ export const POS = () => {
             <button onClick={deactivatePromo} className="text-red-400 hover:text-red-300 text-[10px] font-bold">Quitar</button>
           </div>
         )}
+        </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-3">
             {cart.map(item => {
                 const lineTotal = item.price * item.quantity;
                 const disc = item.discount_amount || 0;
@@ -900,7 +1040,7 @@ export const POS = () => {
             )}
         </div>
 
-        <div className="p-6 bg-black/20 border-t border-white/10 rounded-b-xl">
+        <div className="flex-shrink-0 p-6 bg-black/20 border-t border-white/10 rounded-b-xl overflow-y-auto">
             {totalDiscount > 0 && (
               <div className="flex justify-between items-center mb-1 text-xs">
                 <span className="text-cc-text-muted">Subtotal</span>
@@ -1077,6 +1217,32 @@ export const POS = () => {
                   <><ShoppingBag size={16} /> Cobrar ${cartTotal.toFixed(2)}</>
                 )}
               </button>
+
+              {/* Reprint last ticket */}
+              <button
+                onClick={handleReprintLastTicket}
+                disabled={reprintLoading}
+                className="w-full py-2 mt-1 rounded-lg border border-white/10 bg-white/5 text-cc-text-muted text-xs font-medium hover:bg-white/10 hover:text-cc-text-main transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+              >
+                {reprintLoading ? (
+                  <><span className="animate-spin">⏳</span> Buscando último ticket…</>
+                ) : (
+                  <><Printer size={13} /> Reimprimir último ticket</>
+                )}
+              </button>
+
+              {/* Printer setup */}
+              <button
+                onClick={() => {
+                  setShowPrinterModal(true);
+                  setPrintersError(null);
+                  setAvailablePrinters([]);
+                }}
+                className="w-full py-1.5 mt-1 rounded-lg text-cc-text-muted text-[10px] hover:text-cc-text-main transition-colors flex items-center justify-center gap-1"
+              >
+                <Settings size={11} />
+                {selectedPrinter ? `Impresora: ${selectedPrinter}` : 'Configurar impresora'}
+              </button>
             </div>
         </div>
       </div>
@@ -1202,6 +1368,227 @@ export const POS = () => {
             loadCashStatus();
           }}
         />
+      )}
+
+      {/* Print Ticket Modal */}
+      {pendingReceipt && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={() => { if (!printingTicket) { setPendingReceipt(null); setPrintError(null); } }}>
+          <div className="bg-cc-surface border border-white/10 rounded-xl p-6 w-80 shadow-2xl text-center" onClick={(e) => e.stopPropagation()}>
+            <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-3">
+              <ShoppingBag size={24} className="text-green-400" />
+            </div>
+            <h3 className="font-bold text-lg text-cc-cream mb-1">¡Venta exitosa!</h3>
+            <p className="text-xs text-cc-text-muted mb-1">Folio: <span className="font-mono font-bold text-cc-primary">{pendingReceipt.saleId.slice(0, 8).toUpperCase()}</span></p>
+            <p className="text-2xl font-bold text-cc-primary mb-4">${pendingReceipt.total.toFixed(2)}</p>
+            {pendingReceipt.changeAmount > 0 && (
+              <p className="text-sm text-green-400 font-semibold mb-4">Cambio: ${pendingReceipt.changeAmount.toFixed(2)}</p>
+            )}
+
+            {printError && (
+              <div className="bg-red-500/15 border border-red-500/30 text-red-400 text-xs rounded-lg px-3 py-2 mb-3 text-left">
+                {printError}
+              </div>
+            )}
+
+            <p className="text-sm text-cc-text-main mb-5">¿Deseas imprimir ticket?</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  console.info('[POS] 🚫 Usuario eligió NO imprimir');
+                  setPendingReceipt(null);
+                  setPrintError(null);
+                }}
+                disabled={printingTicket}
+                className="flex-1 py-2.5 rounded-lg border border-white/10 bg-white/5 text-cc-text-muted text-sm font-semibold hover:bg-white/10 transition-colors disabled:opacity-40"
+              >
+                No
+              </button>
+              <button
+                onClick={async () => {
+                  console.info('[POS] 🖨️ Usuario eligió IMPRIMIR ticket');
+                  setPrintingTicket(true);
+                  setPrintError(null);
+                  try {
+                    await printSaleReceipt(pendingReceipt!);
+                    console.info('[POS] ✅ Ticket impreso correctamente');
+                    setPendingReceipt(null);
+                  } catch (err: any) {
+                    console.error('[POS] ❌ Error imprimiendo ticket:', err);
+                    setPrintError(err?.message || 'Error al imprimir. Revisa QZ Tray y la impresora.');
+                  } finally {
+                    setPrintingTicket(false);
+                  }
+                }}
+                disabled={printingTicket}
+                className="flex-1 py-2.5 rounded-lg bg-cc-primary text-cc-bg text-sm font-bold hover:bg-cc-primary/90 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {printingTicket ? (
+                  <><span className="animate-spin">⏳</span> Imprimiendo…</>
+                ) : (
+                  <><Printer size={16} /> Sí</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Printer Config Modal */}
+      {showPrinterModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={() => setShowPrinterModal(false)}>
+          <div className="bg-cc-surface border border-white/10 rounded-xl p-6 w-96 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-cc-cream flex items-center gap-2"><Printer size={16} className="text-cc-primary" /> Configurar Impresora</h3>
+              <button onClick={() => setShowPrinterModal(false)} className="text-cc-text-muted hover:text-cc-text-main"><X size={16} /></button>
+            </div>
+
+            <p className="text-xs text-cc-text-muted mb-3">
+              Requiere <a href="https://qz.io/download/" target="_blank" rel="noreferrer" className="text-cc-primary underline">QZ Tray</a> instalado y ejecutándose.
+            </p>
+
+            {/* Detect printers */}
+            <button
+              onClick={async () => {
+                setPrintersLoading(true);
+                setPrintersError(null);
+                try {
+                  const printers = await listPrinters();
+                  setAvailablePrinters(printers);
+                } catch (err: any) {
+                  setPrintersError(
+                    err?.message?.includes('Unable to connect')
+                      ? 'QZ Tray no está corriendo. Ábrelo e intenta de nuevo.'
+                      : 'Error conectando a QZ Tray: ' + (err?.message || err)
+                  );
+                } finally {
+                  setPrintersLoading(false);
+                }
+              }}
+              disabled={printersLoading}
+              className="w-full py-2 mb-3 rounded-lg border border-white/10 bg-white/5 text-cc-text-main text-xs font-medium hover:bg-white/10 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5"
+            >
+              {printersLoading ? (
+                <><span className="animate-spin">⏳</span> Detectando impresoras…</>
+              ) : (
+                <><Search size={13} /> Detectar impresoras</>
+              )}
+            </button>
+
+            {printersError && (
+              <div className="bg-red-500/15 border border-red-500/30 text-red-400 text-xs rounded-lg px-3 py-2 mb-3">
+                {printersError}
+              </div>
+            )}
+
+            {/* Printer list */}
+            {availablePrinters.length > 0 && (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto mb-3">
+                {availablePrinters.map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => {
+                      setSelectedPrinter(p);
+                      savePrinterName(p);
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors border ${
+                      selectedPrinter === p
+                        ? 'bg-cc-primary/20 border-cc-primary text-cc-primary font-bold'
+                        : 'bg-white/5 border-white/10 text-cc-text-main hover:bg-white/10'
+                    }`}
+                  >
+                    {p}
+                    {selectedPrinter === p && ' ✓'}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Current selection */}
+            <div className="text-xs text-cc-text-muted mt-2">
+              <span className="font-medium">Impresora actual: </span>
+              {selectedPrinter ? (
+                <span className="text-cc-primary font-bold">{selectedPrinter}</span>
+              ) : (
+                <span className="text-cc-text-muted italic">Ninguna (usará impresión del navegador)</span>
+              )}
+            </div>
+
+            {selectedPrinter && (
+              <button
+                onClick={() => {
+                  setSelectedPrinter('');
+                  savePrinterName('');
+                }}
+                className="mt-2 text-[10px] text-red-400 hover:text-red-300 transition-colors"
+              >
+                Quitar impresora (usar navegador)
+              </button>
+            )}
+
+            {/* ── Diagnostic test print ── */}
+            {selectedPrinter && (
+              <div className="mt-4 pt-3 border-t border-white/10">
+                <p className="text-[10px] text-cc-text-muted mb-2">
+                  🧪 Diagnóstico: envía 3 pruebas con formatos distintos. Revisa la consola (F12) para ver detalles.
+                </p>
+                <button
+                  onClick={async () => {
+                    setTestPrintLoading(true);
+                    setTestPrintResults(null);
+                    try {
+                      const results = await printTestRawReceipt(selectedPrinter);
+                      setTestPrintResults(results);
+                    } catch (err: any) {
+                      setTestPrintResults([{
+                        label: 'Error general',
+                        success: false,
+                        error: err?.message ?? String(err),
+                      }]);
+                    } finally {
+                      setTestPrintLoading(false);
+                    }
+                  }}
+                  disabled={testPrintLoading}
+                  className="w-full py-2 mb-2 rounded-lg border border-cc-accent/40 bg-cc-accent/10 text-cc-accent text-xs font-bold hover:bg-cc-accent/20 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5"
+                >
+                  {testPrintLoading ? (
+                    <><span className="animate-spin">⏳</span> Enviando 3 pruebas…</>
+                  ) : (
+                    <>🧪 Imprimir prueba RAW</>
+                  )}
+                </button>
+
+                {testPrintResults && (
+                  <div className="space-y-1 mt-2">
+                    {testPrintResults.map((r, i) => (
+                      <div
+                        key={i}
+                        className={`text-[10px] px-2 py-1 rounded ${
+                          r.success
+                            ? 'bg-green-500/10 text-green-400'
+                            : 'bg-red-500/10 text-red-400'
+                        }`}
+                      >
+                        {r.success ? '✅' : '❌'} {r.label}
+                        {r.error && <span className="block text-[9px] opacity-70 mt-0.5">{r.error}</span>}
+                      </div>
+                    ))}
+                    <p className="text-[9px] text-cc-text-muted mt-1">
+                      💡 Si dice "enviado OK" pero no imprime → revisa cola de impresión, quita pausa, o re-agrega la impresora en Sistema.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowPrinterModal(false)}
+              className="w-full mt-4 py-2 bg-cc-primary text-cc-bg font-bold text-sm rounded-lg hover:bg-cc-primary/90 transition-colors"
+            >
+              Listo
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Customers List Modal */}

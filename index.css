@@ -39,3 +39,8 @@ body {
   backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
+
+/* ── Print styles ──
+   When printing from the main POS window, hide everything except
+   QZ Tray handles all ticket printing via ESC/POS.
+   No browser print styles needed. */
