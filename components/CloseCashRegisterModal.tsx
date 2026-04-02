@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { X, Lock, DollarSign, Banknote, CreditCard, ArrowDownCircle, CheckCircle, AlertTriangle } from 'lucide-react';
-import { closeCashRegister } from '../lib/cashRegister';
-import type { CashRegisterStatus, CloseResult } from '../lib/cashRegister';
+import { X, Lock, DollarSign, Banknote, CreditCard, ArrowDownCircle, CheckCircle, AlertTriangle, Printer, Loader2 } from 'lucide-react';
+import { closeCashRegister, fetchAndPrintCorteDeCaja } from '../lib/cashRegister';
+import type { CashRegisterStatus, CloseResult, CashSessionSummary } from '../lib/cashRegister';
 
 interface Props {
   status: CashRegisterStatus;
@@ -19,6 +19,43 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [closeResult, setCloseResult] = useState<CloseResult | null>(null);
+  const [printing, setPrinting] = useState(false);
+  const [printMsg, setPrintMsg] = useState<string | null>(null);
+
+  /** Build a CashSessionSummary from the status (and optional close result) so we can print */
+  const buildSessionForPrint = (result?: CloseResult | null): CashSessionSummary => ({
+    session_id: status.session_id || '',
+    status: result ? 'closed' : 'open',
+    opened_at: status.opened_at || new Date().toISOString(),
+    closed_at: result ? new Date().toISOString() : null,
+    opening_cash: status.opening_cash,
+    cash_sales_total: status.cash_sales_total,
+    card_sales_total: status.card_sales_total,
+    withdrawals_total: status.withdrawals_total,
+    expected_cash: status.cash_sales_total + status.card_sales_total - status.withdrawals_total,
+    counted_cash: result?.counted_cash ?? null,
+    difference: result?.difference ?? null,
+    sales_count: 0,
+    withdrawals_count: 0,
+    opened_by: status.opened_by,
+    closed_by: null,
+    notes: status.notes,
+    close_notes: null,
+  });
+
+  const handlePrintCorte = async (result?: CloseResult | null) => {
+    setPrinting(true);
+    setPrintMsg(null);
+    try {
+      await fetchAndPrintCorteDeCaja(buildSessionForPrint(result));
+      setPrintMsg('✅ Corte impreso');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error de impresión';
+      setPrintMsg('❌ ' + msg);
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   // Expected = cash sales + card sales − withdrawals (fondo NOT included)
   const expectedCash = status.cash_sales_total + status.card_sales_total - status.withdrawals_total;
@@ -92,12 +129,27 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
             </div>
           </div>
 
-          <button
-            onClick={onSuccess}
-            className="w-full py-2.5 bg-cc-primary hover:bg-cc-primary/90 text-cc-bg font-bold text-sm rounded-lg transition-colors"
-          >
-            Aceptar
-          </button>
+          <div className="space-y-2">
+            <button
+              onClick={() => handlePrintCorte(closeResult)}
+              disabled={printing}
+              className="w-full py-2.5 bg-white/10 hover:bg-white/15 text-cc-cream font-bold text-sm rounded-lg border border-white/10 transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
+            >
+              {printing ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
+              {printing ? 'Imprimiendo…' : 'Imprimir Corte'}
+            </button>
+            {printMsg && (
+              <div className={`text-xs text-center ${printMsg.startsWith('✅') ? 'text-green-400' : 'text-red-400'}`}>
+                {printMsg}
+              </div>
+            )}
+            <button
+              onClick={onSuccess}
+              className="w-full py-2.5 bg-cc-primary hover:bg-cc-primary/90 text-cc-bg font-bold text-sm rounded-lg transition-colors"
+            >
+              Aceptar
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -195,6 +247,21 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
           {error && (
             <div className="bg-red-500/15 border border-red-500/30 text-red-400 text-xs rounded-lg px-3 py-2">
               {error}
+            </div>
+          )}
+
+          {/* Print corte (pre-close) */}
+          <button
+            onClick={() => handlePrintCorte()}
+            disabled={printing || saving}
+            className="w-full py-2 bg-white/10 hover:bg-white/15 text-cc-cream font-medium text-xs rounded-lg border border-white/10 transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
+          >
+            {printing ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
+            {printing ? 'Imprimiendo…' : 'Imprimir Corte Parcial'}
+          </button>
+          {printMsg && (
+            <div className={`text-xs text-center ${printMsg.startsWith('✅') ? 'text-green-400' : 'text-red-400'}`}>
+              {printMsg}
             </div>
           )}
 

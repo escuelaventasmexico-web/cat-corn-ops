@@ -13,6 +13,7 @@ import {
   Download,
   Loader2,
   Lock,
+  Printer,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
@@ -22,6 +23,7 @@ import type {
   CashSessionSale,
   CashSessionWithdrawal,
 } from '../lib/cashRegister';
+import { fetchAndPrintCorteDeCaja } from '../lib/cashRegister';
 import { formatDateTimeMX } from '../lib/datetime';
 
 interface Props {
@@ -51,6 +53,8 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
   const [withdrawals, setWithdrawals] = useState<CashSessionWithdrawal[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [printingCorte, setPrintingCorte] = useState(false);
+  const [printCorteMsg, setPrintCorteMsg] = useState<string | null>(null);
 
   const handleExportCashSessionExcel = useCallback(async () => {
     if (loading) return;
@@ -388,6 +392,33 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
               {exporting ? 'Exportando…' : 'Exportar Excel'}
             </button>
             <button
+              onClick={async () => {
+                setPrintingCorte(true);
+                setPrintCorteMsg(null);
+                try {
+                  await fetchAndPrintCorteDeCaja(s);
+                  setPrintCorteMsg('✅ Corte impreso');
+                } catch (err: unknown) {
+                  const msg = err instanceof Error ? err.message : 'Error de impresión';
+                  setPrintCorteMsg('❌ ' + msg);
+                } finally {
+                  setPrintingCorte(false);
+                }
+              }}
+              disabled={loading || printingCorte}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all
+                bg-white/10 text-cc-cream border border-white/20
+                hover:bg-white/15 hover:border-white/30
+                disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {printingCorte ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Printer size={14} />
+              )}
+              {printingCorte ? 'Imprimiendo…' : 'Imprimir Corte'}
+            </button>
+            <button
               onClick={onClose}
               className="p-2 hover:bg-white/10 rounded-lg transition-colors"
             >
@@ -395,6 +426,13 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
             </button>
           </div>
         </div>
+
+        {/* Print status message */}
+        {printCorteMsg && (
+          <div className={`px-5 py-2 text-xs text-center ${printCorteMsg.startsWith('✅') ? 'text-green-400 bg-green-500/10' : 'text-red-400 bg-red-500/10'}`}>
+            {printCorteMsg}
+          </div>
+        )}
 
         {/* ── Scrollable body ────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto p-5 space-y-6">

@@ -89,7 +89,11 @@ export const TicketReceipt = forwardRef<HTMLDivElement, { data: ReceiptData }>(
           </thead>
           <tbody>
             {data.items.map((item, i) => {
-              const finalLine = item.lineTotal - (item.discount || 0);
+              // Always derive the final line total from the base unit price,
+              // NOT from item.lineTotal which may already be post-discount.
+              const disc = item.discount || 0;
+              const lineSubtotal = item.unitPrice * item.quantity;
+              const finalLine = lineSubtotal - disc;
               return (
                 <tr key={i}>
                   <td style={{ verticalAlign: 'top', paddingBottom: '1mm' }}>
@@ -97,9 +101,9 @@ export const TicketReceipt = forwardRef<HTMLDivElement, { data: ReceiptData }>(
                     <div style={{ fontSize: '10px', color: '#444' }}>
                       {item.size} &nbsp; {item.quantity} x ${item.unitPrice.toFixed(2)}
                     </div>
-                    {(item.discount ?? 0) > 0 && (
+                    {disc > 0 && (
                       <div style={{ fontSize: '9px', color: '#888' }}>
-                        Desc: -${(item.discount ?? 0).toFixed(2)}
+                        Desc: -${disc.toFixed(2)}
                       </div>
                     )}
                   </td>

@@ -78,12 +78,17 @@ export function buildEscPosReceipt(data: ReceiptData): string[] {
     const name = (item.name || '').slice(0, LINE_W);
     cmds.push(BOLD_ON + name + BOLD_OFF + LF);
 
-    const detail = `  ${item.size}  ${item.quantity} x $${item.unitPrice.toFixed(2)}`;
-    const lineTotal = item.lineTotal - (item.discount || 0);
-    cmds.push(escRow(detail, '$' + lineTotal.toFixed(2)));
+    // Always derive the final line total from the base unit price,
+    // NOT from item.lineTotal which may already be post-discount.
+    const disc = item.discount || 0;
+    const lineSubtotal = item.unitPrice * item.quantity;
+    const lineFinal = lineSubtotal - disc;
 
-    if ((item.discount ?? 0) > 0) {
-      cmds.push('  Desc: -$' + (item.discount ?? 0).toFixed(2) + LF);
+    const detail = `  ${item.size}  ${item.quantity} x $${item.unitPrice.toFixed(2)}`;
+    cmds.push(escRow(detail, '$' + lineFinal.toFixed(2)));
+
+    if (disc > 0) {
+      cmds.push('  Desc: -$' + disc.toFixed(2) + LF);
     }
   }
 
@@ -167,4 +172,190 @@ export async function printSaleReceipt(data: ReceiptData): Promise<void> {
   console.info(TAG, '📤 Enviando a QZ Tray...');
   await printRaw(printerName, cmds);
   console.info(TAG, `✅ Ticket enviado correctamente — Folio: ${folio}`);
+}
+
+// ─── Corte de Caja (Cash Cut) Receipt ────────────────────────────────
+
+/** A single transaction line in the corte detail section */
+export interface CorteTransaction {
+  time: string;            // e.g. "01:15 pm"
+  concept: string;         // e.g. "Venta - Ticket #A1B2C3D4 - Caramelo Mini Michi 60g"
+  paymentMethod: string;   // e.g. "Efectivo", "Tarjeta", "Retiro"
+  amount: number;          // signed: positive for sales, negative for withdrawals
+}
+
+/** Full data needed to print a corte de caja ticket */
+export interface CorteDeCajaData {
+  sessionId: string;
+  status: 'open' | 'closed';
+  printDate: Date;
+  openedAt: Date;
+  closedAt: Date | null;
+  openingCash: number;
+  cashSalesTotal: number;
+  cardSalesTotal: number;
+  withdrawalsTotal: number;
+  expectedCash: number;
+  countedCash: number | null;
+  difference: number | null;
+  salesCount: number;
+  withdrawalsCount: number;
+  transactions: CorteTransaction[];
+}
+
+/**
+ * Build a product summary for a ticket concept line.
+ *   1 product  → full name
+ *   2-3 prods  → names joined with " + "
+ *   4+ prods   → "X productos"
+ */
+export function buildProductSummary(
+  items: { quantity: number; name: string }[],
+): string {
+  if (!items || items.length === 0) return '';
+  const grouped: Record<string, number> = {};
+  for (const it of items) {
+    const n = it.name || 'Producto';
+    grouped[n] = (grouped[n] || 0) + it.quantity;
+  }
+  const entries = Object.entries(grouped);
+  const totalItems = entries.reduce((s, [, q]) => s + q, 0);
+
+  if (entries.length === 1) {
+    const [name, qty] = entries[0];
+    return qty > 1 ? `${qty}x ${name}` : name;
+  }
+  if (entries.length <= 3) {
+    const parts = entries.map(([name, qty]) => (qty > 1 ? `${qty}x ${name}` : name));
+    const joined = parts.join(' + ');
+    // Truncate if too long for thermal paper
+    if (joined.length <= 50) return joined;
+  }
+  return `${totalItems} productos`;
+}
+
+/** Build ESC/POS commands for a corte de caja ticket */
+export function buildCorteDeCajaReceipt(data: CorteDeCajaData): string[] {
+  const cmds: string[] = [];
+
+  const fmtDate = (d: Date) =>
+    d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Mexico_City' });
+  const fmtTime = (d: Date) =>
+    d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Mexico_City' });
+  const fmtDateTime = (d: Date) => `${fmtDate(d)} ${fmtTime(d)}`;
+
+  const sessionFolio = data.sessionId.slice(0, 8).toUpperCase();
+  const statusLabel = data.status === 'open' ? 'Abierta' : 'Cerrada';
+
+  // ── Init ──
+  cmds.push(INIT);
+
+  // ── Header ──
+  cmds.push(CENTER + BOLD_ON + DOUBLE_SIZE);
+  cmds.push('CAT CORN' + LF);
+  cmds.push(NORMAL_SIZE);
+  cmds.push('CORTE DE CAJA' + LF);
+  cmds.push(BOLD_OFF);
+  cmds.push(LF);
+  cmds.push('Impresion: ' + fmtDateTime(data.printDate) + LF);
+  cmds.push('Sesion: #' + sessionFolio + LF);
+  cmds.push('Estado: ' + statusLabel + LF);
+  cmds.push(LEFT);
+  cmds.push(LF);
+  cmds.push(escRow('Apertura', fmtDateTime(data.openedAt)));
+  if (data.closedAt) {
+    cmds.push(escRow('Cierre', fmtDateTime(data.closedAt)));
+  } else {
+    cmds.push(escRow('Cierre', 'En proceso'));
+  }
+
+  // ── Summary ──
+  cmds.push(divider());
+  cmds.push(BOLD_ON + CENTER + 'RESUMEN' + LF + LEFT + BOLD_OFF);
+  cmds.push(divider());
+
+  cmds.push(escRow('Fondo', '$' + data.openingCash.toFixed(2)));
+  cmds.push(escRow('Efectivo', '$' + data.cashSalesTotal.toFixed(2)));
+  cmds.push(escRow('Tarjeta', '$' + data.cardSalesTotal.toFixed(2)));
+  cmds.push(escRow('Retiros', data.withdrawalsTotal > 0 ? '-$' + data.withdrawalsTotal.toFixed(2) : '$0.00'));
+  cmds.push(BOLD_ON);
+  cmds.push(escRow('Esperado', '$' + data.expectedCash.toFixed(2)));
+  cmds.push(BOLD_OFF);
+  if (data.countedCash != null) {
+    cmds.push(escRow('Contado', '$' + data.countedCash.toFixed(2)));
+  }
+  if (data.difference != null) {
+    const diffStr = (data.difference >= 0 ? '+$' : '-$') + Math.abs(data.difference).toFixed(2);
+    cmds.push(escRow('Diferencia', diffStr));
+  }
+  cmds.push(escRow('Ventas', String(data.salesCount)));
+  cmds.push(escRow('Retiros', String(data.withdrawalsCount)));
+
+  // ── Transactions detail ──
+  if (data.transactions.length > 0) {
+    cmds.push(divider());
+    cmds.push(BOLD_ON + CENTER + 'DETALLE' + LF + LEFT + BOLD_OFF);
+    cmds.push(divider());
+
+    for (const tx of data.transactions) {
+      // Line 1: time + payment method + amount (right-aligned)
+      const amtStr = tx.amount < 0
+        ? '-$' + Math.abs(tx.amount).toFixed(2)
+        : '$' + tx.amount.toFixed(2);
+      const methodShort = tx.paymentMethod.slice(0, 4);
+      const headerLine = tx.time + ' ' + methodShort;
+      cmds.push(escRow(headerLine, amtStr));
+
+      // Line 2: concept (may wrap across multiple lines)
+      const concept = tx.concept;
+      // Split concept into lines that fit in LINE_W - 2 (indented)
+      const maxConceptW = LINE_W - 2;
+      let remaining = concept;
+      while (remaining.length > 0) {
+        const chunk = remaining.slice(0, maxConceptW);
+        remaining = remaining.slice(maxConceptW);
+        cmds.push('  ' + chunk + LF);
+      }
+    }
+  }
+
+  // ── Footer ──
+  cmds.push(divider());
+  const totalTx = data.transactions.reduce((s, tx) => s + tx.amount, 0);
+  cmds.push(BOLD_ON);
+  cmds.push(escRow('TOTAL TX', '$' + totalTx.toFixed(2)));
+  cmds.push(BOLD_OFF);
+  cmds.push(divider());
+  cmds.push(LF);
+  cmds.push(CENTER + 'Fin de corte' + LF);
+  cmds.push(LEFT);
+
+  // Feed + cut
+  cmds.push(LF + LF + LF + LF);
+  cmds.push(CUT);
+
+  return cmds;
+}
+
+/**
+ * Print a corte de caja ticket via QZ Tray ESC/POS.
+ * Throws if no printer is configured or if QZ Tray fails.
+ */
+export async function printCorteDeCaja(data: CorteDeCajaData): Promise<void> {
+  const printerName = getSavedPrinterName();
+  const sessionFolio = data.sessionId.slice(0, 8).toUpperCase();
+
+  console.info(TAG, `📋 Imprimiendo corte de caja — Sesión: #${sessionFolio}`);
+
+  if (!printerName) {
+    console.error(TAG, '❌ No hay impresora configurada.');
+    throw new Error('No hay impresora configurada. Configura tu impresora en el POS.');
+  }
+
+  console.info(TAG, `🖨️ Impresora: "${printerName}"`);
+  const cmds = buildCorteDeCajaReceipt(data);
+  console.info(TAG, `📦 ${cmds.length} fragmentos ESC/POS generados para corte`);
+
+  await printRaw(printerName, cmds);
+  console.info(TAG, `✅ Corte de caja enviado — Sesión: #${sessionFolio}`);
 }

@@ -336,10 +336,13 @@ export const POS = () => {
         const discountTotal = cart.reduce((s, i) => s + (i.discount_amount || 0), 0);
 
         // 1. Insert sale (linked to cash session)
+        // For CASH: store actual received amount (cashInput) so reprint can show change.
+        //   The register uses sale.total for CASH, NOT cash_amount, so this is safe.
+        // For MIXED: store effectiveCash because the register uses cash_amount for split.
         const salePayload: Record<string, unknown> = {
             total: cartTotal,
             payment_method: method,
-            cash_amount: effectiveCash,
+            cash_amount: method === 'CASH' ? cashInput : effectiveCash,
             card_amount: effectiveCard,
             cashier_id: user.id,
             customer_id: customer?.id || null,
@@ -408,7 +411,7 @@ export const POS = () => {
           totalDiscount: totalDiscount,
           total: cartTotal,
           method: method as 'CASH' | 'CARD' | 'MIXED',
-          cashAmount: effectiveCash,
+          cashAmount: cashInput,
           cardAmount: effectiveCard,
           changeAmount,
           customerName: customer ? `${customer.first_name} ${customer.last_name}`.trim() : undefined,
@@ -456,7 +459,7 @@ export const POS = () => {
       // 2. Fetch sale items with product info
       const { data: items, error: itemsErr } = await supabase
         .from('sale_items')
-        .select('quantity, price, discount_amount, discount_reason, product_id, products(product_name, name, size)')
+        .select('quantity, price, discount_amount, discount_reason, product_id, products(product_name, name, size, price)')
         .eq('sale_id', sale.id);
 
       if (itemsErr) throw itemsErr;
@@ -473,19 +476,35 @@ export const POS = () => {
       }
 
       // 4. Build receipt items
+      // NOTE: sale_items.price stores the EFFECTIVE (post-discount) unit price.
+      // We must reconstruct the BASE unit price for the ticket display.
       const receiptItems = (items || []).map((it: any) => {
         const prod = it.products || {};
         const productName = prod.product_name || prod.name || 'Producto';
         const size = prod.size || '';
         const qty = it.quantity || 1;
-        const unitPrice = it.price || 0;
-        const disc = it.discount_amount || 0;
+        const storedPrice = it.price || 0;        // effective (discounted) unit price
+        const disc = it.discount_amount || 0;     // total discount for this line
+        const prodBasePrice = prod.price || 0;    // current base price from products table
+        // Reconstruct base unit price: effective was (base*qty - disc) / qty
+        // So base = storedPrice + disc/qty
+        // Fallback: if discount info is missing, use the product's base price
+        let baseUnitPrice: number;
+        if (disc > 0 && qty > 0) {
+          baseUnitPrice = Math.round((storedPrice + disc / qty) * 100) / 100;
+        } else if (prodBasePrice > 0 && prodBasePrice > storedPrice) {
+          // storedPrice is likely already discounted but discount_amount was lost;
+          // use the product catalog price as the best approximation.
+          baseUnitPrice = prodBasePrice;
+        } else {
+          baseUnitPrice = storedPrice;
+        }
         return {
           name: productName,
           size,
           quantity: qty,
-          unitPrice,
-          lineTotal: unitPrice * qty,
+          unitPrice: baseUnitPrice,
+          lineTotal: baseUnitPrice * qty,
           discount: disc,
           discountReason: it.discount_reason || undefined,
         };

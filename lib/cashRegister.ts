@@ -1,4 +1,6 @@
 import { supabase } from '../supabase';
+import { printCorteDeCaja, buildProductSummary } from './printReceipt';
+import type { CorteDeCajaData, CorteTransaction } from './printReceipt';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -520,4 +522,134 @@ export async function fetchSessionWithdrawals(sessionId: string): Promise<CashSe
     trigger_type: String(d.trigger_type ?? ''),
     notes: d.notes ? String(d.notes) : null,
   }));
+}
+
+// ─── Print Corte de Caja ──────────────────────────────────────────────────────
+
+const normalizePaymentLabel = (raw: string): string => {
+  const m = raw.toLowerCase().trim();
+  if (m.includes('efect') || m === 'cash') return 'Efectivo';
+  if (m.includes('tarj') || m.includes('card')) return 'Tarjeta';
+  if (m.includes('mix')) return 'Mixto';
+  return raw || 'Otro';
+};
+
+/**
+ * Fetch all data for a cash session and print the corte de caja ticket.
+ * Works for both open and closed sessions.
+ */
+export async function fetchAndPrintCorteDeCaja(
+  session: CashSessionSummary,
+): Promise<void> {
+  if (!supabase) throw new Error('Supabase no configurado');
+
+  const sessionId =
+    (session.session_id && session.session_id.length > 8 ? session.session_id : null)
+    ?? ((session as unknown as Record<string, unknown>).id
+      ? String((session as unknown as Record<string, unknown>).id)
+      : '');
+
+  if (!sessionId) throw new Error('No se encontró un ID de sesión válido');
+
+  console.info('[CORTE PRINT] Fetching data for session', sessionId);
+
+  // 1. Fetch sales for this session
+  const sales = await fetchSessionSales(sessionId);
+
+  // 2. Fetch sale_items with product names for all sales
+  let saleItemsMap: Record<string, { quantity: number; name: string }[]> = {};
+  if (sales.length > 0) {
+    try {
+      const saleIds = sales.map((sa) => sa.id);
+      const { data: siData } = await supabase
+        .from('sale_items')
+        .select('sale_id, quantity, products(product_name, name, size, grams)')
+        .in('sale_id', saleIds);
+      if (siData) {
+        for (const row of siData as any[]) {
+          const sid = String(row.sale_id);
+          if (!saleItemsMap[sid]) saleItemsMap[sid] = [];
+          const p = Array.isArray(row.products) ? row.products[0] : row.products;
+          const productName = p?.product_name || p?.name || 'Producto';
+          const size = p?.size || '';
+          const grams = p?.grams ? `${p.grams}g` : '';
+          const fullName = [productName, size, grams].filter(Boolean).join(' ');
+          saleItemsMap[sid].push({
+            quantity: Number(row.quantity ?? 1),
+            name: fullName,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[CORTE PRINT] Could not fetch sale_items:', err);
+    }
+  }
+
+  // 3. Fetch withdrawals
+  const withdrawals = await fetchSessionWithdrawals(sessionId);
+
+  // 4. Build transaction list sorted chronologically
+  const transactions: CorteTransaction[] = [];
+
+  for (const sale of sales) {
+    const d = new Date(sale.created_at);
+    const time = d.toLocaleTimeString('es-MX', {
+      hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Mexico_City',
+    });
+    const folio = sale.id.slice(0, 8).toUpperCase();
+    const items = saleItemsMap[sale.id] || [];
+    const productDesc = buildProductSummary(items);
+    const concept = productDesc
+      ? `Venta #${folio} - ${productDesc}`
+      : `Venta #${folio}`;
+
+    transactions.push({
+      time,
+      concept,
+      paymentMethod: normalizePaymentLabel(sale.payment_method),
+      amount: sale.total,
+    });
+  }
+
+  for (const wd of withdrawals) {
+    const d = new Date(wd.withdrawn_at);
+    const time = d.toLocaleTimeString('es-MX', {
+      hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Mexico_City',
+    });
+    transactions.push({
+      time,
+      concept: wd.reason ? `Retiro - ${wd.reason}` : 'Retiro de caja',
+      paymentMethod: 'Retiro',
+      amount: -wd.amount,
+    });
+  }
+
+  // Sort by original timestamp (sales.created_at / withdrawals.withdrawn_at)
+  const allTimestamps: { ts: string; idx: number }[] = [
+    ...sales.map((s, i) => ({ ts: s.created_at, idx: i })),
+    ...withdrawals.map((w, i) => ({ ts: w.withdrawn_at, idx: sales.length + i })),
+  ];
+  allTimestamps.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+  const sortedTransactions = allTimestamps.map((t) => transactions[t.idx]);
+
+  // 5. Build and print
+  const corteData: CorteDeCajaData = {
+    sessionId,
+    status: session.status === 'open' ? 'open' : 'closed',
+    printDate: new Date(),
+    openedAt: new Date(session.opened_at),
+    closedAt: session.closed_at ? new Date(session.closed_at) : null,
+    openingCash: session.opening_cash,
+    cashSalesTotal: session.cash_sales_total,
+    cardSalesTotal: session.card_sales_total,
+    withdrawalsTotal: session.withdrawals_total,
+    expectedCash: session.expected_cash,
+    countedCash: session.counted_cash,
+    difference: session.difference,
+    salesCount: session.sales_count,
+    withdrawalsCount: session.withdrawals_count,
+    transactions: sortedTransactions,
+  };
+
+  await printCorteDeCaja(corteData);
 }
