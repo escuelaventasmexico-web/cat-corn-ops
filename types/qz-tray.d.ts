@@ -20,6 +20,7 @@ declare module 'qz-tray' {
           resolve: (cert: string) => void,
           reject: (err: Error) => void,
         ) => void,
+        options?: { rejectOnFailure?: boolean },
       ): void;
       setSignatureAlgorithm(algorithm: string): void;
       setSignaturePromise(
@@ -27,7 +28,7 @@ declare module 'qz-tray' {
           toSign: string,
         ) => (
           resolve: (sig: string) => void,
-          reject?: (err: Error) => void,
+          reject: (err: Error) => void,
         ) => void,
       ): void;
     };
