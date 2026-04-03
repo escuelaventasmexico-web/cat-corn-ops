@@ -200,6 +200,7 @@ export interface CorteDeCajaData {
   difference: number | null;
   salesCount: number;
   withdrawalsCount: number;
+  ticketPromedio: number;
   transactions: CorteTransaction[];
 }
 
@@ -289,6 +290,8 @@ export function buildCorteDeCajaReceipt(data: CorteDeCajaData): string[] {
     cmds.push(escRow('Diferencia', diffStr));
   }
   cmds.push(escRow('Ventas', String(data.salesCount)));
+  const ticketPromedioStr = '$' + data.ticketPromedio.toFixed(2);
+  cmds.push(escRow('Ticket Promedio', ticketPromedioStr));
   cmds.push(escRow('Retiros', String(data.withdrawalsCount)));
 
   // ── Transactions detail ──

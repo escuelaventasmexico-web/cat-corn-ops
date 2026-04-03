@@ -633,6 +633,15 @@ export async function fetchAndPrintCorteDeCaja(
   const sortedTransactions = allTimestamps.map((t) => transactions[t.idx]);
 
   // 5. Build and print
+  // Use actual fetched arrays as source of truth for counts (not session.sales_count
+  // which may be stale from the DB view or 0 when built from CashRegisterStatus).
+  const actualSalesCount = sales.length;
+  const actualWithdrawalsCount = withdrawals.length;
+  const totalSalesAmount = sales.reduce((sum, s) => sum + s.total, 0);
+  const ticketPromedio = actualSalesCount > 0
+    ? Math.round((totalSalesAmount / actualSalesCount) * 100) / 100
+    : 0;
+
   const corteData: CorteDeCajaData = {
     sessionId,
     status: session.status === 'open' ? 'open' : 'closed',
@@ -646,8 +655,9 @@ export async function fetchAndPrintCorteDeCaja(
     expectedCash: session.expected_cash,
     countedCash: session.counted_cash,
     difference: session.difference,
-    salesCount: session.sales_count,
-    withdrawalsCount: session.withdrawals_count,
+    salesCount: actualSalesCount,
+    withdrawalsCount: actualWithdrawalsCount,
+    ticketPromedio,
     transactions: sortedTransactions,
   };
 
