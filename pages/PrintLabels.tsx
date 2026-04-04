@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { supabase, Product } from '../supabase';
-import { Printer, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Printer, Loader2, CheckCircle2, AlertCircle, Check } from 'lucide-react';
 import { printLabelViaQZ } from '../lib/printReceipt';
 import type { LabelPrintData } from '../lib/printReceipt';
 
@@ -11,6 +11,39 @@ interface PrintResult {
   barcode_value: string;
   units_printed: number;
 }
+
+// ── Category helpers ─────────────────────────────────────────────────
+
+/** Canonical category buckets */
+const CATEGORIES = [
+  { key: 'salada',   label: 'SALADAS',  emoji: '🧂' },
+  { key: 'caramelo', label: 'CARAMELO', emoji: '🍯' },
+  { key: 'sabores',  label: 'SABORES',  emoji: '🍿' },
+] as const;
+
+/** Map a product's flavor/category to one of the 3 buckets */
+function resolveCategory(p: Product): string {
+  const raw = (p.flavor || p.category || '').toLowerCase();
+  if (raw.includes('salad'))   return 'salada';
+  if (raw.includes('caramel')) return 'caramelo';
+  return 'sabores';
+}
+
+/** Short display name: strip "Palomitas de " prefix, keep it snappy */
+function shortName(p: Product): string {
+  const full = p.product_name || p.name || '';
+  return full
+    .replace(/^palomitas\s+de\s+/i, '')
+    .replace(/^palomitas\s+/i, '');
+}
+
+/** Weight display */
+function weightLabel(p: Product): string {
+  const g = p.grams || p.weight_grams;
+  return g ? `${g}g` : p.size || '';
+}
+
+// ─────────────────────────────────────────────────────────────────────
 
 export const PrintLabels = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -46,6 +79,25 @@ export const PrintLabels = () => {
     load();
   }, []);
 
+  // ── Group products by category ──
+  const grouped = useMemo(() => {
+    const map: Record<string, Product[]> = {};
+    for (const cat of CATEGORIES) map[cat.key] = [];
+
+    for (const p of products) {
+      const cat = resolveCategory(p);
+      if (!map[cat]) map[cat] = [];
+      map[cat].push(p);
+    }
+
+    // Sort each group by weight ascending
+    for (const arr of Object.values(map)) {
+      arr.sort((a, b) => (a.grams || a.weight_grams || 0) - (b.grams || b.weight_grams || 0));
+    }
+
+    return map;
+  }, [products]);
+
   // ── Build label data from product + RPC result ──
   const buildLabelData = (prod: Product, rpc: PrintResult): LabelPrintData => ({
     productName: prod.product_name || prod.name,
@@ -63,7 +115,6 @@ export const PrintLabels = () => {
     setError(null);
 
     try {
-      // 1) Call RPC to register production / deduct inventory
       const { data, error: rpcErr } = await supabase.rpc('print_sku_labels', {
         p_product_id: selectedProductId,
         p_units: units,
@@ -80,7 +131,6 @@ export const PrintLabels = () => {
 
       setResult(res);
 
-      // 2) Print labels via QZ Tray
       const prod = products.find((p) => p.id === selectedProductId);
       if (prod) {
         const labelData = buildLabelData(prod, res);
@@ -89,7 +139,6 @@ export const PrintLabels = () => {
     } catch (err: any) {
       console.error('print_sku_labels error:', err);
       const msg = err?.message || 'Error al imprimir etiquetas';
-      // Distinguish QZ Tray errors from RPC errors
       if (msg.includes('impresora')) {
         setError(msg);
       } else if (msg.includes('QZ') || msg.includes('websocket') || msg.includes('connect')) {
@@ -102,7 +151,7 @@ export const PrintLabels = () => {
     }
   };
 
-  // ── Re-print (no RPC call — just send to printer again) ──
+  // ── Re-print (no RPC call) ──
   const handleReprint = async () => {
     if (!result) return;
     const prod = products.find((p) => p.id === selectedProductId);
@@ -117,7 +166,13 @@ export const PrintLabels = () => {
     }
   };
 
-  // ── Selected product helper ──
+  // ── Select product ──
+  const handleSelectProduct = (id: string) => {
+    setSelectedProductId(id);
+    setResult(null);
+    setError(null);
+  };
+
   const selectedProduct = products.find((p) => p.id === selectedProductId);
 
   return (
@@ -132,30 +187,82 @@ export const PrintLabels = () => {
         </p>
       </div>
 
-      {/* Form card */}
-      <div className="bg-cc-surface rounded-2xl p-6 border border-white/5 max-w-lg space-y-5">
-        {/* Product selector */}
-        <div>
-          <label className="block text-sm text-cc-text-muted mb-1">Producto</label>
-          {fetchingProducts ? (
-            <div className="flex items-center gap-2 text-cc-text-muted">
-              <Loader2 className="animate-spin" size={16} /> Cargando productos…
-            </div>
-          ) : (
-            <select
-              value={selectedProductId}
-              onChange={(e) => { setSelectedProductId(e.target.value); setResult(null); setError(null); }}
-              className="w-full bg-white text-black placeholder-gray-400 border border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cc-primary"
-            >
-              <option value="">— Selecciona un producto —</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.product_name || p.name} – {p.size} {p.sku_code ? `(${p.sku_code})` : ''}
-                </option>
-              ))}
-            </select>
-          )}
+      {/* Product cards by category */}
+      {fetchingProducts ? (
+        <div className="flex items-center gap-2 text-cc-text-muted py-8">
+          <Loader2 className="animate-spin" size={18} /> Cargando productos…
         </div>
+      ) : (
+        <div className="space-y-6">
+          {CATEGORIES.map(({ key, label, emoji }) => {
+            const items = grouped[key];
+            if (!items || items.length === 0) return null;
+
+            return (
+              <section key={key}>
+                <h2 className="text-sm font-bold text-cc-text-muted tracking-widest uppercase mb-3 flex items-center gap-2">
+                  <span className="text-base">{emoji}</span> {label}
+                </h2>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {items.map((p) => {
+                    const isSelected = selectedProductId === p.id;
+
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => handleSelectProduct(p.id)}
+                        className={`
+                          relative text-left rounded-xl p-4 transition-all duration-150 border-2
+                          ${isSelected
+                            ? 'bg-cc-primary/10 border-cc-primary shadow-[0_0_16px_rgba(244,197,66,0.25)]'
+                            : 'bg-neutral-800 border-transparent hover:bg-neutral-700 hover:border-white/10'
+                          }
+                        `}
+                      >
+                        {/* Selection check */}
+                        {isSelected && (
+                          <div className="absolute top-2 right-2 bg-cc-primary rounded-full p-0.5">
+                            <Check size={14} className="text-cc-bg" strokeWidth={3} />
+                          </div>
+                        )}
+
+                        {/* Product info */}
+                        <p className={`font-semibold text-sm leading-tight ${isSelected ? 'text-cc-primary' : 'text-cc-cream'}`}>
+                          {shortName(p)}
+                        </p>
+                        <p className="text-cc-text-muted text-xs mt-1">
+                          {weightLabel(p)}
+                        </p>
+                        {p.sku_code && (
+                          <p className="text-[10px] text-cc-text-muted/60 font-mono mt-1.5">
+                            {p.sku_code}
+                          </p>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Bottom panel: quantity + print */}
+      <div className="bg-cc-surface rounded-2xl p-6 border border-white/5 max-w-lg space-y-5">
+        {/* Selected product summary */}
+        {selectedProduct ? (
+          <div className="bg-cc-bg rounded-lg p-3 text-sm border border-white/5">
+            <p className="text-cc-cream font-semibold">{selectedProduct.product_name || selectedProduct.name} – {selectedProduct.size}</p>
+            <div className="flex gap-4 mt-1 text-cc-text-muted text-xs">
+              <span>SKU: <span className="font-mono text-cc-text-main">{selectedProduct.sku_code || '—'}</span></span>
+              <span>Precio: <span className="text-cc-text-main">${selectedProduct.price?.toFixed(2)}</span></span>
+            </div>
+          </div>
+        ) : (
+          <p className="text-cc-text-muted text-sm">Selecciona un producto arriba para continuar.</p>
+        )}
 
         {/* Units input */}
         <div>
@@ -168,15 +275,6 @@ export const PrintLabels = () => {
             className="w-32 bg-white text-black placeholder-gray-400 border border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cc-primary"
           />
         </div>
-
-        {/* Selected product preview */}
-        {selectedProduct && (
-          <div className="bg-cc-bg rounded-lg p-3 text-sm text-cc-text-muted border border-white/5">
-            <p><span className="text-cc-text-main font-medium">SKU:</span> {selectedProduct.sku_code || '—'}</p>
-            <p><span className="text-cc-text-main font-medium">Código de barras:</span> {selectedProduct.barcode_value || selectedProduct.sku_code || '—'}</p>
-            <p><span className="text-cc-text-main font-medium">Precio:</span> ${selectedProduct.price?.toFixed(2)}</p>
-          </div>
-        )}
 
         {/* Print button */}
         <button
