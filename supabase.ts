@@ -25,6 +25,7 @@ export interface Product {
   bag_sku?: string;
   is_active?: boolean;
   barcode_prefix?: string;
+  barcode_value?: string;
   unit_cost?: number;
 }
 

@@ -362,3 +362,128 @@ export async function printCorteDeCaja(data: CorteDeCajaData): Promise<void> {
   await printRaw(printerName, cmds);
   console.info(TAG, `✅ Corte de caja enviado — Sesión: #${sessionFolio}`);
 }
+
+// ─── Label Printing via QZ Tray ──────────────────────────────────────
+
+/** Data needed to print product labels */
+export interface LabelPrintData {
+  productName: string;
+  size: string;
+  sku: string;
+  barcodeValue: string;
+  price: number;
+}
+
+/**
+ * Build ESC/POS commands for a single product label.
+ *
+ * Layout (centered on 58 mm / 32-char thermal paper):
+ *   ─ Product name (bold)
+ *   ─ Size
+ *   ─ ESC/POS barcode (CODE128, HRI text below)
+ *   ─ SKU
+ *   ─ Price (bold, double size)
+ *   ─ Separator + cut
+ */
+function buildLabelCommands(label: LabelPrintData): string[] {
+  const cmds: string[] = [];
+
+  // ── Init ──
+  cmds.push(INIT);
+
+  // ── Small top margin ──
+  cmds.push(LF);
+
+  // ── Product name (centered, bold) ──
+  cmds.push(CENTER + BOLD_ON);
+  // Wrap name if longer than LINE_W
+  const name = label.productName;
+  for (let i = 0; i < name.length; i += LINE_W) {
+    cmds.push(name.slice(i, i + LINE_W) + LF);
+  }
+  cmds.push(BOLD_OFF);
+
+  // ── Size ──
+  cmds.push(label.size + LF);
+  cmds.push(LF);
+
+  // ── Barcode (ESC/POS native CODE128) ──
+  if (label.barcodeValue) {
+    const bc = label.barcodeValue;
+
+    // HRI (human-readable interpretation) position: below barcode
+    // GS H 2  → print HRI below bars
+    cmds.push(GS + '\x48\x02');
+
+    // HRI font: Font A (normal)
+    // GS f 0
+    cmds.push(GS + '\x66\x00');
+
+    // Barcode width: 2 dots
+    // GS w 2
+    cmds.push(GS + '\x77\x02');
+
+    // Barcode height: 60 dots
+    // GS h 60
+    cmds.push(GS + '\x68\x3C');
+
+    // Print CODE128 barcode
+    // GS k 73 len {data}
+    // 73 = CODE128 (type B auto)
+    const barcodeBytes = '\x1D\x6B\x49' + String.fromCharCode(bc.length) + bc;
+    cmds.push(barcodeBytes);
+
+    cmds.push(LF);
+  }
+
+  cmds.push(LF);
+
+  // ── SKU ──
+  cmds.push(CENTER);
+  cmds.push('SKU: ' + label.sku + LF);
+
+  // ── Price (bold, double size) ──
+  cmds.push(BOLD_ON + DOUBLE_SIZE);
+  cmds.push('$' + label.price.toFixed(2) + LF);
+  cmds.push(NORMAL_SIZE + BOLD_OFF);
+
+  // ── Bottom margin + cut ──
+  cmds.push(LF + LF + LF);
+  cmds.push(CUT);
+
+  return cmds;
+}
+
+/**
+ * Print product labels via QZ Tray ESC/POS.
+ *
+ * Sends `quantity` identical labels to the configured thermal printer.
+ * Uses native ESC/POS CODE128 barcode commands — no image rendering.
+ *
+ * @throws if no printer configured or QZ Tray is not running
+ */
+export async function printLabelViaQZ(
+  label: LabelPrintData,
+  quantity: number,
+): Promise<void> {
+  const printerName = getSavedPrinterName();
+
+  console.info(TAG, `🏷️ Imprimiendo ${quantity} etiqueta(s) — ${label.productName}`);
+
+  if (!printerName) {
+    console.error(TAG, '❌ No hay impresora configurada.');
+    throw new Error('No hay impresora configurada. Configura tu impresora en el POS.');
+  }
+
+  // Build commands: N copies of the same label
+  const allCmds: string[] = [];
+  for (let i = 0; i < quantity; i++) {
+    allCmds.push(...buildLabelCommands(label));
+  }
+
+  console.info(TAG, `🖨️ Impresora: "${printerName}"`);
+  console.info(TAG, `📦 ${allCmds.length} fragmentos ESC/POS para ${quantity} etiqueta(s)`);
+
+  await printRaw(printerName, allCmds);
+  console.info(TAG, `✅ ${quantity} etiqueta(s) enviada(s) — ${label.productName}`);
+}

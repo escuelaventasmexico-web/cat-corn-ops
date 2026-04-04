@@ -12,7 +12,8 @@ import {
   DollarSign,
   Truck,
   Wallet,
-  ClipboardList
+  ClipboardList,
+  Tag
 } from 'lucide-react';
 
 export const Layout = () => {
@@ -28,6 +29,7 @@ export const Layout = () => {
     { to: '/pos', icon: ShoppingCart, label: 'Punto de Venta' },
     { to: '/inventory', icon: Package, label: 'Inventario' },
     { to: '/production', icon: ChefHat, label: 'Producción' },
+    { to: '/print-labels', icon: Tag, label: 'Imprimir Etiquetas' },
     { to: '/waste', icon: Trash2, label: 'Merma' },
     { to: '/ops', icon: Truck, label: 'Logística y Operación' },
     { to: '/sales-history', icon: Receipt, label: 'Historial' },

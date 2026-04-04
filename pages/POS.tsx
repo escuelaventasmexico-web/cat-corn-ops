@@ -115,23 +115,15 @@ export const POS = () => {
     setScanMsg(null);
 
     try {
-      // 1) Search in product_lots by barcode_value
-      const { data: lotData, error: lotErr } = await supabase
-        .from('product_lots')
-        .select('product_id')
+      // 1) Search product by barcode_value
+      const { data: barcodeData } = await supabase
+        .from('products')
+        .select('*')
         .eq('barcode_value', trimmed)
         .limit(1)
         .single();
 
-      if (!lotErr && lotData?.product_id) {
-        // Found a lot — fetch the product
-        const { data: prod } = await supabase
-          .from('products')
-          .select('*')
-          .eq('id', lotData.product_id)
-          .single();
-        if (prod) { addToCart(prod as Product); return; }
-      }
+      if (barcodeData) { addToCart(barcodeData as Product); return; }
 
       // 2) Fallback: search by sku_code in products
       const { data: skuData } = await supabase
@@ -144,7 +136,7 @@ export const POS = () => {
       if (skuData) { addToCart(skuData as Product); return; }
 
       // 3) Not found
-      setScanMsg('Código no encontrado: ' + trimmed);
+      setScanMsg('Producto no encontrado: ' + trimmed);
       setTimeout(() => setScanMsg(null), 3000);
     } catch (err) {
       console.error('Barcode scan error:', err);

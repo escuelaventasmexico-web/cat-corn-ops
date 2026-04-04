@@ -13,6 +13,7 @@ import { Finanzas } from './pages/Finanzas';
 import { CorteDeCaja } from './pages/CorteDeCaja';
 import { Pedidos } from './pages/Pedidos';
 import Ops from './pages/Ops';
+import { PrintLabels } from './pages/PrintLabels';
 import { SupabaseNotConfigured } from './components/SupabaseNotConfigured';
 
 function App() {
@@ -65,6 +66,7 @@ function App() {
           <Route path="/corte-de-caja" element={<CorteDeCaja />} />
           <Route path="/pedidos" element={<Pedidos />} />
           <Route path="/ops" element={<Ops />} />
+          <Route path="/print-labels" element={<PrintLabels />} />
           {/* Placeholders for other routes */}
           <Route path="*" element={<div className="p-8 text-cc-text-muted">Módulo en construcción</div>} />
         </Route>
