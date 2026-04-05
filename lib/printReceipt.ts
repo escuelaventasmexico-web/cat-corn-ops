@@ -447,6 +447,11 @@ function buildLabelCommands(label: LabelPrintData): string[] {
   cmds.push('$' + label.price.toFixed(2) + LF);
   cmds.push(NORMAL_SIZE + BOLD_OFF);
 
+  // ── Day key (small, centered — internal mark) ──
+  const dayMap: Record<number, string> = { 0:'D', 1:'L', 2:'M', 3:'MR', 4:'J', 5:'V', 6:'S' };
+  const todayKey = dayMap[new Date().getDay()];
+  cmds.push(CENTER + todayKey + LF);
+
   // ── Bottom margin + cut ──
   cmds.push(LF + LF + LF);
   cmds.push(CUT);
