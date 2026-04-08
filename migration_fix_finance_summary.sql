@@ -4,8 +4,8 @@
 -- ============================================================================
 -- FIXES:
 --   1. Timezone: use AT TIME ZONE 'America/Mexico_City' instead of ::DATE (UTC)
---   2. Status:   filter sales WHERE status = 'completed' (exclude cancelled)
---   3. Casing:   expense type filter uses UPPER(type) to match 'FIXED'/'VARIABLE'
+--   2. Casing:   expense type filter uses UPPER(type) to match 'FIXED'/'VARIABLE'
+-- NOTE: sales table has no 'status' column — no cancelled-sale filter needed.
 -- ============================================================================
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -49,8 +49,7 @@ BEGIN
     SELECT COALESCE(SUM(total), 0) INTO v_sales_mtd_mxn
     FROM public.sales
     WHERE (created_at AT TIME ZONE 'America/Mexico_City')::DATE
-          BETWEEN p_month_start AND LEAST(CURRENT_DATE, v_month_end)
-      AND status = 'completed';
+          BETWEEN p_month_start AND LEAST(CURRENT_DATE, v_month_end);
 
     -- Sales projection (based on daily average)
     IF v_days_elapsed > 0 THEN
@@ -159,7 +158,6 @@ BEGIN
         FROM public.sales
         WHERE (created_at AT TIME ZONE 'America/Mexico_City')::DATE
               BETWEEN p_month_start AND v_month_end
-          AND status = 'completed'
         GROUP BY (created_at AT TIME ZONE 'America/Mexico_City')::DATE
     ),
     daily_expenses AS (
@@ -224,7 +222,6 @@ BEGIN
         FROM public.sales s
         WHERE (s.created_at AT TIME ZONE 'America/Mexico_City')::DATE
               BETWEEN p_month_start AND LEAST(CURRENT_DATE, v_month_end)
-          AND s.status = 'completed'
         GROUP BY (s.created_at AT TIME ZONE 'America/Mexico_City')::DATE
     )
     SELECT
@@ -293,7 +290,6 @@ BEGIN
         FROM public.sales s
         WHERE (s.created_at AT TIME ZONE 'America/Mexico_City')::DATE
               BETWEEN p_month_start AND v_month_end
-          AND s.status = 'completed'
         GROUP BY (s.created_at AT TIME ZONE 'America/Mexico_City')::DATE
     ),
     -- Previous year daily sales (same month, 1 year back)
@@ -304,7 +300,6 @@ BEGIN
         FROM public.sales s
         WHERE (s.created_at AT TIME ZONE 'America/Mexico_City')::DATE
               BETWEEN v_prev_month_start AND v_prev_month_end
-          AND s.status = 'completed'
         GROUP BY (s.created_at AT TIME ZONE 'America/Mexico_City')::DATE
     )
     SELECT
