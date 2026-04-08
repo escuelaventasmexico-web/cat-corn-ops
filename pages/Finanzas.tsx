@@ -9,7 +9,8 @@ import {
   Receipt,
   Upload,
   ArrowLeft,
-  AlertCircle
+  AlertCircle,
+  BarChart3
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { FinanceChart } from '../components/finance/FinanceChart.tsx';
@@ -19,6 +20,8 @@ import { MonthlyTargetsEditor } from '../components/finance/MonthlyTargetsEditor
 import { ExpenseDocumentsManager } from '../components/finance/ExpenseDocumentsManager.tsx';
 import { PLDetailedView } from '../components/finance/PLDetailedView.tsx';
 import { FixedCostsVsSales } from '../components/finance/FixedCostsVsSales.tsx';
+import { DailyBreakdownModal } from '../components/finance/DailyBreakdownModal.tsx';
+import { MonthCalendar } from '../components/finance/MonthCalendar.tsx';
 
 interface FinanceCard {
   path: string;
@@ -134,6 +137,7 @@ const FinanceResumenTest = () => {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<any>(null);
+  const [showDailyBreakdown, setShowDailyBreakdown] = useState(false);
   
   // Get current month start date
   const now = new Date();
@@ -201,13 +205,22 @@ const FinanceResumenTest = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-3xl font-bold text-cc-cream">Resumen del Mes</h2>
-        <button
-          onClick={() => navigate('/finanzas')}
-          className="flex items-center gap-2 px-4 py-2 bg-cc-surface border border-cc-primary/30 text-cc-cream rounded-lg hover:bg-cc-primary/10 transition-colors"
-        >
-          <ArrowLeft size={20} />
-          Volver
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowDailyBreakdown(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-cc-surface border border-blue-500/30 text-blue-300 rounded-lg hover:bg-blue-500/10 transition-colors text-sm"
+          >
+            <BarChart3 size={18} />
+            Historial Diario
+          </button>
+          <button
+            onClick={() => navigate('/finanzas')}
+            className="flex items-center gap-2 px-4 py-2 bg-cc-surface border border-cc-primary/30 text-cc-cream rounded-lg hover:bg-cc-primary/10 transition-colors"
+          >
+            <ArrowLeft size={20} />
+            Volver
+          </button>
+        </div>
       </div>
 
       {/* Month Info */}
@@ -401,6 +414,19 @@ const FinanceResumenTest = () => {
           <AlertCircle size={48} className="mx-auto mb-4 text-yellow-400" />
           <p className="text-cc-text-muted">No hay datos disponibles para este mes</p>
         </div>
+      )}
+
+      {/* Monthly Calendar */}
+      {!loading && !error && data && (
+        <MonthCalendar monthStartISO={monthStartISO} />
+      )}
+
+      {/* Daily Breakdown Modal */}
+      {showDailyBreakdown && (
+        <DailyBreakdownModal
+          monthStartISO={monthStartISO}
+          onClose={() => setShowDailyBreakdown(false)}
+        />
       )}
     </div>
   );
