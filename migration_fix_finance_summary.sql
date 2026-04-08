@@ -24,6 +24,8 @@ DECLARE
 
     -- Sales
     v_sales_mtd_mxn NUMERIC;
+    v_sales_cash_mxn NUMERIC;
+    v_sales_card_mxn NUMERIC;
     v_sales_projection_mxn NUMERIC;
     v_sales_target_mxn NUMERIC;
 
@@ -46,7 +48,11 @@ BEGIN
     -- ══════════════════════════════════════════════════════════════════
     -- Sales MTD — FIX: timezone Mexico + only completed sales
     -- ══════════════════════════════════════════════════════════════════
-    SELECT COALESCE(SUM(total), 0) INTO v_sales_mtd_mxn
+    SELECT
+        COALESCE(SUM(total), 0),
+        COALESCE(SUM(cash_amount), 0),
+        COALESCE(SUM(card_amount), 0)
+    INTO v_sales_mtd_mxn, v_sales_cash_mxn, v_sales_card_mxn
     FROM public.sales
     WHERE (created_at AT TIME ZONE 'America/Mexico_City')::DATE
           BETWEEN p_month_start AND LEAST(CURRENT_DATE, v_month_end);
@@ -102,6 +108,8 @@ BEGIN
     -- Build JSON result with PNL breakdown
     v_result := json_build_object(
         'sales_mtd_mxn', v_sales_mtd_mxn,
+        'sales_cash_mxn', v_sales_cash_mxn,
+        'sales_card_mxn', v_sales_card_mxn,
         'sales_projection_mxn', v_sales_projection_mxn,
         'sales_target_mxn', v_sales_target_mxn,
         'expenses_fixed_mxn', v_expenses_fixed_mxn,
