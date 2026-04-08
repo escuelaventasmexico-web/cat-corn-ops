@@ -46,16 +46,20 @@ BEGIN
     v_days_elapsed := EXTRACT(DAY FROM LEAST(CURRENT_DATE, v_month_end));
 
     -- ══════════════════════════════════════════════════════════════════
-    -- Sales MTD — FIX: timezone Mexico + only completed sales
+    -- Sales MTD — FIX: timezone Mexico
+    -- cash_amount in DB stores what customer handed over (includes change),
+    -- so we DERIVE cash as total − card to guarantee cash + card = total.
     -- ══════════════════════════════════════════════════════════════════
     SELECT
         COALESCE(SUM(total), 0),
-        COALESCE(SUM(cash_amount), 0),
         COALESCE(SUM(card_amount), 0)
-    INTO v_sales_mtd_mxn, v_sales_cash_mxn, v_sales_card_mxn
+    INTO v_sales_mtd_mxn, v_sales_card_mxn
     FROM public.sales
     WHERE (created_at AT TIME ZONE 'America/Mexico_City')::DATE
           BETWEEN p_month_start AND LEAST(CURRENT_DATE, v_month_end);
+
+    -- Derive cash = total - card (guarantees cash + card = total always)
+    v_sales_cash_mxn := v_sales_mtd_mxn - v_sales_card_mxn;
 
     -- Sales projection (based on daily average)
     IF v_days_elapsed > 0 THEN
