@@ -4,7 +4,7 @@
 -- ============================================================================
 -- FIXES:
 --   1. Timezone: use AT TIME ZONE 'America/Mexico_City' instead of ::DATE (UTC)
---   2. Casing:   expense type filter uses UPPER(type) to match 'FIXED'/'VARIABLE'
+--   2. Casing:   expense type is an enum — use type::TEXT instead of UPPER(type)
 -- NOTE: sales table has no 'status' column — no cancelled-sale filter needed.
 -- ============================================================================
 
@@ -69,26 +69,26 @@ BEGIN
     WHERE active = true;
 
     -- ══════════════════════════════════════════════════════════════════
-    -- Expenses — FIX: use UPPER(type) to match constraint casing
+    -- Expenses — FIX: cast enum type::TEXT for comparison
     -- ══════════════════════════════════════════════════════════════════
 
     -- Expenses: Fixed (paid)
     SELECT COALESCE(SUM(amount_mxn), 0) INTO v_expenses_fixed_mxn
     FROM public.expenses
     WHERE expense_date BETWEEN p_month_start AND v_month_end
-      AND UPPER(type) = 'FIXED';
+      AND type::TEXT = 'FIXED';
 
     -- Expenses: Variable
     SELECT COALESCE(SUM(amount_mxn), 0) INTO v_expenses_variable_mxn
     FROM public.expenses
     WHERE expense_date BETWEEN p_month_start AND v_month_end
-      AND UPPER(type) = 'VARIABLE';
+      AND type::TEXT = 'VARIABLE';
 
     -- Expenses: Other (anything not FIXED or VARIABLE)
     SELECT COALESCE(SUM(amount_mxn), 0) INTO v_expenses_other_mxn
     FROM public.expenses
     WHERE expense_date BETWEEN p_month_start AND v_month_end
-      AND UPPER(type) NOT IN ('FIXED', 'VARIABLE');
+      AND type::TEXT NOT IN ('FIXED', 'VARIABLE');
 
     -- Total expenses (sum of all types)
     v_expenses_total_mxn := v_expenses_fixed_mxn + v_expenses_variable_mxn + v_expenses_other_mxn;
