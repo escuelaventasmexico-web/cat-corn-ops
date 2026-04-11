@@ -4,7 +4,7 @@ import type { Customer } from '../supabase';
 import { normalizePhone, fetchCustomerByPhoneNorm, fetchCustomerById, createCustomerRecord, fetchCustomersList } from '../lib/loyalty';
 import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion } from '../lib/promotions';
 import type { PromotionCode } from '../lib/promotions';
-import { Search, Plus, Minus, CreditCard, Banknote, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings } from 'lucide-react';
+import { Search, Plus, Minus, CreditCard, Banknote, Landmark, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings } from 'lucide-react';
 import { fetchCashStatus, getOpenSessionId, EMPTY_CASH_STATUS } from '../lib/cashRegister';
 import type { CashRegisterStatus } from '../lib/cashRegister';
 import { CashRegisterStatusPanel } from '../components/CashRegisterStatus';
@@ -50,6 +50,7 @@ export const POS = () => {
   // Payment input state
   const [cashInput, setCashInput] = useState<number>(0);
   const [cardInput, setCardInput] = useState<number>(0);
+  const [transferInput, setTransferInput] = useState<number>(0);
 
   // Instagram promo state
   const [instagramPromoActive, setInstagramPromoActive] = useState(false);
@@ -288,9 +289,9 @@ export const POS = () => {
   }, [instagramPromoActive, cart]);
 
   // Split-payment derived values
-  const paymentTotal = cashInput + cardInput;
+  const paymentTotal = cashInput + cardInput + transferInput;
   const paymentRemaining = cartTotal - paymentTotal;
-  const changeAmount = paymentTotal > cartTotal ? paymentTotal - cartTotal : 0;
+  const changeAmount = transferInput > 0 ? 0 : paymentTotal > cartTotal ? paymentTotal - cartTotal : 0;
   const isPaymentSufficient = paymentTotal >= cartTotal && cartTotal > 0;
 
   // Promo/loyalty mutual exclusion
@@ -308,11 +309,26 @@ export const POS = () => {
       return;
     }
 
+    // Transferencia must be a single-method payment (no mixed with cash/card)
+    if (transferInput > 0 && (cashInput > 0 || cardInput > 0)) {
+      alert('La transferencia no se puede combinar con efectivo o tarjeta en esta pantalla.');
+      return;
+    }
+    if (transferInput > 0 && Math.abs(transferInput - cartTotal) > 0.009) {
+      alert('Para transferencia captura exactamente el total del ticket.');
+      return;
+    }
+
     // Determine actual amounts (change only applies to cash)
-    const effectiveCash = Math.min(cashInput, cartTotal - cardInput);
+    const effectiveCash = Math.min(cashInput, cartTotal - cardInput - transferInput);
     const effectiveCard = cardInput;
-    const method = effectiveCash > 0 && effectiveCard > 0 ? 'MIXED'
-      : effectiveCard > 0 ? 'CARD' : 'CASH';
+    const method = transferInput > 0
+      ? 'TRANSFER'
+      : effectiveCash > 0 && effectiveCard > 0
+        ? 'MIXED'
+        : effectiveCard > 0
+          ? 'CARD'
+          : 'CASH';
 
     setProcessing(true);
 
@@ -334,8 +350,9 @@ export const POS = () => {
         const salePayload: Record<string, unknown> = {
             total: cartTotal,
             payment_method: method,
-            cash_amount: method === 'CASH' ? cashInput : effectiveCash,
-            card_amount: effectiveCard,
+          cash_amount: method === 'CASH' ? cashInput : method === 'MIXED' ? effectiveCash : 0,
+          card_amount: method === 'CARD' || method === 'MIXED' ? effectiveCard : 0,
+          transfer_amount: method === 'TRANSFER' ? cartTotal : 0,
             cashier_id: user.id,
             customer_id: customer?.id || null,
             loyalty_reward_applied: rewardApplied,
@@ -402,7 +419,7 @@ export const POS = () => {
           subtotal: cartSubtotal,
           totalDiscount: totalDiscount,
           total: cartTotal,
-          method: method as 'CASH' | 'CARD' | 'MIXED',
+          method: method as 'CASH' | 'CARD' | 'MIXED' | 'TRANSFER',
           cashAmount: cashInput,
           cardAmount: effectiveCard,
           changeAmount,
@@ -415,6 +432,7 @@ export const POS = () => {
         setInstagramPromoActive(false);
         setCashInput(0);
         setCardInput(0);
+        setTransferInput(0);
 
         // Show print-ticket modal
         console.info('[POS] ✅ Venta guardada — Folio:', sale.id.slice(0, 8).toUpperCase(), 'Total: $' + cartTotal.toFixed(2));
@@ -505,10 +523,18 @@ export const POS = () => {
       const subtotal = receiptItems.reduce((s: number, i: any) => s + i.lineTotal, 0);
       const totalDiscount = receiptItems.reduce((s: number, i: any) => s + (i.discount || 0), 0);
 
-      const method = (sale.payment_method || 'CASH').toUpperCase() as 'CASH' | 'CARD' | 'MIXED';
-      const cashAmt = sale.cash_amount || (method === 'CARD' ? 0 : sale.total);
-      const cardAmt = sale.card_amount || (method === 'CARD' ? sale.total : 0);
-      const change = method !== 'CARD' ? Math.max(0, cashAmt + cardAmt - sale.total) : 0;
+      const method = (sale.payment_method || 'CASH').toUpperCase() as 'CASH' | 'CARD' | 'MIXED' | 'TRANSFER';
+      const cashAmt = method === 'CASH'
+        ? Number(sale.cash_amount || sale.total)
+        : method === 'MIXED'
+          ? Number(sale.cash_amount || 0)
+          : 0;
+      const cardAmt = method === 'CARD'
+        ? Number(sale.card_amount || sale.total)
+        : method === 'MIXED'
+          ? Number(sale.card_amount || 0)
+          : 0;
+      const change = method === 'CASH' ? Math.max(0, cashAmt - sale.total) : 0;
 
       const receiptData: ReceiptData = {
         saleId: sale.id,
@@ -1115,8 +1141,8 @@ export const POS = () => {
               </div>
             )}
             <div className="space-y-3">
-              {/* Cash + Card inputs */}
-              <div className="grid grid-cols-2 gap-3">
+              {/* Cash + Card + Transfer inputs */}
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="flex items-center gap-1.5 text-xs font-medium text-cc-text-muted mb-1.5">
                     <Banknote size={12} className="text-cc-primary" /> Efectivo
@@ -1151,6 +1177,23 @@ export const POS = () => {
                     />
                   </div>
                 </div>
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-cc-text-muted mb-1.5">
+                    <Landmark size={12} className="text-violet-300" /> Transferencia
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cc-text-muted font-semibold">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={transferInput || ''}
+                      onChange={(e) => setTransferInput(parseFloat(e.target.value) || 0)}
+                      className="w-full bg-black/30 border border-white/10 rounded-lg pl-7 pr-3 py-2.5 text-lg font-bold text-cc-cream focus:ring-2 focus:ring-violet-400 outline-none text-right"
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Quick amount buttons (apply to cash) */}
@@ -1171,25 +1214,32 @@ export const POS = () => {
               </div>
 
               {/* Quick: pay full with one method */}
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button
-                  onClick={() => { setCashInput(cartTotal); setCardInput(0); }}
+                  onClick={() => { setCashInput(cartTotal); setCardInput(0); setTransferInput(0); }}
                   disabled={cart.length === 0}
                   className="py-1.5 text-[10px] font-bold rounded-md border bg-white/5 border-white/10 text-cc-text-muted hover:bg-cc-primary/15 hover:text-cc-primary hover:border-cc-primary/30 transition-all disabled:opacity-30"
                 >
                   Todo efectivo
                 </button>
                 <button
-                  onClick={() => { setCardInput(cartTotal); setCashInput(0); }}
+                  onClick={() => { setCardInput(cartTotal); setCashInput(0); setTransferInput(0); }}
                   disabled={cart.length === 0}
                   className="py-1.5 text-[10px] font-bold rounded-md border bg-white/5 border-white/10 text-cc-text-muted hover:bg-cc-accent/15 hover:text-cc-accent hover:border-cc-accent/30 transition-all disabled:opacity-30"
                 >
                   Todo tarjeta
                 </button>
+                <button
+                  onClick={() => { setTransferInput(cartTotal); setCashInput(0); setCardInput(0); }}
+                  disabled={cart.length === 0}
+                  className="py-1.5 text-[10px] font-bold rounded-md border bg-white/5 border-white/10 text-cc-text-muted hover:bg-violet-500/15 hover:text-violet-300 hover:border-violet-400/30 transition-all disabled:opacity-30"
+                >
+                  Todo transferencia
+                </button>
               </div>
 
               {/* Payment summary */}
-              {(cashInput > 0 || cardInput > 0) && (
+              {(cashInput > 0 || cardInput > 0 || transferInput > 0) && (
                 <div className="space-y-1.5 px-3 py-2.5 bg-black/30 rounded-lg border border-white/10">
                   <div className="flex justify-between text-xs">
                     <span className="text-cc-text-muted">Capturado</span>
@@ -1211,6 +1261,12 @@ export const POS = () => {
                     <div className="flex justify-between text-xs pt-1 border-t border-white/5">
                       <span className="text-cc-text-muted">Método</span>
                       <span className="text-cc-accent font-semibold">Mixto</span>
+                    </div>
+                  )}
+                  {transferInput > 0 && (
+                    <div className="flex justify-between text-xs pt-1 border-t border-white/5">
+                      <span className="text-cc-text-muted">Método</span>
+                      <span className="text-violet-300 font-semibold">Transferencia</span>
                     </div>
                   )}
                 </div>

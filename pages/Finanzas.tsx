@@ -305,7 +305,7 @@ const FinanceResumenTest = () => {
               <p className="text-3xl font-bold text-cc-cream">{formatMXN(data.sales_mtd_mxn)}</p>
               <p className="text-xs text-cc-text-muted mt-1">MTD (Month to Date)</p>
 
-              {/* Desglose efectivo / tarjeta */}
+              {/* Desglose efectivo / tarjeta / transferencia */}
               <div className="mt-3 space-y-1 text-xs text-cc-text-muted">
                 <div className="flex justify-between">
                   <span>💵 Efectivo:</span>
@@ -314,6 +314,10 @@ const FinanceResumenTest = () => {
                 <div className="flex justify-between">
                   <span>💳 Tarjeta:</span>
                   <span className="text-cc-cream">{formatMXN(data.sales_card_mxn || 0)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>🏦 Transferencia:</span>
+                  <span className="text-cc-cream">{formatMXN(data.sales_transfer_mxn || 0)}</span>
                 </div>
               </div>
             </div>

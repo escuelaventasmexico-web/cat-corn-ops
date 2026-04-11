@@ -55,6 +55,7 @@ export function buildEscPosReceipt(data: ReceiptData): string[] {
   });
   const methodLabel =
     data.method === 'MIXED' ? 'Mixto'
+      : data.method === 'TRANSFER' ? 'Transferencia'
       : data.method === 'CARD' ? 'Tarjeta' : 'Efectivo';
 
   const cmds: string[] = [];

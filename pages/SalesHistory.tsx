@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
-import { Receipt, X, CreditCard, Banknote, Download, Calendar, Filter } from 'lucide-react';
+import { Receipt, X, CreditCard, Banknote, Landmark, Download, Calendar, Filter } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { formatDateTimeMX } from '../lib/datetime';
 
@@ -52,11 +52,12 @@ export const SalesHistory = () => {
 
   // --- Helpers ---
 
-  /** Normaliza payment_method a 'cash' | 'card' | 'other' sin importar variantes */
-  const normalizePaymentMethod = (raw: string | null | undefined): 'cash' | 'card' | 'other' => {
+  /** Normaliza payment_method a 'cash' | 'card' | 'transfer' | 'other' sin importar variantes */
+  const normalizePaymentMethod = (raw: string | null | undefined): 'cash' | 'card' | 'transfer' | 'other' => {
     const m = (raw || '').toLowerCase().trim();
     if (m.includes('efect') || m === 'cash') return 'cash';
     if (m.includes('tarj') || m.includes('card')) return 'card';
+    if (m.includes('transfer') || m === 'transfer') return 'transfer';
     return 'other';
   };
 
@@ -271,6 +272,7 @@ export const SalesHistory = () => {
     const norm = normalizePaymentMethod(method);
     if (norm === 'cash') return <Banknote size={16} className="text-green-400" />;
     if (norm === 'card') return <CreditCard size={16} className="text-blue-400" />;
+    if (norm === 'transfer') return <Landmark size={16} className="text-violet-400" />;
     return <Receipt size={16} />;
   };
 
@@ -278,6 +280,7 @@ export const SalesHistory = () => {
     const norm = normalizePaymentMethod(method);
     if (norm === 'cash') return 'Efectivo';
     if (norm === 'card') return 'Tarjeta';
+    if (norm === 'transfer') return 'Transferencia';
     return method || 'Otro';
   };
 
@@ -354,6 +357,9 @@ export const SalesHistory = () => {
   const cardTotal = sales
     .filter(s => normalizePaymentMethod(s.payment_method) === 'card')
     .reduce((sum, s) => sum + Number(s.total || 0), 0);
+  const transferTotal = sales
+    .filter(s => normalizePaymentMethod(s.payment_method) === 'transfer')
+    .reduce((sum, s) => sum + Number(s.total || 0), 0);
   const otherTotal = sales
     .filter(s => normalizePaymentMethod(s.payment_method) === 'other')
     .reduce((sum, s) => sum + Number(s.total || 0), 0);
@@ -367,6 +373,7 @@ export const SalesHistory = () => {
   const paymentChartData = [
     { name: 'Efectivo', value: cashTotal, color: '#4CAF50' },
     { name: 'Tarjeta', value: cardTotal, color: '#2196F3' },
+    { name: 'Transferencia', value: transferTotal, color: '#8B5CF6' },
     { name: 'Otro', value: otherTotal, color: '#FF9800' }
   ].filter(item => item.value > 0);
 
@@ -507,6 +514,22 @@ export const SalesHistory = () => {
                   {sales.filter(s => normalizePaymentMethod(s.payment_method) === 'card').length} ventas
                 </div>
               </div>
+
+              {transferTotal > 0 && (
+                <div className="bg-black/20 p-4 rounded-lg border border-white/5">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 rounded bg-violet-500"></div>
+                      <span className="text-cc-text-muted">Transferencia</span>
+                    </div>
+                    <Landmark size={20} className="text-violet-400" />
+                  </div>
+                  <div className="text-2xl font-bold text-cc-cream">${transferTotal.toFixed(2)}</div>
+                  <div className="text-xs text-cc-text-muted mt-1">
+                    {sales.filter(s => normalizePaymentMethod(s.payment_method) === 'transfer').length} ventas
+                  </div>
+                </div>
+              )}
               
               <div className="bg-cc-primary/10 p-4 rounded-lg border border-cc-primary/20">
                 <div className="text-sm text-cc-text-muted mb-1">Total General</div>

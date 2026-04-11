@@ -37,6 +37,7 @@ const normalizePaymentLabel = (raw: string): string => {
   const m = raw.toLowerCase().trim();
   if (m.includes('efect') || m === 'cash') return 'Efectivo';
   if (m.includes('tarj') || m.includes('card')) return 'Tarjeta';
+  if (m.includes('transfer')) return 'Transferencia';
   if (m.includes('mix')) return 'Mixto';
   return raw || 'Otro';
 };
@@ -45,6 +46,7 @@ const paymentColor = (raw: string): string => {
   const m = raw.toLowerCase().trim();
   if (m.includes('efect') || m === 'cash') return 'text-green-400';
   if (m.includes('tarj') || m.includes('card')) return 'text-blue-400';
+  if (m.includes('transfer')) return 'text-violet-300';
   return 'text-cc-text-muted';
 };
 

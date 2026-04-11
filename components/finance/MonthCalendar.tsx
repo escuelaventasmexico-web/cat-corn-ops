@@ -7,6 +7,7 @@ interface CalendarDay {
   total_sales: number;
   cash_sales: number;
   card_sales: number;
+  transfer_sales: number;
   ticket_count: number;
   avg_ticket: number;
   prev_year_sales: number;
@@ -231,6 +232,11 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
             <div className="bg-white/[0.03] border border-white/5 rounded-lg p-3">
               <p className="text-[10px] text-cc-text-muted uppercase tracking-wider">Tarjeta</p>
               <p className="text-lg font-bold text-cc-cream">{fmt(selectedDay.card_sales)}</p>
+            </div>
+            {/* Transfer */}
+            <div className="bg-white/[0.03] border border-white/5 rounded-lg p-3">
+              <p className="text-[10px] text-cc-text-muted uppercase tracking-wider">Transferencia</p>
+              <p className="text-lg font-bold text-cc-cream">{fmt(selectedDay.transfer_sales)}</p>
             </div>
             {/* Tickets */}
             <div className="bg-white/[0.03] border border-white/5 rounded-lg p-3">

@@ -22,6 +22,7 @@ import {
   TrendingUp,
   Popcorn,
   Download,
+  Landmark,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
@@ -120,7 +121,7 @@ export const Pedidos = () => {
 
   /* ── Checkout modal ── */
   const [orderToCheckout, setOrderToCheckout] = useState<Order | null>(null);
-  const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState<'CASH' | 'CARD'>('CASH');
+  const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState<'CASH' | 'CARD' | 'TRANSFER'>('CASH');
   const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   /* ── Filtered products for the form ── */
@@ -286,10 +287,11 @@ export const Pedidos = () => {
         payment_method: checkoutPaymentMethod,
         cash_amount: checkoutPaymentMethod === 'CASH' ? total : 0,
         card_amount: checkoutPaymentMethod === 'CARD' ? total : 0,
+        transfer_amount: checkoutPaymentMethod === 'TRANSFER' ? total : 0,
         customer_id: null,
         loyalty_reward_applied: false,
         loyalty_discount_amount: 0,
-        promotion_code: null,
+        promotion_code: 'ORDER_CHECKOUT',
       };
       if (cashSessionId) {
         salePayload.cash_session_id = cashSessionId;
@@ -808,21 +810,21 @@ export const Pedidos = () => {
       {/* ── Checkout order modal ── */}
       {orderToCheckout && (
         <div
-          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black z-50 flex items-center justify-center p-4"
           onClick={() => !checkoutLoading && setOrderToCheckout(null)}
         >
           <div
-            className="bg-cc-surface border border-white/10 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            className="bg-neutral-950 border border-neutral-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="p-5 border-b border-white/10 bg-white/5 flex items-center justify-between">
+            <div className="p-5 border-b border-neutral-800 bg-neutral-900 flex items-center justify-between">
               <h3 className="text-lg font-bold text-cc-cream flex items-center gap-2">
                 <ShoppingCart size={20} className="text-green-400" /> Cobrar pedido
               </h3>
               <button
                 onClick={() => !checkoutLoading && setOrderToCheckout(null)}
-                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                className="p-2 hover:bg-neutral-800 rounded-lg transition-colors"
               >
                 <X size={18} className="text-cc-text-muted" />
               </button>
@@ -850,7 +852,7 @@ export const Pedidos = () => {
                   <span className="text-cc-text-muted">Precio unitario</span>
                   <span className="text-cc-text-main">${(orderToCheckout.products?.price ?? 0).toFixed(2)}</span>
                 </div>
-                <div className="border-t border-white/10 pt-2 flex justify-between">
+                <div className="border-t border-neutral-800 pt-2 flex justify-between">
                   <span className="text-cc-cream font-bold">Total estimado</span>
                   <span className="text-xl font-bold text-cc-primary">${checkoutTotal.toFixed(2)}</span>
                 </div>
@@ -859,13 +861,13 @@ export const Pedidos = () => {
               {/* Payment method */}
               <div>
                 <label className="text-xs text-cc-text-muted mb-2 block">Método de pago</label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     onClick={() => setCheckoutPaymentMethod('CASH')}
                     className={`flex items-center justify-center gap-2 py-3 rounded-lg border text-sm font-bold transition-all ${
                       checkoutPaymentMethod === 'CASH'
-                        ? 'bg-green-500/20 border-green-500/50 text-green-400 shadow-[0_0_10px_rgba(34,197,94,0.15)]'
-                        : 'bg-black/30 border-white/10 text-cc-text-muted hover:border-white/20'
+                        ? 'bg-green-950 border-green-700 text-green-400 shadow-[0_0_10px_rgba(34,197,94,0.15)]'
+                        : 'bg-neutral-900 border-neutral-700 text-cc-text-muted hover:border-neutral-600'
                     }`}
                   >
                     <Banknote size={18} /> Efectivo
@@ -874,11 +876,21 @@ export const Pedidos = () => {
                     onClick={() => setCheckoutPaymentMethod('CARD')}
                     className={`flex items-center justify-center gap-2 py-3 rounded-lg border text-sm font-bold transition-all ${
                       checkoutPaymentMethod === 'CARD'
-                        ? 'bg-blue-500/20 border-blue-500/50 text-blue-400 shadow-[0_0_10px_rgba(59,130,246,0.15)]'
-                        : 'bg-black/30 border-white/10 text-cc-text-muted hover:border-white/20'
+                        ? 'bg-blue-950 border-blue-700 text-blue-400 shadow-[0_0_10px_rgba(59,130,246,0.15)]'
+                        : 'bg-neutral-900 border-neutral-700 text-cc-text-muted hover:border-neutral-600'
                     }`}
                   >
                     <CreditCard size={18} /> Tarjeta
+                  </button>
+                  <button
+                    onClick={() => setCheckoutPaymentMethod('TRANSFER')}
+                    className={`flex items-center justify-center gap-2 py-3 rounded-lg border text-sm font-bold transition-all ${
+                      checkoutPaymentMethod === 'TRANSFER'
+                        ? 'bg-violet-950 border-violet-700 text-violet-300 shadow-[0_0_10px_rgba(139,92,246,0.15)]'
+                        : 'bg-neutral-900 border-neutral-700 text-cc-text-muted hover:border-neutral-600'
+                    }`}
+                  >
+                    <Landmark size={18} /> Transferencia
                   </button>
                 </div>
               </div>
@@ -892,11 +904,11 @@ export const Pedidos = () => {
             </div>
 
             {/* Footer */}
-            <div className="p-5 border-t border-white/10 bg-white/5 flex gap-3">
+            <div className="p-5 border-t border-neutral-800 bg-neutral-900 flex gap-3">
               <button
                 onClick={() => setOrderToCheckout(null)}
                 disabled={checkoutLoading}
-                className="flex-1 py-2.5 text-sm font-semibold text-cc-text-muted bg-black/30 border border-white/10 rounded-lg hover:bg-white/5 transition-colors disabled:opacity-50"
+                className="flex-1 py-2.5 text-sm font-semibold text-cc-text-muted bg-neutral-900 border border-neutral-700 rounded-lg hover:bg-neutral-800 transition-colors disabled:opacity-50"
               >
                 Cancelar
               </button>

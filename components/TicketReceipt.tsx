@@ -17,7 +17,7 @@ export interface ReceiptData {
   subtotal: number;
   totalDiscount: number;
   total: number;
-  method: 'CASH' | 'CARD' | 'MIXED';
+  method: 'CASH' | 'CARD' | 'MIXED' | 'TRANSFER';
   cashAmount: number;
   cardAmount: number;
   changeAmount: number;
@@ -41,6 +41,8 @@ export const TicketReceipt = forwardRef<HTMLDivElement, { data: ReceiptData }>(
     const methodLabel =
       data.method === 'MIXED'
         ? 'Mixto'
+        : data.method === 'TRANSFER'
+          ? 'Transferencia'
         : data.method === 'CARD'
           ? 'Tarjeta'
           : 'Efectivo';

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
-import { DollarSign, ShoppingBag, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
+import { DollarSign, ShoppingBag, AlertTriangle, TrendingUp, TrendingDown, Banknote, CreditCard, Landmark, Store, Receipt } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 interface TopProduct {
@@ -24,6 +24,7 @@ export const Dashboard = () => {
   const [topMonthProducts, setTopMonthProducts] = useState<TopProduct[]>([]);
   const [topMode, setTopMode] = useState<'day' | 'month'>('day');
   const [chartData, setChartData] = useState<any[]>([]);
+  const [breakdown, setBreakdown] = useState({ cajaTotal: 0, cajaCash: 0, cajaCard: 0, cajaMixed: 0, pedidosTotal: 0, pedidosCash: 0, pedidosCard: 0, pedidosTransfer: 0 });
 
   useEffect(() => {
     loadDashboardData();
@@ -48,27 +49,43 @@ export const Dashboard = () => {
 
       if (!supabase) return;
 
-      // 1. Sales Today - total and count (also get payment_method for chart)
+      // 1. Sales Today - total and count (also get payment_method + promotion_code for breakdown)
       const { data: salesToday } = await supabase
         .from('sales')
-        .select('total, payment_method')
+        .select('total, payment_method, promotion_code')
         .gte('created_at', todayStr)
         .lt('created_at', tomorrowStr);
       
       const totalToday = salesToday?.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
       const ordersToday = salesToday?.length || 0;
 
-      // Calculate sales by payment method for chart (case-insensitive)
+      // Split by origin: ORDER_CHECKOUT = pedido, everything else = caja directa
       const normPM = (m: string) => (m || '').toUpperCase().trim();
-      const cashTotal = salesToday?.filter(s => normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const cardTotal = salesToday?.filter(s => normPM(s.payment_method) === 'CARD').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const mixedTotal = salesToday?.filter(s => normPM(s.payment_method) === 'MIXED').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      
+      const isOrder = (s: any) => s.promotion_code === 'ORDER_CHECKOUT';
+
+      // Caja directa (POS)
+      const cajaCash = salesToday?.filter(s => !isOrder(s) && normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const cajaCard = salesToday?.filter(s => !isOrder(s) && normPM(s.payment_method) === 'CARD').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const cajaMixed = salesToday?.filter(s => !isOrder(s) && normPM(s.payment_method) === 'MIXED').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const cajaTotal = cajaCash + cajaCard + cajaMixed;
+
+      // Pedidos (orders)
+      const pedidosCash = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const pedidosCard = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'CARD').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const pedidosTransfer = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'TRANSFER').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const pedidosTotal = pedidosCash + pedidosCard + pedidosTransfer;
+
       const paymentMethodChart = [
-        { name: 'Efectivo', amount: cashTotal },
-        { name: 'Tarjeta', amount: cardTotal },
-        { name: 'Mixto', amount: mixedTotal },
+        { name: 'Caja Efectivo', amount: cajaCash, color: '#4CAF50' },
+        { name: 'Caja Tarjeta', amount: cajaCard, color: '#2196F3' },
+        { name: 'Pedidos Efectivo', amount: pedidosCash, color: '#F59E0B' },
+        { name: 'Pedidos Tarjeta', amount: pedidosCard, color: '#06B6D4' },
+        { name: 'Pedidos Transf.', amount: pedidosTransfer, color: '#8B5CF6' },
+        { name: 'Caja Mixto', amount: cajaMixed, color: '#F97316' },
       ].filter(d => d.amount > 0);
+
+      // Breakdown summary for the panel
+      const breakdownSummary = { cajaTotal, cajaCash, cajaCard, cajaMixed, pedidosTotal, pedidosCash, pedidosCard, pedidosTransfer };
 
       // 2. Sales Yesterday - for percentage calculation
       const { data: salesYesterday } = await supabase
@@ -239,6 +256,7 @@ export const Dashboard = () => {
       setTopProducts(topProductsList);
       setTopMonthProducts(topMonthList);
       setChartData(paymentMethodChart);
+      setBreakdown(breakdownSummary);
     } catch (error) {
       console.error('Error loading dashboard data:', error);
     } finally {
@@ -289,18 +307,30 @@ export const Dashboard = () => {
         </div>
 
         {/* KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
             <StatCard 
-                title="Ventas del Día" 
+                title="Venta Caja" 
+                value={`$${breakdown.cajaTotal.toFixed(2)}`} 
+                icon={Store} 
+                color="bg-cc-primary"
+            />
+            <StatCard 
+                title="Venta Pedidos" 
+                value={`$${breakdown.pedidosTotal.toFixed(2)}`} 
+                icon={ShoppingBag} 
+                color="bg-violet-400"
+            />
+            <StatCard 
+                title="Total del Día" 
                 value={`$${stats.salesToday.toFixed(2)}`} 
                 icon={DollarSign} 
                 trend={true}
-                color="bg-cc-primary"
+                color="bg-green-500"
             />
             <StatCard 
                 title="Tickets Cobrados" 
                 value={stats.ordersToday} 
-                icon={ShoppingBag} 
+                icon={Receipt} 
                 color="bg-cc-accent"
                 subtitle={{
                   label: 'Ticket Promedio',
@@ -313,22 +343,83 @@ export const Dashboard = () => {
                 icon={AlertTriangle} 
                 color="bg-red-400"
             />
-            <StatCard 
-                title="Merma Registrada" 
-                value="0.00kg" 
-                icon={TrendingDown} 
-                color="bg-orange-400"
-            />
         </div>
 
         {/* Charts & Activity */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 bg-cc-surface p-6 rounded-xl border border-white/5">
                 <div className="mb-4">
-                    <h3 className="text-lg font-bold text-cc-cream mb-1">Ventas del día por método de pago</h3>
-                    <p className="text-xs text-cc-text-muted">Total vendido hoy (MXN) por método de pago</p>
+                    <h3 className="text-lg font-bold text-cc-cream mb-1">Desglose de ventas del día</h3>
+                    <p className="text-xs text-cc-text-muted">Separado por origen del cobro y método de pago</p>
                 </div>
-                <div className="h-64">
+
+                {/* Summary breakdown panels */}
+                <div className="grid grid-cols-2 gap-4 mb-5">
+                    {/* Caja Directa */}
+                    <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800">
+                        <div className="flex items-center gap-2 mb-3">
+                            <Store size={16} className="text-cc-primary" />
+                            <span className="text-sm font-bold text-cc-cream">Caja directa</span>
+                            <span className="ml-auto text-lg font-bold text-cc-primary">${breakdown.cajaTotal.toFixed(2)}</span>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="flex items-center gap-2 text-cc-text-muted">
+                                    <Banknote size={14} className="text-green-400" /> Efectivo
+                                </span>
+                                <span className="text-cc-cream font-medium">${breakdown.cajaCash.toFixed(2)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="flex items-center gap-2 text-cc-text-muted">
+                                    <CreditCard size={14} className="text-blue-400" /> Tarjeta
+                                </span>
+                                <span className="text-cc-cream font-medium">${breakdown.cajaCard.toFixed(2)}</span>
+                            </div>
+                            {breakdown.cajaMixed > 0 && (
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="flex items-center gap-2 text-cc-text-muted">
+                                        <Banknote size={14} className="text-orange-400" /> Mixto
+                                    </span>
+                                    <span className="text-cc-cream font-medium">${breakdown.cajaMixed.toFixed(2)}</span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Pedidos */}
+                    <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800">
+                        <div className="flex items-center gap-2 mb-3">
+                            <ShoppingBag size={16} className="text-violet-400" />
+                            <span className="text-sm font-bold text-cc-cream">Pedidos</span>
+                            <span className="ml-auto text-lg font-bold text-violet-400">${breakdown.pedidosTotal.toFixed(2)}</span>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="flex items-center gap-2 text-cc-text-muted">
+                                    <Banknote size={14} className="text-yellow-400" /> Efectivo
+                                </span>
+                                <span className="text-cc-cream font-medium">${breakdown.pedidosCash.toFixed(2)}</span>
+                            </div>
+                            {breakdown.pedidosCard > 0 && (
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="flex items-center gap-2 text-cc-text-muted">
+                                        <CreditCard size={14} className="text-cyan-400" /> Tarjeta
+                                    </span>
+                                    <span className="text-cc-cream font-medium">${breakdown.pedidosCard.toFixed(2)}</span>
+                                </div>
+                            )}
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="flex items-center gap-2 text-cc-text-muted">
+                                    <Landmark size={14} className="text-violet-400" /> Transferencia
+                                </span>
+                                <span className="text-cc-cream font-medium">${breakdown.pedidosTransfer.toFixed(2)}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Bar chart */}
+                <div className="h-52">
                     {chartData.length === 0 ? (
                         <div className="flex items-center justify-center h-full text-cc-text-muted">
                             No hay ventas registradas hoy
@@ -339,23 +430,24 @@ export const Dashboard = () => {
                                 <XAxis 
                                     dataKey="name" 
                                     stroke="#999" 
-                                    style={{ fontSize: '12px' }}
-                                    label={{ value: 'Método de Pago', position: 'insideBottom', offset: -5, fill: '#999' }}
+                                    style={{ fontSize: '10px' }}
+                                    interval={0}
+                                    angle={-20}
+                                    textAnchor="end"
+                                    height={50}
                                 />
                                 <YAxis 
                                     stroke="#999" 
-                                    style={{ fontSize: '12px' }}
-                                    label={{ value: 'Total (MXN)', angle: -90, position: 'insideLeft', fill: '#999' }}
+                                    style={{ fontSize: '11px' }}
                                 />
                                 <Tooltip 
                                     contentStyle={{ backgroundColor: '#2A2A2A', border: '1px solid #444', color: '#F5F5F5' }}
                                     formatter={(value: number) => `$${value.toFixed(2)}`}
                                 />
                                 <Bar dataKey="amount" fill="#F4C542" radius={[4, 4, 0, 0]}>
-                                    {chartData.map((_entry: any, index: number) => {
-                                        const colors = ['#F4C542', '#4CAF50', '#2196F3'];
-                                        return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
-                                    })}
+                                    {chartData.map((entry: any, index: number) => (
+                                        <Cell key={`cell-${index}`} fill={entry.color || '#F4C542'} />
+                                    ))}
                                 </Bar>
                             </BarChart>
                         </ResponsiveContainer>

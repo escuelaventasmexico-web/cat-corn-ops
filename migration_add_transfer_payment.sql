@@ -1,27 +1,24 @@
 -- ============================================================================
--- MIGRACIÓN: Soporte completo de TRANSFERENCIA como método de pago
+-- Migration: Add TRANSFER payment method + fix finance breakdown
 -- ============================================================================
--- Ejecutar este SQL completo en Supabase → SQL Editor → New Query → Run
---
--- ¿Qué hace?
---   1. Agrega 'transfer' al enum payment_method (si no existe)
---   2. Agrega columna transfer_amount a la tabla sales
---   3. Back-fill de ventas existentes tipo TRANSFER
---   4. Recrea finance_month_summary con 3-way split (efectivo / tarjeta / transferencia)
---   5. Recrea finance_daily_breakdown con columna transfer_sales
---   6. Recrea finance_calendar_with_yoy con columna transfer_sales
---   7. Actualiza vistas y RPCs de caja registradora para que TRANSFER
---      NO infle los totales de efectivo ni tarjeta
---
--- Regla clave: cash = total − card − transfer (siempre derivado)
+-- This migration:
+--   1. Adds 'transfer' to the payment_method enum (if not already present)
+--   2. Adds transfer_amount column to sales table
+--   3. Back-fills transfer_amount for any existing TRANSFER rows
+--   4. Recreates finance_month_summary with 3-way split (cash / card / transfer)
+--      using the DERIVED approach: cash = total − card − transfer
+--   5. Recreates finance_daily_breakdown with transfer_sales column
+--   6. Recreates finance_calendar_with_yoy with transfer_sales column
+--   7. Updates the cash register views/RPCs so TRANSFER sales don't inflate
+--      cash or card totals (transfers are outside the physical register)
 -- ============================================================================
-
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 1) Agregar 'transfer' al enum payment_method SI no existe
+-- 1) Add 'transfer' to the payment_method enum IF it doesn't exist yet
 -- ─────────────────────────────────────────────────────────────────────────────
 DO $$
 BEGIN
+  -- Check if 'transfer' already exists in the enum
   IF NOT EXISTS (
     SELECT 1 FROM pg_enum
     WHERE enumtypid = 'payment_method'::regtype
@@ -31,23 +28,21 @@ BEGIN
   END IF;
 END$$;
 
-
 -- ─────────────────────────────────────────────────────────────────────────────
--- 2) Agregar columna transfer_amount a sales
+-- 2) Add transfer_amount column to sales (if not exists)
 -- ─────────────────────────────────────────────────────────────────────────────
 ALTER TABLE public.sales
   ADD COLUMN IF NOT EXISTS transfer_amount NUMERIC DEFAULT 0;
 
--- Back-fill: ventas existentes tipo TRANSFER → transfer_amount = total
+-- Back-fill: any existing TRANSFER sales should have transfer_amount = total
 UPDATE public.sales
    SET transfer_amount = total
  WHERE UPPER(payment_method::TEXT) = 'TRANSFER'
    AND (transfer_amount IS NULL OR transfer_amount = 0);
 
-
 -- ─────────────────────────────────────────────────────────────────────────────
--- 3) finance_month_summary — 3-way split (efectivo / tarjeta / transferencia)
---    cash es DERIVADO: total − card − transfer (garantiza identidad)
+-- 3) FIX: finance_month_summary — 3-way split (cash / card / transfer)
+--    cash is DERIVED as total − card − transfer to guarantee identity
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.finance_month_summary(p_month_start DATE)
 RETURNS JSON
@@ -60,6 +55,7 @@ DECLARE
     v_days_in_month NUMERIC;
     v_days_elapsed NUMERIC;
 
+    -- Sales
     v_sales_mtd_mxn NUMERIC;
     v_sales_cash_mxn NUMERIC;
     v_sales_card_mxn NUMERIC;
@@ -67,20 +63,28 @@ DECLARE
     v_sales_projection_mxn NUMERIC;
     v_sales_target_mxn NUMERIC;
 
+    -- Expenses by type (from expenses table)
     v_expenses_fixed_mxn NUMERIC;
     v_expenses_variable_mxn NUMERIC;
     v_expenses_other_mxn NUMERIC;
     v_expenses_total_mxn NUMERIC;
 
+    -- Fixed costs plan (from fixed_costs table)
     v_fixed_plan_mxn NUMERIC;
     v_fixed_covered_mxn NUMERIC;
     v_fixed_pending_mxn NUMERIC;
 BEGIN
+    -- Calculate month boundaries and days
     v_month_end := (p_month_start + INTERVAL '1 month' - INTERVAL '1 day')::DATE;
     v_days_in_month := EXTRACT(DAY FROM v_month_end);
     v_days_elapsed := EXTRACT(DAY FROM LEAST(CURRENT_DATE, v_month_end));
 
-    -- Ventas MTD con 3-way split
+    -- ══════════════════════════════════════════════════════════════════
+    -- Sales MTD — timezone Mexico, 3-way split
+    -- card_amount is always correct (exact terminal charge)
+    -- transfer_amount is always correct (exact transfer amount)
+    -- cash is DERIVED = total − card − transfer  (guarantees identity)
+    -- ══════════════════════════════════════════════════════════════════
     SELECT
         COALESCE(SUM(total), 0),
         COALESCE(SUM(card_amount), 0),
@@ -90,48 +94,56 @@ BEGIN
     WHERE (created_at AT TIME ZONE 'America/Mexico_City')::DATE
           BETWEEN p_month_start AND LEAST(CURRENT_DATE, v_month_end);
 
-    -- cash = total - card - transfer (siempre exacto)
+    -- Derive cash = total - card - transfer (always exact)
     v_sales_cash_mxn := v_sales_mtd_mxn - v_sales_card_mxn - v_sales_transfer_mxn;
 
-    -- Proyección de ventas
+    -- Sales projection (based on daily average)
     IF v_days_elapsed > 0 THEN
         v_sales_projection_mxn := (v_sales_mtd_mxn / v_days_elapsed) * v_days_in_month;
     ELSE
         v_sales_projection_mxn := 0;
     END IF;
 
-    -- Meta de ventas del mes
+    -- Sales target for the month
     SELECT COALESCE(sales_target_mxn, 0) INTO v_sales_target_mxn
     FROM public.monthly_targets
     WHERE month_start = p_month_start;
 
-    -- Plan de costos fijos
+    -- Fixed costs plan (from fixed_costs table where active = true)
     SELECT COALESCE(SUM(amount_mxn), 0) INTO v_fixed_plan_mxn
     FROM public.fixed_costs
     WHERE active = true;
 
-    -- Gastos fijos pagados
+    -- ══════════════════════════════════════════════════════════════════
+    -- Expenses — cast enum type::TEXT for comparison
+    -- ══════════════════════════════════════════════════════════════════
+
+    -- Expenses: Fixed (paid)
     SELECT COALESCE(SUM(amount_mxn), 0) INTO v_expenses_fixed_mxn
     FROM public.expenses
     WHERE expense_date BETWEEN p_month_start AND v_month_end
       AND type::TEXT = 'FIXED';
 
-    -- Gastos variables
+    -- Expenses: Variable
     SELECT COALESCE(SUM(amount_mxn), 0) INTO v_expenses_variable_mxn
     FROM public.expenses
     WHERE expense_date BETWEEN p_month_start AND v_month_end
       AND type::TEXT = 'VARIABLE';
 
-    -- Gastos otros
+    -- Expenses: Other
     SELECT COALESCE(SUM(amount_mxn), 0) INTO v_expenses_other_mxn
     FROM public.expenses
     WHERE expense_date BETWEEN p_month_start AND v_month_end
       AND type::TEXT NOT IN ('FIXED', 'VARIABLE');
 
+    -- Total expenses
     v_expenses_total_mxn := v_expenses_fixed_mxn + v_expenses_variable_mxn + v_expenses_other_mxn;
+
+    -- Fixed covered / pending
     v_fixed_covered_mxn := v_expenses_fixed_mxn;
     v_fixed_pending_mxn := GREATEST(v_fixed_plan_mxn - v_expenses_fixed_mxn, 0);
 
+    -- Build JSON result
     v_result := json_build_object(
         'sales_mtd_mxn', v_sales_mtd_mxn,
         'sales_cash_mxn', v_sales_cash_mxn,
@@ -160,9 +172,8 @@ BEGIN
 END;
 $$;
 
-
 -- ─────────────────────────────────────────────────────────────────────────────
--- 4) finance_daily_series (timezone fix)
+-- 4) FIX: finance_daily_series (unchanged except timezone)
 -- ─────────────────────────────────────────────────────────────────────────────
 DROP FUNCTION IF EXISTS public.finance_daily_series(DATE);
 CREATE OR REPLACE FUNCTION public.finance_daily_series(p_month_start DATE)
@@ -215,9 +226,8 @@ BEGIN
 END;
 $$;
 
-
 -- ─────────────────────────────────────────────────────────────────────────────
--- 5) finance_daily_breakdown — con columna transfer_sales
+-- 5) FIX: finance_daily_breakdown — add transfer_sales column
 -- ─────────────────────────────────────────────────────────────────────────────
 DROP FUNCTION IF EXISTS public.finance_daily_breakdown(DATE);
 CREATE OR REPLACE FUNCTION public.finance_daily_breakdown(p_month_start DATE)
@@ -278,9 +288,8 @@ BEGIN
 END;
 $$;
 
-
 -- ─────────────────────────────────────────────────────────────────────────────
--- 6) finance_calendar_with_yoy — con columna transfer_sales
+-- 6) FIX: finance_calendar_with_yoy — add transfer_sales column
 -- ─────────────────────────────────────────────────────────────────────────────
 DROP FUNCTION IF EXISTS public.finance_calendar_with_yoy(DATE);
 CREATE OR REPLACE FUNCTION public.finance_calendar_with_yoy(p_month_start DATE)
@@ -363,26 +372,12 @@ BEGIN
 END;
 $$;
 
-
 -- ─────────────────────────────────────────────────────────────────────────────
--- 7) Vistas de caja registradora — TRANSFER NO infla efectivo ni tarjeta
+-- 7) UPDATE cash register views — TRANSFER must NOT inflate cash/card
+--    Transfer sales don't go through the physical register at all.
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- Asegurar que cash_register_sessions tenga todas las columnas necesarias
-ALTER TABLE public.cash_register_sessions
-  ADD COLUMN IF NOT EXISTS close_notes TEXT;
-ALTER TABLE public.cash_register_sessions
-  ADD COLUMN IF NOT EXISTS counted_cash NUMERIC;
-ALTER TABLE public.cash_register_sessions
-  ADD COLUMN IF NOT EXISTS expected_cash NUMERIC;
-ALTER TABLE public.cash_register_sessions
-  ADD COLUMN IF NOT EXISTS difference NUMERIC;
-ALTER TABLE public.cash_register_sessions
-  ADD COLUMN IF NOT EXISTS opened_by UUID;
-ALTER TABLE public.cash_register_sessions
-  ADD COLUMN IF NOT EXISTS closed_by UUID;
-
--- 7a) Vista resumen de sesiones
+-- 7a) Sessions summary view
 CREATE OR REPLACE VIEW public.v_cash_register_sessions_summary AS
 SELECT
   s.id                     AS session_id,
@@ -415,6 +410,7 @@ SELECT
   COALESCE(cash_agg.sales_count, 0)  AS sales_count,
   COALESCE(wd_agg.wd_count, 0)       AS withdrawals_count,
 
+  -- Legacy aliases
   COALESCE(cash_agg.cash_total, 0)   AS cash_sales_total,
   COALESCE(cash_agg.card_total, 0)   AS card_sales_total,
   COALESCE(wd_agg.wd_total, 0)       AS withdrawals_total,
@@ -428,6 +424,7 @@ FROM public.cash_register_sessions s
 
 LEFT JOIN LATERAL (
   SELECT
+    -- TRANSFER excluded: it doesn't touch the physical register
     SUM(CASE
       WHEN UPPER(sa.payment_method::TEXT) = 'TRANSFER' THEN 0
       ELSE COALESCE(sa.cash_amount, CASE WHEN UPPER(sa.payment_method::TEXT) IN ('CASH','MIXED') THEN sa.total ELSE 0 END)
@@ -452,7 +449,7 @@ LEFT JOIN LATERAL (
 ORDER BY s.opened_at DESC;
 
 
--- 7b) Vista de sesión abierta
+-- 7b) Open session status view
 CREATE OR REPLACE VIEW public.v_open_cash_register_status AS
 SELECT
   s.id                     AS session_id,
@@ -495,7 +492,7 @@ ORDER BY s.opened_at DESC
 LIMIT 1;
 
 
--- 7c) RPC cerrar sesión — TRANSFER excluido del efectivo esperado
+-- 7c) Close session RPC — TRANSFER excluded from expected cash
 CREATE OR REPLACE FUNCTION public.close_cash_register_session(
   p_session_id UUID,
   p_counted_cash NUMERIC,

@@ -7,6 +7,7 @@ interface DailyRow {
   total_sales: number;
   cash_sales: number;
   card_sales: number;
+  transfer_sales: number;
   mixed_count: number;
   ticket_count: number;
   avg_ticket: number;
@@ -56,9 +57,10 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
       total: acc.total + r.total_sales,
       cash: acc.cash + r.cash_sales,
       card: acc.card + r.card_sales,
+      transfer: acc.transfer + r.transfer_sales,
       tickets: acc.tickets + r.ticket_count,
     }),
-    { total: 0, cash: 0, card: 0, tickets: 0 },
+    { total: 0, cash: 0, card: 0, transfer: 0, tickets: 0 },
   );
 
   return (
@@ -113,7 +115,7 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
                 </div>
 
                 {hasSales && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
                     <div className="flex items-center gap-1.5 text-cc-text-muted">
                       <Banknote size={14} className="text-green-400" />
                       <span>Efectivo:</span>
@@ -123,6 +125,11 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
                       <CreditCard size={14} className="text-blue-400" />
                       <span>Tarjeta:</span>
                       <span className="text-cc-cream font-medium">{fmt(r.card_sales)}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-cc-text-muted">
+                      <CreditCard size={14} className="text-violet-300" />
+                      <span>Transfer:</span>
+                      <span className="text-cc-cream font-medium">{fmt(r.transfer_sales)}</span>
                     </div>
                     <div className="flex items-center gap-1.5 text-cc-text-muted">
                       <Hash size={14} className="text-cc-primary" />
@@ -144,7 +151,7 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
         {/* Footer totals */}
         {!loading && rows.length > 0 && (
           <div className="border-t border-white/10 p-5">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
               <div>
                 <p className="text-cc-text-muted text-xs">Total Mes</p>
                 <p className="text-green-400 font-bold">{fmt(totals.total)}</p>
@@ -156,6 +163,10 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
               <div>
                 <p className="text-cc-text-muted text-xs">Tarjeta</p>
                 <p className="text-cc-cream font-semibold">{fmt(totals.card)}</p>
+              </div>
+              <div>
+                <p className="text-cc-text-muted text-xs">Transferencia</p>
+                <p className="text-cc-cream font-semibold">{fmt(totals.transfer)}</p>
               </div>
               <div>
                 <p className="text-cc-text-muted text-xs">Tickets</p>

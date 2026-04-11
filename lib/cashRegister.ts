@@ -170,6 +170,9 @@ export async function fetchCashStatus(): Promise<CashRegisterStatus> {
       cashSalesTotal += amount;
     } else if (method === 'CARD') {
       cardSalesTotal += amount;
+    } else if (method === 'TRANSFER') {
+      // Transfer doesn't go into register cash or card — it's separate
+      // No impact on cash register totals
     } else {
       // Legacy MIXED without split columns — attribute to cash
       cashSalesTotal += amount;
