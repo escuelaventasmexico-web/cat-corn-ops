@@ -23,12 +23,14 @@ import {
   Popcorn,
   Download,
   Landmark,
+  Tag,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import { supabase } from '../supabase';
 import type { Product } from '../supabase';
 import { getOpenSessionId } from '../lib/cashRegister';
+import { printOrderLabel } from '../lib/printReceipt';
 
 /* ── Types ──────────────────────────────────────────────────────────────── */
 
@@ -757,16 +759,32 @@ export const Pedidos = () => {
                         </td>
                         {/* Actions */}
                         <td className="py-2 px-2 text-center">
-                          <button
-                            onClick={() => { setOrderToCheckout(o); setCheckoutPaymentMethod('CASH'); }}
-                            disabled={!canCheckout}
-                            title={canCheckout ? 'Cobrar pedido' : 'Solo pedidos pendientes o preparados'}
-                            className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all
-                              bg-green-500/15 border-green-500/30 text-green-400 hover:bg-green-500/25
-                              disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-green-500/15"
-                          >
-                            <ShoppingCart size={11} /> Cobrar
-                          </button>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await printOrderLabel(o.customer_name);
+                                } catch (err: any) {
+                                  alert(err.message || 'Error al imprimir etiqueta');
+                                }
+                              }}
+                              title="Imprimir etiqueta con nombre del cliente"
+                              className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all
+                                bg-violet-500/15 border-violet-500/30 text-violet-400 hover:bg-violet-500/25"
+                            >
+                              <Tag size={11} /> Etiqueta
+                            </button>
+                            <button
+                              onClick={() => { setOrderToCheckout(o); setCheckoutPaymentMethod('CASH'); }}
+                              disabled={!canCheckout}
+                              title={canCheckout ? 'Cobrar pedido' : 'Solo pedidos pendientes o preparados'}
+                              className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all
+                                bg-green-500/15 border-green-500/30 text-green-400 hover:bg-green-500/25
+                                disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-green-500/15"
+                            >
+                              <ShoppingCart size={11} /> Cobrar
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );

@@ -493,3 +493,43 @@ export async function printLabelViaQZ(
   await printRaw(printerName, allCmds);
   console.info(TAG, `✅ ${quantity} etiqueta(s) enviada(s) — ${label.productName}`);
 }
+
+// ─── Order bag label (customer name only) ────────────────────────────
+
+/**
+ * Print a minimal thermal label with the customer name.
+ * Used to identify order bags — NOT a full receipt.
+ *
+ * Uses the same QZ Tray / ESC-POS infrastructure and saved printer
+ * as ticket printing, re-printing and cash register cuts.
+ */
+export async function printOrderLabel(customerName: string): Promise<void> {
+  const name = (customerName || '').trim().toUpperCase();
+  if (!name) {
+    throw new Error('No hay nombre de cliente para imprimir la etiqueta.');
+  }
+
+  const printerName = getSavedPrinterName();
+  if (!printerName) {
+    throw new Error('No hay impresora configurada. Configura tu impresora en el POS.');
+  }
+
+  const cmds: string[] = [
+    INIT,
+    LF + LF,                             // feed before
+    CENTER,
+    BOLD_ON,
+    'PEDIDO' + LF,
+    DOUBLE_SIZE,
+    name + LF,
+    NORMAL_SIZE,
+    BOLD_OFF,
+    divider(),
+    LF + LF + LF,                        // feed for easy cutting
+    CUT,
+  ];
+
+  console.info(TAG, `🏷️ Etiqueta pedido → "${name}" en "${printerName}"`);
+  await printRaw(printerName, cmds);
+  console.info(TAG, `✅ Etiqueta impresa — ${name}`);
+}
