@@ -31,7 +31,7 @@ export interface CashSessionSummary {
   card_sales_total: number;
   /** Calculated from actual cash_withdrawals rows */
   withdrawals_total: number;
-  /** cash_sales + card_sales - withdrawals (fondo NOT included) */
+  /** opening_cash + cash_sales − withdrawals (card NOT included — not physical cash) */
   expected_cash: number;
   counted_cash: number | null;
   /** counted_cash - expected_cash */
@@ -380,9 +380,9 @@ export async function fetchSessionsHistory(): Promise<CashSessionSummary[]> {
     const cardSales = Number(d.calculated_card_sales ?? d.card_sales_total ?? 0);
     const wdTotal = Number(d.calculated_withdrawals_total ?? d.withdrawals_total ?? 0);
     const openingCash = Number(d.opening_cash ?? 0);
-    // expected = cash sales + card sales − withdrawals (fondo NOT included)
-    // Always compute in JS — the DB view may still have the old formula that includes opening_cash
-    const expectedCash = cashSales + cardSales - wdTotal;
+    // expected = fondo + cash sales − withdrawals (card NOT included — not physical cash)
+    // Always compute in JS — the DB view may still have the old formula
+    const expectedCash = openingCash + cashSales - wdTotal;
     const countedCash = d.counted_cash != null ? Number(d.counted_cash) : null;
     // Always compute difference from our JS expected — DB columns may have old formula
     const diff = countedCash != null ? countedCash - expectedCash : null;

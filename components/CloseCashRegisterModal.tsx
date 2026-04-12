@@ -32,7 +32,7 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
     cash_sales_total: status.cash_sales_total,
     card_sales_total: status.card_sales_total,
     withdrawals_total: status.withdrawals_total,
-    expected_cash: status.cash_sales_total + status.card_sales_total - status.withdrawals_total,
+    expected_cash: status.opening_cash + status.cash_sales_total - status.withdrawals_total,
     counted_cash: result?.counted_cash ?? null,
     difference: result?.difference ?? null,
     sales_count: 0,
@@ -57,8 +57,8 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
     }
   };
 
-  // Expected = cash sales + card sales − withdrawals (fondo NOT included)
-  const expectedCash = status.cash_sales_total + status.card_sales_total - status.withdrawals_total;
+  // Expected = fondo + cash sales − withdrawals (card/transfer NOT included — not physical cash)
+  const expectedCash = status.opening_cash + status.cash_sales_total - status.withdrawals_total;
 
   const handleSubmit = async () => {
     if (!status.session_id) return;
