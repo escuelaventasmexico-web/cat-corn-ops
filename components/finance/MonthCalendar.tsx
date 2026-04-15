@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Calendar, Loader2, TrendingUp, TrendingDown, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { Calendar, Loader2, TrendingUp, TrendingDown, X, ChevronLeft, ChevronRight, Store, ShoppingBag, Banknote, CreditCard, Landmark } from 'lucide-react';
 import { supabase } from '../../supabase';
 
 interface CalendarDay {
@@ -13,6 +13,47 @@ interface CalendarDay {
   prev_year_sales: number;
   yoy_diff_abs: number;
   yoy_diff_pct: number | null;
+}
+
+/** A sale row enriched with product info for the day detail modal */
+interface DaySale {
+  id: string;
+  total: number;
+  payment_method: string;
+  promotion_code: string | null;
+  created_at: string;
+  product_name: string | null;
+}
+
+/** An order that was delivered (charged) on the selected day */
+interface DayOrder {
+  id: string;
+  customer_name: string;
+  product_name: string | null;
+  quantity: number;
+  total: number;
+  payment_method: string;
+  created_at: string;   // when the order was placed
+  charged_at: string;   // when it was charged (updated_at → 'delivered')
+}
+
+interface DayDetail {
+  // Caja directa
+  cajaCash: number;
+  cajaCard: number;
+  cajaMixed: number;
+  cajaTotal: number;
+  cajaCount: number;
+  // Pedidos
+  pedidosCash: number;
+  pedidosCard: number;
+  pedidosTransfer: number;
+  pedidosTotal: number;
+  pedidosCount: number;
+  // Combined
+  grandTotal: number;
+  // Order list
+  orders: DayOrder[];
 }
 
 interface Props {
@@ -35,6 +76,8 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
+  const [dayDetail, setDayDetail] = useState<DayDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   // Parse current month for display
   const [year, month] = monthStartISO.split('-').map(Number);
@@ -46,7 +89,104 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
     const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
     setMonthStartISO(iso);
     setSelectedDay(null);
+    setDayDetail(null);
   };
+
+  // Load detailed breakdown when a day is clicked
+  const loadDayDetail = useCallback(async (day: CalendarDay) => {
+    if (!supabase) return;
+    setDetailLoading(true);
+    try {
+      // Day boundaries (Mexico City timezone stored as UTC)
+      const dayStart = new Date(day.sale_date + 'T00:00:00-06:00').toISOString();
+      const nextDay = new Date(new Date(day.sale_date + 'T00:00:00-06:00').getTime() + 86400000).toISOString();
+
+      // 1) All sales of the day with product info
+      const { data: salesData } = await supabase
+        .from('sales')
+        .select('id, total, payment_method, promotion_code, created_at')
+        .gte('created_at', dayStart)
+        .lt('created_at', nextDay)
+        .order('created_at', { ascending: true });
+
+      const sales: DaySale[] = (salesData || []).map(s => ({
+        id: s.id,
+        total: Number(s.total),
+        payment_method: (s.payment_method || '').toUpperCase(),
+        promotion_code: s.promotion_code || null,
+        created_at: s.created_at,
+        product_name: null,
+      }));
+
+      const isOrder = (s: DaySale) => s.promotion_code === 'ORDER_CHECKOUT';
+      const pm = (s: DaySale) => s.payment_method;
+
+      // Caja directa
+      const cajaSales = sales.filter(s => !isOrder(s));
+      const cajaCash = cajaSales.filter(s => pm(s) === 'CASH').reduce((a, s) => a + s.total, 0);
+      const cajaCard = cajaSales.filter(s => pm(s) === 'CARD').reduce((a, s) => a + s.total, 0);
+      const cajaMixed = cajaSales.filter(s => pm(s) === 'MIXED').reduce((a, s) => a + s.total, 0);
+      const cajaTotal = cajaCash + cajaCard + cajaMixed;
+
+      // Pedidos
+      const pedidoSales = sales.filter(s => isOrder(s));
+      const pedidosCash = pedidoSales.filter(s => pm(s) === 'CASH').reduce((a, s) => a + s.total, 0);
+      const pedidosCard = pedidoSales.filter(s => pm(s) === 'CARD').reduce((a, s) => a + s.total, 0);
+      const pedidosTransfer = pedidoSales.filter(s => pm(s) === 'TRANSFER').reduce((a, s) => a + s.total, 0);
+      const pedidosTotal = pedidosCash + pedidosCard + pedidosTransfer;
+
+      // 2) Orders delivered on this day (linked by updated_at ≈ sale time)
+      const { data: ordersData } = await supabase
+        .from('orders')
+        .select('id, customer_name, quantity, created_at, updated_at, products(name, price)')
+        .eq('status', 'delivered')
+        .gte('updated_at', dayStart)
+        .lt('updated_at', nextDay)
+        .order('updated_at', { ascending: true });
+
+      // Match each order to a pedido sale by closest timestamp
+      const orderList: DayOrder[] = (ordersData || []).map((o: any) => {
+        const prod = Array.isArray(o.products) ? o.products[0] : o.products;
+        const unitPrice = prod?.price ?? 0;
+        const total = unitPrice * (o.quantity ?? 1);
+
+        // Find closest pedido sale by time
+        const orderTs = new Date(o.updated_at).getTime();
+        let matchedMethod = 'CASH';
+        let minDiff = Infinity;
+        for (const ps of pedidoSales) {
+          const diff = Math.abs(new Date(ps.created_at).getTime() - orderTs);
+          if (diff < minDiff) {
+            minDiff = diff;
+            matchedMethod = ps.payment_method;
+          }
+        }
+
+        return {
+          id: o.id,
+          customer_name: o.customer_name || '—',
+          product_name: prod?.name || '—',
+          quantity: o.quantity ?? 1,
+          total,
+          payment_method: matchedMethod,
+          created_at: o.created_at,
+          charged_at: o.updated_at,
+        };
+      });
+
+      setDayDetail({
+        cajaCash, cajaCard, cajaMixed, cajaTotal, cajaCount: cajaSales.length,
+        pedidosCash, pedidosCard, pedidosTransfer, pedidosTotal, pedidosCount: pedidoSales.length,
+        grandTotal: cajaTotal + pedidosTotal,
+        orders: orderList,
+      });
+    } catch (err) {
+      console.error('[MonthCalendar] Error loading day detail:', err);
+      setDayDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -164,7 +304,16 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
               return (
                 <button
                   key={d.sale_date}
-                  onClick={() => !isFuture && setSelectedDay(isSelected ? null : d)}
+                  onClick={() => {
+                    if (isFuture) return;
+                    if (isSelected) {
+                      setSelectedDay(null);
+                      setDayDetail(null);
+                    } else {
+                      setSelectedDay(d);
+                      loadDayDetail(d);
+                    }
+                  }}
                   disabled={isFuture}
                   className={`
                     relative aspect-square rounded-lg flex flex-col items-center justify-center
@@ -203,83 +352,180 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
         </div>
       )}
 
-      {/* Selected Day Detail */}
+      {/* Day Detail Modal */}
       {selectedDay && (
-        <div className="border-t border-white/10 p-5 animate-fade-in">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="text-sm font-bold text-cc-cream">
-              {new Date(selectedDay.sale_date + 'T12:00:00').toLocaleDateString('es-MX', {
-                weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-              })}
-            </h4>
-            <button onClick={() => setSelectedDay(null)} className="p-1 hover:bg-white/10 rounded transition-colors">
-              <X size={16} className="text-cc-text-muted" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {/* Total */}
-            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
-              <p className="text-[10px] text-green-300/80 uppercase tracking-wider">Vendido</p>
-              <p className="text-lg font-bold text-green-400">{fmt(selectedDay.total_sales)}</p>
-            </div>
-            {/* Cash */}
-            <div className="bg-white/[0.03] border border-white/5 rounded-lg p-3">
-              <p className="text-[10px] text-cc-text-muted uppercase tracking-wider">Efectivo</p>
-              <p className="text-lg font-bold text-cc-cream">{fmt(selectedDay.cash_sales)}</p>
-            </div>
-            {/* Card */}
-            <div className="bg-white/[0.03] border border-white/5 rounded-lg p-3">
-              <p className="text-[10px] text-cc-text-muted uppercase tracking-wider">Tarjeta</p>
-              <p className="text-lg font-bold text-cc-cream">{fmt(selectedDay.card_sales)}</p>
-            </div>
-            {/* Transfer */}
-            <div className="bg-white/[0.03] border border-white/5 rounded-lg p-3">
-              <p className="text-[10px] text-cc-text-muted uppercase tracking-wider">Transferencia</p>
-              <p className="text-lg font-bold text-cc-cream">{fmt(selectedDay.transfer_sales)}</p>
-            </div>
-            {/* Tickets */}
-            <div className="bg-white/[0.03] border border-white/5 rounded-lg p-3">
-              <p className="text-[10px] text-cc-text-muted uppercase tracking-wider">Tickets</p>
-              <p className="text-lg font-bold text-cc-cream">{selectedDay.ticket_count}</p>
-            </div>
-            {/* Avg Ticket */}
-            <div className="bg-white/[0.03] border border-white/5 rounded-lg p-3">
-              <p className="text-[10px] text-cc-text-muted uppercase tracking-wider">Ticket Promedio</p>
-              <p className="text-lg font-bold text-cc-cream">{fmt(selectedDay.avg_ticket)}</p>
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => { setSelectedDay(null); setDayDetail(null); }}>
+          <div className="bg-neutral-950 border border-neutral-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            {/* Modal header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
+              <div>
+                <h3 className="text-base font-bold text-cc-cream">
+                  {new Date(selectedDay.sale_date + 'T12:00:00').toLocaleDateString('es-MX', {
+                    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+                  })}
+                </h3>
+                <p className="text-xs text-cc-text-muted mt-0.5">
+                  Total del día: <span className="text-green-400 font-bold">{fmt(selectedDay.total_sales)}</span>
+                  {' '}· {selectedDay.ticket_count} ticket{selectedDay.ticket_count !== 1 ? 's' : ''}
+                  {' '}· Promedio {fmt(selectedDay.avg_ticket)}
+                </p>
+              </div>
+              <button onClick={() => { setSelectedDay(null); setDayDetail(null); }} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors">
+                <X size={18} className="text-cc-text-muted" />
+              </button>
             </div>
 
-            {/* YoY Comparison */}
-            <div className={`rounded-lg p-3 border ${
-              selectedDay.prev_year_sales > 0
-                ? selectedDay.yoy_diff_abs >= 0
-                  ? 'bg-green-500/10 border-green-500/20'
-                  : 'bg-red-500/10 border-red-500/20'
-                : 'bg-white/[0.03] border-white/5'
-            }`}>
-              <p className="text-[10px] text-cc-text-muted uppercase tracking-wider">vs Año Anterior</p>
-              {selectedDay.prev_year_sales > 0 ? (
+            {/* Modal body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              {detailLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="animate-spin text-cc-primary" size={24} />
+                </div>
+              ) : dayDetail ? (
                 <>
-                  <div className="flex items-center gap-1">
-                    {selectedDay.yoy_diff_abs >= 0
-                      ? <TrendingUp size={14} className="text-green-400" />
-                      : <TrendingDown size={14} className="text-red-400" />
-                    }
-                    <span className={`text-sm font-bold ${selectedDay.yoy_diff_abs >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {selectedDay.yoy_diff_abs >= 0 ? '+' : ''}{fmt(selectedDay.yoy_diff_abs)}
-                    </span>
+                  {/* Grand total bar */}
+                  <div className="flex items-center justify-between px-4 py-3 bg-green-500/10 border border-green-500/20 rounded-xl">
+                    <span className="text-sm font-medium text-green-300">Total del día</span>
+                    <span className="text-xl font-bold text-green-400">{fmt(dayDetail.grandTotal)}</span>
                   </div>
-                  <p className="text-[10px] text-cc-text-muted mt-0.5">
-                    Antes: {fmt(selectedDay.prev_year_sales)}
-                    {selectedDay.yoy_diff_pct !== null && (
-                      <span className={selectedDay.yoy_diff_pct >= 0 ? 'text-green-400' : 'text-red-400'}>
-                        {' '}({selectedDay.yoy_diff_pct >= 0 ? '+' : ''}{selectedDay.yoy_diff_pct.toFixed(1)}%)
-                      </span>
+
+                  {/* Two-column breakdown */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Caja directa */}
+                    <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Store size={16} className="text-cc-primary" />
+                        <span className="text-sm font-bold text-cc-cream">Ventas Caja</span>
+                        <span className="ml-auto text-lg font-bold text-cc-primary">{fmt(dayDetail.cajaTotal)}</span>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="flex items-center gap-2 text-cc-text-muted"><Banknote size={13} className="text-green-400" /> Efectivo</span>
+                          <span className="text-cc-cream font-medium">{fmt(dayDetail.cajaCash)}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="flex items-center gap-2 text-cc-text-muted"><CreditCard size={13} className="text-blue-400" /> Tarjeta</span>
+                          <span className="text-cc-cream font-medium">{fmt(dayDetail.cajaCard)}</span>
+                        </div>
+                        {dayDetail.cajaMixed > 0 && (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="flex items-center gap-2 text-cc-text-muted"><Banknote size={13} className="text-orange-400" /> Mixto</span>
+                            <span className="text-cc-cream font-medium">{fmt(dayDetail.cajaMixed)}</span>
+                          </div>
+                        )}
+                        <div className="text-[10px] text-cc-text-muted/60 pt-1 border-t border-white/5">{dayDetail.cajaCount} ticket{dayDetail.cajaCount !== 1 ? 's' : ''}</div>
+                      </div>
+                    </div>
+
+                    {/* Pedidos */}
+                    <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800">
+                      <div className="flex items-center gap-2 mb-3">
+                        <ShoppingBag size={16} className="text-violet-400" />
+                        <span className="text-sm font-bold text-cc-cream">Ventas Pedidos</span>
+                        <span className="ml-auto text-lg font-bold text-violet-400">{fmt(dayDetail.pedidosTotal)}</span>
+                      </div>
+                      <div className="space-y-2">
+                        {dayDetail.pedidosCash > 0 && (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="flex items-center gap-2 text-cc-text-muted"><Banknote size={13} className="text-yellow-400" /> Efectivo</span>
+                            <span className="text-cc-cream font-medium">{fmt(dayDetail.pedidosCash)}</span>
+                          </div>
+                        )}
+                        {dayDetail.pedidosCard > 0 && (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="flex items-center gap-2 text-cc-text-muted"><CreditCard size={13} className="text-cyan-400" /> Tarjeta</span>
+                            <span className="text-cc-cream font-medium">{fmt(dayDetail.pedidosCard)}</span>
+                          </div>
+                        )}
+                        {dayDetail.pedidosTransfer > 0 && (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="flex items-center gap-2 text-cc-text-muted"><Landmark size={13} className="text-violet-400" /> Transferencia</span>
+                            <span className="text-cc-cream font-medium">{fmt(dayDetail.pedidosTransfer)}</span>
+                          </div>
+                        )}
+                        {dayDetail.pedidosTotal === 0 && (
+                          <p className="text-xs text-cc-text-muted/60">Sin ventas de pedidos</p>
+                        )}
+                        <div className="text-[10px] text-cc-text-muted/60 pt-1 border-t border-white/5">{dayDetail.pedidosCount} cobro{dayDetail.pedidosCount !== 1 ? 's' : ''}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* YoY comparison row */}
+                  <div className={`flex items-center justify-between px-4 py-3 rounded-xl border ${
+                    selectedDay.prev_year_sales > 0
+                      ? selectedDay.yoy_diff_abs >= 0
+                        ? 'bg-green-500/10 border-green-500/20'
+                        : 'bg-red-500/10 border-red-500/20'
+                      : 'bg-white/[0.03] border-white/5'
+                  }`}>
+                    <span className="text-xs text-cc-text-muted">vs Año Anterior</span>
+                    {selectedDay.prev_year_sales > 0 ? (
+                      <div className="flex items-center gap-2">
+                        {selectedDay.yoy_diff_abs >= 0
+                          ? <TrendingUp size={14} className="text-green-400" />
+                          : <TrendingDown size={14} className="text-red-400" />
+                        }
+                        <span className={`text-sm font-bold ${selectedDay.yoy_diff_abs >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {selectedDay.yoy_diff_abs >= 0 ? '+' : ''}{fmt(selectedDay.yoy_diff_abs)}
+                        </span>
+                        <span className="text-xs text-cc-text-muted">
+                          (antes: {fmt(selectedDay.prev_year_sales)}
+                          {selectedDay.yoy_diff_pct !== null && (
+                            <span className={selectedDay.yoy_diff_pct >= 0 ? ' text-green-400' : ' text-red-400'}>
+                              , {selectedDay.yoy_diff_pct >= 0 ? '+' : ''}{selectedDay.yoy_diff_pct.toFixed(1)}%
+                            </span>
+                          )})
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-cc-text-muted/60">Sin histórico</span>
                     )}
-                  </p>
+                  </div>
+
+                  {/* Order list */}
+                  {dayDetail.orders.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold text-cc-text-muted uppercase tracking-wide mb-3">Pedidos cobrados este día</h4>
+                      <div className="space-y-2">
+                        {dayDetail.orders.map((o) => {
+                          const methodLabel =
+                            o.payment_method === 'TRANSFER' ? 'Transferencia'
+                            : o.payment_method === 'CARD' ? 'Tarjeta'
+                            : 'Efectivo';
+                          const methodColor =
+                            o.payment_method === 'TRANSFER' ? 'text-violet-400'
+                            : o.payment_method === 'CARD' ? 'text-blue-400'
+                            : 'text-green-400';
+                          return (
+                            <div key={o.id} className="bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-3">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <span className="text-sm font-bold text-cc-cream">{o.customer_name}</span>
+                                  <span className="text-xs text-cc-text-muted ml-2">{o.product_name} ×{o.quantity}</span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-sm font-bold text-cc-primary">{fmt(o.total)}</span>
+                                  <span className={`text-[10px] ml-2 font-medium ${methodColor}`}>{methodLabel}</span>
+                                </div>
+                              </div>
+                              <div className="flex gap-4 mt-1.5 text-[10px] text-cc-text-muted/70">
+                                <span>Pedido: {new Date(o.created_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                                <span>Cobro: {new Date(o.charged_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {dayDetail.orders.length === 0 && dayDetail.pedidosCount > 0 && (
+                    <p className="text-xs text-cc-text-muted/60 text-center py-2">No se encontraron registros de pedidos vinculados</p>
+                  )}
                 </>
               ) : (
-                <p className="text-sm text-cc-text-muted/60 mt-1">Sin histórico disponible</p>
+                <p className="text-sm text-cc-text-muted text-center py-8">No se pudo cargar el detalle</p>
               )}
             </div>
           </div>
