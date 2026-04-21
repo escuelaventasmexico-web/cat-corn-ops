@@ -19,6 +19,7 @@ import {
   Banknote,
   CreditCard,
   ShoppingCart,
+  Trash2,
   TrendingUp,
   Popcorn,
   Download,
@@ -125,6 +126,10 @@ export const Pedidos = () => {
   const [orderToCheckout, setOrderToCheckout] = useState<Order | null>(null);
   const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState<'CASH' | 'CARD' | 'TRANSFER'>('CASH');
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+
+  /* ── Delete modal ── */
+  const [orderToDelete, setOrderToDelete] = useState<Order | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   /* ── Filtered products for the form ── */
   const filteredProducts = useMemo(
@@ -339,6 +344,50 @@ export const Pedidos = () => {
       alert('Error al cobrar pedido: ' + (err.message ?? 'Error desconocido'));
     } finally {
       setCheckoutLoading(false);
+    }
+  };
+
+  /* ── Delete order (pending only) ── */
+  const handleAskDeleteOrder = (order: Order) => {
+    if (order.status !== 'pending') {
+      if (order.status === 'delivered') {
+        alert('Este pedido ya fue cobrado o entregado y no puede eliminarse');
+      } else {
+        alert('Solo se pueden eliminar pedidos en estado pendiente');
+      }
+      return;
+    }
+    setOrderToDelete(order);
+  };
+
+  const handleDeleteOrder = async () => {
+    if (!supabase || !orderToDelete) return;
+    setDeleteLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .delete()
+        .eq('id', orderToDelete.id)
+        .eq('status', 'pending')
+        .select('id')
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) {
+        alert('Este pedido ya fue cobrado o entregado y no puede eliminarse');
+        return;
+      }
+
+      setOrderToDelete(null);
+      setSuccessMsg('Pedido eliminado ✓');
+      setTimeout(() => setSuccessMsg(''), 3000);
+      await loadOrders();
+      await loadSummary();
+    } catch (err: any) {
+      console.error('[ORDERS] delete error:', err);
+      alert('Error al eliminar pedido: ' + (err.message ?? 'Error desconocido'));
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -718,6 +767,7 @@ export const Pedidos = () => {
                   {orders.map((o) => {
                     const st = STATUS_CFG[o.status] ?? STATUS_CFG.pending;
                     const canCheckout = o.status === 'pending' || o.status === 'prepared';
+                    const canDelete = o.status === 'pending';
                     const isUpdating = updatingStatusId === o.id;
                     return (
                       <tr
@@ -784,6 +834,17 @@ export const Pedidos = () => {
                             >
                               <ShoppingCart size={11} /> Cobrar
                             </button>
+                            <button
+                              onClick={() => handleAskDeleteOrder(o)}
+                              title={canDelete ? 'Eliminar pedido pendiente' : 'Solo se pueden eliminar pedidos pendientes'}
+                              className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all ${
+                                canDelete
+                                  ? 'bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25'
+                                  : 'bg-neutral-900 border-neutral-700 text-neutral-500 hover:border-neutral-600'
+                              }`}
+                            >
+                              <Trash2 size={11} /> Eliminar
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -820,6 +881,82 @@ export const Pedidos = () => {
                 <Banknote size={12} /> Monto total estimado
               </div>
               <div className="text-2xl font-bold text-green-400">${economicSummary.totalAmount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete order modal ── */}
+      {orderToDelete && (
+        <div
+          className="fixed inset-0 bg-black z-50 flex items-center justify-center p-4"
+          onClick={() => !deleteLoading && setOrderToDelete(null)}
+        >
+          <div
+            className="bg-neutral-950 border border-neutral-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-neutral-800 bg-neutral-900 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-cc-cream flex items-center gap-2">
+                <Trash2 size={20} className="text-red-400" /> Eliminar pedido
+              </h3>
+              <button
+                onClick={() => !deleteLoading && setOrderToDelete(null)}
+                className="p-2 hover:bg-neutral-800 rounded-lg transition-colors"
+              >
+                <X size={18} className="text-cc-text-muted" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                Esta acción eliminará el pedido de forma permanente.
+              </p>
+
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-cc-text-muted">Cliente</span>
+                  <span className="text-cc-text-main font-medium">{orderToDelete.customer_name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-cc-text-muted">Producto</span>
+                  <span className="text-cc-text-main font-medium">
+                    {orderToDelete.products?.name ?? orderToDelete.product_type ?? '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-cc-text-muted">Cantidad</span>
+                  <span className="text-cc-primary font-bold">{orderToDelete.quantity}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-cc-text-muted">Fecha de entrega</span>
+                  <span className="text-cc-text-main font-medium">{fmtDateShort(orderToDelete.delivery_date)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-cc-text-muted">Estado</span>
+                  <span className={`font-bold ${STATUS_CFG[orderToDelete.status]?.color ?? 'text-cc-text-main'}`}>
+                    {STATUS_CFG[orderToDelete.status]?.label ?? orderToDelete.status}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-neutral-800 bg-neutral-900 flex gap-3">
+              <button
+                onClick={() => setOrderToDelete(null)}
+                disabled={deleteLoading}
+                className="flex-1 py-2.5 text-sm font-semibold text-cc-text-muted bg-neutral-900 border border-neutral-700 rounded-lg hover:bg-neutral-800 transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteOrder}
+                disabled={deleteLoading}
+                className="flex-1 py-2.5 text-sm font-bold text-white bg-red-600 rounded-lg hover:bg-red-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+              >
+                {deleteLoading ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                {deleteLoading ? 'Eliminando…' : 'Eliminar pedido'}
+              </button>
             </div>
           </div>
         </div>
