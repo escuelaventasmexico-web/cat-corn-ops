@@ -30,7 +30,7 @@ import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import { supabase } from '../supabase';
 import type { Product } from '../supabase';
-import { getOpenSessionId } from '../lib/cashRegister';
+// getOpenSessionId removed: pedido checkouts no longer link to the cash register session.
 import { printOrderLabel } from '../lib/printReceipt';
 
 /* ── Types ──────────────────────────────────────────────────────────────── */
@@ -285,8 +285,9 @@ export const Pedidos = () => {
       const unitPrice = product?.price ?? 0;
       const total = unitPrice * order.quantity;
 
-      // Get cash session if available
-      const cashSessionId = await getOpenSessionId();
+      // NOTE: pedido checkouts do NOT link to the cash register session.
+      // Orders are collected separately and must NOT appear in the physical
+      // cash register closing (cierre de caja).
 
       // 1. Insert sale
       const salePayload: Record<string, unknown> = {
@@ -299,10 +300,9 @@ export const Pedidos = () => {
         loyalty_reward_applied: false,
         loyalty_discount_amount: 0,
         promotion_code: 'ORDER_CHECKOUT',
+        // cash_session_id is intentionally NOT set for order checkouts.
+        // Pedidos are NOT part of the physical cash register.
       };
-      if (cashSessionId) {
-        salePayload.cash_session_id = cashSessionId;
-      }
 
       const { data: sale, error: saleErr } = await supabase
         .from('sales')
