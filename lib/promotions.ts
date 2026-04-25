@@ -8,13 +8,17 @@ export type PromotionCode =
   | 'WEDNESDAY_GATO'
   | 'THURSDAY_NON_DELIVERY'
   | 'FRIDAY_JEFE_TOPPING'
-  | 'SATURDAY_JEFE_GATO';
+  | 'FRIDAY_MANTEQUILLA_2X1'
+  | 'SATURDAY_JEFE_GATO'
+  | 'SATURDAY_SABORES_50';
 
 export interface PromotionDefinition {
   code: PromotionCode;
   label: string;
   shortLabel: string;
   day: string;
+  /** 0=Sun 1=Mon … 6=Sat. When set, the promo is only available on that weekday (America/Mexico_City). */
+  dayIndex?: number;
   description: string;
   /** What the promo includes, for display in UI */
   includes: string;
@@ -34,6 +38,51 @@ export interface PromotionDefinition {
 function isDeliverySku(item: CartItem): boolean {
   const sku = (item.sku_code || '').toUpperCase();
   return sku.startsWith('DEL-') || sku.startsWith('DEL_');
+}
+
+/** Returns true when item belongs to the "Sabores" category/flavor (case-insensitive). */
+function isSabores(item: CartItem): boolean {
+  const flavor = (item.flavor || item.category || '').toLowerCase();
+  return flavor.includes('sabor');
+}
+
+/**
+ * Returns true when item is Salada or Mantequilla/Mantequilla Tradicional.
+ * Excludes: Sabores, Caramelo, Mix, Delivery SKUs.
+ */
+function isMantequilla(item: CartItem): boolean {
+  if (isDeliverySku(item)) return false;
+  const flavor = (item.flavor || item.category || '').toLowerCase();
+  if (flavor.includes('sabor') || flavor.includes('caramel') || flavor.includes('mix')) return false;
+  return (
+    flavor.includes('salad') ||
+    flavor.includes('mantequill') ||
+    flavor.includes('tradicional')
+  );
+}
+
+/** Convenience: true when today is Friday in Mexico City timezone. */
+export function isTodayFriday(): boolean {
+  return isTodayWeekday(5);
+}
+
+/**
+ * Check if today is a given weekday (0=Sun … 6=Sat) using America/Mexico_City timezone.
+ * This avoids UTC drift that would give wrong day near midnight.
+ */
+export function isTodayWeekday(dayIndex: number): boolean {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Mexico_City',
+    weekday: 'short',
+  });
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return formatter.format(now) === days[dayIndex];
+}
+
+/** Convenience: true when today is Saturday in Mexico City timezone. */
+export function isTodaySaturday(): boolean {
+  return isTodayWeekday(6);
 }
 
 function isMichi90(item: CartItem): boolean {
@@ -221,6 +270,63 @@ export const PROMOTIONS: PromotionDefinition[] = [
     },
   },
 
+  // --- FRIDAY: Mantequilla/Salada 2x1 — buy 1 get 2nd (equal or cheaper) FREE ---
+  // Forms pairs: sort all eligible units DESC by price.
+  //   index 0 (most expensive) = full price
+  //   index 1 (cheaper or equal) = 100% off (free)
+  //   index 2 = full price, index 3 = free, etc.
+  // Only applies on Fridays (America/Mexico_City). Excludes Delivery SKUs.
+  {
+    code: 'FRIDAY_MANTEQUILLA_2X1',
+    label: 'Viernes: Mantequilla 2x1',
+    shortLabel: 'Mantequilla 2x1',
+    day: 'Viernes',
+    dayIndex: 5,
+    description: 'Lleva 2 Salada/Mantequilla: el más caro completo, el 2° gratis',
+    includes: 'Línea Salada y Mantequilla (no Sabores, no Caramelo, no Delivery)',
+    promoPrice: '2° Salada/Mantequilla GRATIS',
+    note: 'Solo viernes · No combinable con fidelidad',
+    isEligible: (item) => isMantequilla(item),
+    apply: (cart) => {
+      const reason = 'PROMO_FRIDAY_MANTEQUILLA_2X1';
+      const cleaned = clearPromoDiscounts(cart);
+
+      // Collect all eligible items
+      const eligible = cleaned.filter(i => isMantequilla(i));
+      if (eligible.length === 0) return cleaned;
+
+      // Expand to individual units for pair logic
+      const units: { id: string; price: number }[] = [];
+      for (const item of eligible) {
+        for (let u = 0; u < item.quantity; u++) {
+          units.push({ id: item.id, price: item.price });
+        }
+      }
+
+      // Sort DESC: most expensive first
+      units.sort((a, b) => b.price - a.price);
+
+      // Odd index = 100% off (free)
+      const discountByItemId = new Map<string, number>();
+      for (let i = 1; i < units.length; i += 2) {
+        const unit = units[i];
+        const prev = discountByItemId.get(unit.id) || 0;
+        discountByItemId.set(
+          unit.id,
+          Math.round((prev + unit.price) * 100) / 100,
+        );
+      }
+
+      if (discountByItemId.size === 0) return cleaned;
+
+      return cleaned.map(item => {
+        const disc = discountByItemId.get(item.id);
+        if (disc === undefined) return item;
+        return { ...item, discount_amount: disc, discount_reason: reason };
+      });
+    },
+  },
+
   // --- SATURDAY: Bundle Jefe 240g + Gato Mayor 180g non-delivery — $15 off each ---
   {
     code: 'SATURDAY_JEFE_GATO',
@@ -264,6 +370,61 @@ export const PROMOTIONS: PromotionDefinition[] = [
       });
     },
   },
+
+  // --- SATURDAY: Sabores Gourmet 50% — buy 1 get 2nd (equal or cheaper) at 50% ---
+  // Applies ONLY to products in the "Sabores" category/flavor, never Delivery SKUs.
+  // Forms pairs by sorting all eligible UNITS price DESC:
+  //   index 0 = full price, index 1 = 50% off, index 2 = full, index 3 = 50% off…
+  {
+    code: 'SATURDAY_SABORES_50',
+    label: 'Sábado: Sabores Gourmet 50%',
+    shortLabel: 'Sabores 50%',
+    day: 'Sábado',
+    dayIndex: 6,
+    description: 'Lleva 2 Sabores: el más caro completo, el 2° igual o más barato al 50%',
+    includes: 'Toda la línea Sabores Gourmet (no Delivery)',
+    promoPrice: '2° Sabores 50% OFF',
+    note: 'Solo sábados · No combinable con fidelidad',
+    isEligible: (item) => isSabores(item) && !isDeliverySku(item),
+    apply: (cart) => {
+      const reason = 'PROMO_SATURDAY_SABORES_50';
+      const cleaned = clearPromoDiscounts(cart);
+
+      // Collect all eligible items
+      const eligible = cleaned.filter(i => isSabores(i) && !isDeliverySku(i));
+      if (eligible.length === 0) return cleaned;
+
+      // Expand to individual units so we can sort and pair regardless of quantity grouping
+      const units: { id: string; price: number }[] = [];
+      for (const item of eligible) {
+        for (let u = 0; u < item.quantity; u++) {
+          units.push({ id: item.id, price: item.price });
+        }
+      }
+
+      // Sort DESC: most expensive first
+      units.sort((a, b) => b.price - a.price);
+
+      // Even index = full price, odd index = 50% off
+      const discountByItemId = new Map<string, number>();
+      for (let i = 1; i < units.length; i += 2) {
+        const unit = units[i];
+        const prev = discountByItemId.get(unit.id) || 0;
+        discountByItemId.set(
+          unit.id,
+          Math.round((prev + unit.price * 0.5) * 100) / 100,
+        );
+      }
+
+      if (discountByItemId.size === 0) return cleaned;
+
+      return cleaned.map(item => {
+        const disc = discountByItemId.get(item.id);
+        if (disc === undefined) return item;
+        return { ...item, discount_amount: disc, discount_reason: reason };
+      });
+    },
+  },
 ];
 
 export function getPromotion(code: PromotionCode): PromotionDefinition | undefined {
@@ -285,6 +446,8 @@ export function getPromoEmoji(code: PromotionCode): string {
     case 'WEDNESDAY_GATO': return '🐈';
     case 'THURSDAY_NON_DELIVERY': return '🏪';
     case 'FRIDAY_JEFE_TOPPING': return '👑';
+    case 'FRIDAY_MANTEQUILLA_2X1': return '🧈';
     case 'SATURDAY_JEFE_GATO': return '🎉';
+    case 'SATURDAY_SABORES_50': return '🧡';
   }
 }

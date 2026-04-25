@@ -105,7 +105,13 @@ export const TicketReceipt = forwardRef<HTMLDivElement, { data: ReceiptData }>(
                     </div>
                     {disc > 0 && (
                       <div style={{ fontSize: '9px', color: '#888' }}>
-                        Desc: -${disc.toFixed(2)}
+                        {item.discountReason === 'PROMO_SATURDAY_SABORES_50'
+                          ? `Promo sab sabores 50%: -$${disc.toFixed(2)}`
+                          : item.discountReason === 'PROMO_FRIDAY_MANTEQUILLA_2X1'
+                            ? `Promo viernes mantequilla 2x1: -$${disc.toFixed(2)}`
+                            : item.discountReason === 'PROMOCION_INSTAGRAM_15'
+                              ? `Promo Instagram 15%: -$${disc.toFixed(2)}`
+                              : `Desc: -$${disc.toFixed(2)}`}
                       </div>
                     )}
                   </td>

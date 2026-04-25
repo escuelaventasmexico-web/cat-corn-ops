@@ -89,7 +89,15 @@ export function buildEscPosReceipt(data: ReceiptData): string[] {
     cmds.push(escRow(detail, '$' + lineFinal.toFixed(2)));
 
     if (disc > 0) {
-      cmds.push('  Desc: -$' + disc.toFixed(2) + LF);
+      const reason = item.discountReason || '';
+      const discLabel = reason === 'PROMO_SATURDAY_SABORES_50'
+        ? '  Promo sab sabores 50%: -$' + disc.toFixed(2)
+        : reason === 'PROMO_FRIDAY_MANTEQUILLA_2X1'
+          ? '  Promo viernes mantequilla 2x1: -$' + disc.toFixed(2)
+          : reason === 'PROMOCION_INSTAGRAM_15'
+            ? '  Promo Instagram 15%: -$' + disc.toFixed(2)
+            : '  Desc: -$' + disc.toFixed(2);
+      cmds.push(discLabel + LF);
     }
   }
 

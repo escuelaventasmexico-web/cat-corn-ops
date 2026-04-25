@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { supabase, Product, CartItem } from '../supabase';
 import type { Customer } from '../supabase';
 import { normalizePhone, fetchCustomerByPhoneNorm, fetchCustomerById, createCustomerRecord, fetchCustomersList } from '../lib/loyalty';
-import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion } from '../lib/promotions';
+import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion, isTodayWeekday } from '../lib/promotions';
 import type { PromotionCode } from '../lib/promotions';
 import { Search, Plus, Minus, CreditCard, Banknote, Landmark, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings } from 'lucide-react';
 import { fetchCashStatus, getOpenSessionId, EMPTY_CASH_STATUS } from '../lib/cashRegister';
@@ -267,6 +267,8 @@ export const POS = () => {
   const hasRewardApplied = cart.some(item => item.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM');
   const hasPromoApplied = cart.some(item => item.discount_reason?.startsWith('PROMO_'));
   const hasInstagramApplied = cart.some(item => item.discount_reason === 'PROMOCION_INSTAGRAM_15');
+  const hasSaboresPromoApplied = cart.some(item => item.discount_reason === 'PROMO_SATURDAY_SABORES_50');
+  const hasMantequillaPromoApplied = cart.some(item => item.discount_reason === 'PROMO_FRIDAY_MANTEQUILLA_2X1');
 
   // Instagram promo derived values
   const instagramDiscountInfo = useMemo(() => {
@@ -768,8 +770,8 @@ export const POS = () => {
 
   return (
     <div className="flex h-[calc(100vh-140px)] gap-4">
-      {/* Product Grid */}
-      <div className="flex-1 flex flex-col">
+      {/* Product Grid — left 58% */}
+      <div className="flex-[58] min-w-0 flex flex-col">
         {/* Barcode Scanner + Search */}
         <div className="mb-4 space-y-2">
           {/* Barcode input */}
@@ -855,23 +857,45 @@ export const POS = () => {
                   const isActive = activePromoCode === p.code;
                   const eligible = promoEligibleCounts[p.code] || 0;
                   const blocked = promoBlocked;
+                  const notToday = p.dayIndex !== undefined && !isTodayWeekday(p.dayIndex);
+                  const isSaboresPromo = p.code === 'SATURDAY_SABORES_50';
+                  const isMantequillaPromo = p.code === 'FRIDAY_MANTEQUILLA_2X1';
                   return (
                     <button
                       key={p.code}
                       onClick={() => activatePromo(p.code)}
-                      disabled={blocked && !isActive}
+                      disabled={(blocked && !isActive) || notToday}
                       className={`relative text-left p-4 rounded-xl border transition-all group ${
                         isActive
-                          ? 'bg-cc-accent/10 border-cc-accent/40 ring-1 ring-cc-accent/30'
-                          : blocked
+                          ? isSaboresPromo
+                            ? 'bg-orange-500/10 border-orange-400/40 ring-1 ring-orange-400/30'
+                            : isMantequillaPromo
+                              ? 'bg-amber-500/10 border-amber-400/40 ring-1 ring-amber-400/30'
+                              : 'bg-cc-accent/10 border-cc-accent/40 ring-1 ring-cc-accent/30'
+                          : blocked || notToday
                             ? 'bg-cc-surface border-white/5 opacity-40 cursor-not-allowed'
-                            : 'bg-cc-surface border-white/5 hover:border-cc-accent/30 hover:bg-cc-accent/5'
+                            : isSaboresPromo
+                              ? 'bg-cc-surface border-orange-400/20 hover:border-orange-400/40 hover:bg-orange-500/5'
+                              : isMantequillaPromo
+                                ? 'bg-cc-surface border-amber-400/20 hover:border-amber-400/40 hover:bg-amber-500/5'
+                                : 'bg-cc-surface border-white/5 hover:border-cc-accent/30 hover:bg-cc-accent/5'
                       }`}
                     >
                       {/* Active badge */}
                       {isActive && (
-                        <div className="absolute top-2 right-2 flex items-center gap-1 bg-cc-accent/20 text-cc-accent text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                        <div className={`absolute top-2 right-2 flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                          isSaboresPromo ? 'bg-orange-400/20 text-orange-300'
+                          : isMantequillaPromo ? 'bg-amber-400/20 text-amber-300'
+                          : 'bg-cc-accent/20 text-cc-accent'
+                        }`}>
                           <Sparkles size={10} /> Activa
+                        </div>
+                      )}
+
+                      {/* Not-today badge */}
+                      {notToday && !isActive && (
+                        <div className="absolute top-2 right-2 text-[9px] font-bold text-cc-text-muted bg-white/5 px-1.5 py-0.5 rounded-full">
+                          Solo {p.day}
                         </div>
                       )}
 
@@ -879,7 +903,11 @@ export const POS = () => {
                       <div className="flex items-center gap-2 mb-2">
                         <span className="text-xl">{getPromoEmoji(p.code)}</span>
                         <div>
-                          <div className="text-xs font-bold text-cc-accent uppercase tracking-wide">{p.day}</div>
+                          <div className={`text-xs font-bold uppercase tracking-wide ${
+                            isSaboresPromo ? 'text-orange-300'
+                            : isMantequillaPromo ? 'text-amber-300'
+                            : 'text-cc-accent'
+                          }`}>{p.day}</div>
                           <div className="text-sm font-semibold text-cc-cream leading-tight">{p.label.split(': ')[1] || p.shortLabel}</div>
                         </div>
                       </div>
@@ -891,9 +919,17 @@ export const POS = () => {
 
                       {/* Promo price */}
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-bold text-cc-primary">{p.promoPrice}</span>
-                        {!isActive && eligible > 0 && (
-                          <span className="text-[10px] font-bold text-cc-accent bg-cc-accent/10 px-1.5 py-0.5 rounded-full">
+                        <span className={`text-sm font-bold ${
+                          isSaboresPromo ? 'text-orange-300'
+                          : isMantequillaPromo ? 'text-amber-300'
+                          : 'text-cc-primary'
+                        }`}>{p.promoPrice}</span>
+                        {!isActive && eligible > 0 && !notToday && (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                            isSaboresPromo ? 'text-orange-300 bg-orange-400/10'
+                            : isMantequillaPromo ? 'text-amber-300 bg-amber-400/10'
+                            : 'text-cc-accent bg-cc-accent/10'
+                          }`}>
                             {eligible} en carrito
                           </span>
                         )}
@@ -911,119 +947,125 @@ export const POS = () => {
         </div>
       </div>
 
-      {/* Cart Sidebar */}
-      <div className="w-80 bg-cc-surface rounded-xl border border-white/5 flex flex-col min-h-0 shadow-2xl">
-        <div className="flex-shrink-0">
-        <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/5 rounded-t-xl">
-            <h2 className="font-bold text-lg text-cc-cream">Orden Actual</h2>
-            <div className="text-xs text-cc-text-muted">{cart.length} items</div>
-        </div>
+      {/* Cart Sidebar — right 42% */}
+      <div className="flex-[42] min-w-[340px] max-w-[520px] bg-cc-surface rounded-xl border border-white/5 flex flex-col min-h-0 shadow-2xl">
 
-        {/* Cash Register Status */}
-        <CashRegisterStatusPanel
-          status={cashStatus}
-          loading={cashLoading}
-          onOpenRegister={() => setShowOpenCashModal(true)}
-          onWithdrawal={cashRegisterOpen ? () => setShowWithdrawalModal(true) : undefined}
-          onCloseRegister={cashRegisterOpen ? () => setShowCloseCashModal(true) : undefined}
-        />
+        {/* ── FIXED HEADER: title + cash status + loyalty + promo indicators ── */}
+        <div className="flex-shrink-0 flex flex-col">
 
-        {/* Loyalty Card */}
-        <div className="p-3 bg-black/20 border-b border-white/5">
-          {!customer ? (
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <input
-                    type="tel"
-                    placeholder="Teléfono (Fidelidad)"
-                    className="w-full bg-cc-bg border border-white/10 rounded-lg py-1.5 pl-8 pr-2 text-sm text-black placeholder-gray-400 caret-black focus:ring-1 focus:ring-cc-primary outline-none"
-                    value={loyaltyPhone}
-                    onChange={(e) => setLoyaltyPhone(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleLoyaltySearch(); }}
-                  />
-                  <Phone size={14} className="absolute left-2.5 top-2 text-cc-text-muted" />
+          {/* Title bar */}
+          <div className="px-4 py-3 border-b border-white/10 flex justify-between items-center bg-white/5 rounded-t-xl">
+            <h2 className="font-bold text-base text-cc-cream">Orden Actual</h2>
+            <div className="text-xs text-cc-text-muted">{cart.length} {cart.length === 1 ? 'item' : 'items'}</div>
+          </div>
+
+          {/* Cash Register Status */}
+          <CashRegisterStatusPanel
+            status={cashStatus}
+            loading={cashLoading}
+            onOpenRegister={() => setShowOpenCashModal(true)}
+            onWithdrawal={cashRegisterOpen ? () => setShowWithdrawalModal(true) : undefined}
+            onCloseRegister={cashRegisterOpen ? () => setShowCloseCashModal(true) : undefined}
+          />
+
+          {/* Loyalty Card */}
+          <div className="px-3 py-2 bg-black/20 border-b border-white/5">
+            {!customer ? (
+              <div className="space-y-1.5">
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="tel"
+                      placeholder="Teléfono (Fidelidad)"
+                      className="w-full bg-cc-bg border border-white/10 rounded-lg py-1.5 pl-8 pr-2 text-sm text-black placeholder-gray-400 caret-black focus:ring-1 focus:ring-cc-primary outline-none"
+                      value={loyaltyPhone}
+                      onChange={(e) => setLoyaltyPhone(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleLoyaltySearch(); }}
+                    />
+                    <Phone size={14} className="absolute left-2.5 top-2 text-cc-text-muted" />
+                  </div>
+                  <button
+                    onClick={handleLoyaltySearch}
+                    disabled={loyaltySearching}
+                    className="px-3 py-1.5 bg-cc-primary/20 text-cc-primary text-xs font-bold rounded-lg hover:bg-cc-primary/30 transition-colors"
+                  >
+                    Buscar
+                  </button>
+                  <button
+                    onClick={() => { setNewCustForm({ first_name: '', last_name: '', phone: loyaltyPhone }); setShowNewCustomerModal(true); }}
+                    className="px-2 py-1.5 bg-white/5 text-cc-text-muted text-xs rounded-lg hover:bg-white/10 transition-colors"
+                    title="Nuevo cliente"
+                  >
+                    <UserPlus size={14} />
+                  </button>
+                  <button
+                    onClick={handleOpenCustomersList}
+                    className="px-2 py-1.5 bg-white/5 text-cc-text-muted text-xs rounded-lg hover:bg-white/10 transition-colors"
+                    title="Ver clientes"
+                  >
+                    <Users size={14} />
+                  </button>
                 </div>
-                <button
-                  onClick={handleLoyaltySearch}
-                  disabled={loyaltySearching}
-                  className="px-3 py-1.5 bg-cc-primary/20 text-cc-primary text-xs font-bold rounded-lg hover:bg-cc-primary/30 transition-colors"
-                >
-                  Buscar
-                </button>
-                <button
-                  onClick={() => { setNewCustForm({ first_name: '', last_name: '', phone: loyaltyPhone }); setShowNewCustomerModal(true); }}
-                  className="px-2 py-1.5 bg-white/5 text-cc-text-muted text-xs rounded-lg hover:bg-white/10 transition-colors"
-                  title="Nuevo cliente"
-                >
-                  <UserPlus size={14} />
-                </button>
-                <button
-                  onClick={handleOpenCustomersList}
-                  className="px-2 py-1.5 bg-white/5 text-cc-text-muted text-xs rounded-lg hover:bg-white/10 transition-colors"
-                  title="Ver clientes"
-                >
-                  <Users size={14} />
+                {loyaltyMsg && <p className="text-xs text-red-400">{loyaltyMsg}</p>}
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <User size={13} className="text-cc-primary flex-shrink-0" />
+                    <span className="text-sm font-medium text-cc-cream truncate">{customer.first_name} {customer.last_name}</span>
+                  </div>
+                  <div className="flex items-center gap-3 mt-0.5">
+                    <span className="text-xs text-cc-text-muted">{customer.phone}</span>
+                    {customer.reward_available
+                      ? <span className="flex items-center gap-1 text-[10px] font-bold bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full">
+                          <Gift size={10} /> Reward lista
+                        </span>
+                      : <span className="text-xs text-cc-text-muted">Compras: <span className="font-bold text-cc-primary">{customer.stamps}</span>/3</span>
+                    }
+                  </div>
+                </div>
+                <button onClick={clearCustomer} className="text-xs text-cc-text-muted hover:text-red-400 transition-colors p-1">
+                  <X size={14} />
                 </button>
               </div>
-              {loyaltyMsg && <p className="text-xs text-red-400">{loyaltyMsg}</p>}
-            </div>
-          ) : (
-            <div className="flex items-center gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <User size={13} className="text-cc-primary flex-shrink-0" />
-                  <span className="text-sm font-medium text-cc-cream truncate">{customer.first_name} {customer.last_name}</span>
-                </div>
-                <div className="flex items-center gap-3 mt-0.5">
-                  <span className="text-xs text-cc-text-muted">{customer.phone}</span>
-                  {customer.reward_available
-                    ? <span className="flex items-center gap-1 text-[10px] font-bold bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full">
-                        <Gift size={10} /> Reward lista
-                      </span>
-                    : <span className="text-xs text-cc-text-muted">Compras: <span className="font-bold text-cc-primary">{customer.stamps}</span>/3</span>
-                  }
-                </div>
-              </div>
-              <button onClick={clearCustomer} className="text-xs text-cc-text-muted hover:text-red-400 transition-colors p-1">
-                <X size={14} />
-              </button>
+            )}
+          </div>
+
+          {/* Apply Reward Button — only when available */}
+          {customer?.reward_available && cart.length > 0 && !hasRewardApplied && (
+            <button
+              onClick={() => { if (loyaltyBlocked) return; setRewardSelectedItem(null); setShowRewardModal(true); }}
+              disabled={loyaltyBlocked}
+              className={`mx-3 mt-1.5 mb-1 flex items-center justify-center gap-2 py-1.5 border text-xs font-bold rounded-lg transition-colors w-[calc(100%-1.5rem)] ${
+                loyaltyBlocked
+                  ? 'bg-white/5 border-white/10 text-cc-text-muted cursor-not-allowed'
+                  : 'bg-green-500/15 hover:bg-green-500/25 border-green-500/30 text-green-400'
+              }`}
+              title={loyaltyBlocked ? 'No combinable con promoción' : undefined}
+            >
+              <Gift size={13} /> {loyaltyBlocked ? 'No combinable con promo' : 'Aplicar 50% (1 producto)'}
+            </button>
+          )}
+          {hasRewardApplied && (
+            <div className="mx-3 mt-1.5 mb-1 flex items-center justify-between py-1.5 px-3 bg-green-500/10 border border-green-500/20 text-green-400 text-xs rounded-lg">
+              <span className="flex items-center gap-1"><Gift size={12} /> Descuento fidelidad aplicado</span>
+              <button onClick={clearReward} className="text-red-400 hover:text-red-300 text-[10px] font-bold">Quitar</button>
             </div>
           )}
-        </div>
 
-        {/* Apply Reward Button */}
-        {customer?.reward_available && cart.length > 0 && !hasRewardApplied && (
-          <button
-            onClick={() => { if (loyaltyBlocked) return; setRewardSelectedItem(null); setShowRewardModal(true); }}
-            disabled={loyaltyBlocked}
-            className={`mx-3 mt-2 flex items-center justify-center gap-2 py-2 border text-xs font-bold rounded-lg transition-colors w-[calc(100%-1.5rem)] ${
-              loyaltyBlocked
-                ? 'bg-white/5 border-white/10 text-cc-text-muted cursor-not-allowed'
-                : 'bg-green-500/15 hover:bg-green-500/25 border-green-500/30 text-green-400'
-            }`}
-            title={loyaltyBlocked ? 'No combinable con promoción' : undefined}
-          >
-            <Gift size={14} /> {loyaltyBlocked ? 'No combinable con promo' : 'Aplicar 50% (1 producto)'}
-          </button>
-        )}
-        {hasRewardApplied && (
-          <div className="mx-3 mt-2 flex items-center justify-between py-2 px-3 bg-green-500/10 border border-green-500/20 text-green-400 text-xs rounded-lg">
-            <span className="flex items-center gap-1"><Gift size={12} /> Descuento fidelidad aplicado</span>
-            <button onClick={clearReward} className="text-red-400 hover:text-red-300 text-[10px] font-bold">Quitar</button>
-          </div>
-        )}
+          {/* Active promo indicator */}
+          {activePromoCode && (
+            <div className="mx-3 mt-1 mb-1.5 flex items-center justify-between py-1.5 px-3 bg-cc-accent/10 border border-cc-accent/20 text-cc-accent text-xs rounded-lg">
+              <span className="flex items-center gap-1"><Sparkles size={12} /> {PROMOTIONS.find(p => p.code === activePromoCode)?.label || 'Promo activa'}</span>
+              <button onClick={deactivatePromo} className="text-red-400 hover:text-red-300 text-[10px] font-bold">Quitar</button>
+            </div>
+          )}
 
-        {/* Active promo indicator (compact) */}
-        {activePromoCode && (
-          <div className="mx-3 mt-2 flex items-center justify-between py-1.5 px-3 bg-cc-accent/10 border border-cc-accent/20 text-cc-accent text-xs rounded-lg">
-            <span className="flex items-center gap-1"><Sparkles size={12} /> {PROMOTIONS.find(p => p.code === activePromoCode)?.label || 'Promo activa'}</span>
-            <button onClick={deactivatePromo} className="text-red-400 hover:text-red-300 text-[10px] font-bold">Quitar</button>
-          </div>
-        )}
-        </div>
+        </div>{/* end fixed header */}
 
-        <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-3">
+        {/* ── SCROLLABLE CART ITEMS — grows to fill remaining space ── */}
+        <div className="flex-1 overflow-y-auto min-h-[200px] px-3 py-2 space-y-2 border-t border-white/5">
             {cart.map(item => {
                 const lineTotal = item.price * item.quantity;
                 const disc = item.discount_amount || 0;
@@ -1031,6 +1073,8 @@ export const POS = () => {
                 <div key={item.id} className={`flex justify-between items-center p-3 rounded-lg border ${
                   item.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM' ? 'bg-green-500/5 border-green-500/20'
                   : item.discount_reason === 'PROMOCION_INSTAGRAM_15' ? 'bg-pink-500/5 border-pink-500/20'
+                  : item.discount_reason === 'PROMO_SATURDAY_SABORES_50' ? 'bg-orange-500/5 border-orange-400/20'
+                  : item.discount_reason === 'PROMO_FRIDAY_MANTEQUILLA_2X1' ? 'bg-amber-500/5 border-amber-400/20'
                   : item.discount_reason?.startsWith('PROMO_') ? 'bg-cc-accent/5 border-cc-accent/20'
                   : 'bg-black/20 border-white/5'
                 }`}>
@@ -1043,8 +1087,14 @@ export const POS = () => {
                         {item.discount_reason === 'PROMOCION_INSTAGRAM_15' && (
                           <div className="text-[10px] text-pink-300 mt-0.5 flex items-center gap-1"><Sparkles size={10} /> -15% Instagram</div>
                         )}
-                        {item.discount_reason?.startsWith('PROMO_') && item.discount_reason !== 'PROMOCION_INSTAGRAM_15' && (
+                        {item.discount_reason?.startsWith('PROMO_') && item.discount_reason !== 'PROMOCION_INSTAGRAM_15' && item.discount_reason !== 'PROMO_SATURDAY_SABORES_50' && item.discount_reason !== 'PROMO_FRIDAY_MANTEQUILLA_2X1' && (
                           <div className="text-[10px] text-cc-accent mt-0.5 flex items-center gap-1"><Tag size={10} /> Promo</div>
+                        )}
+                        {item.discount_reason === 'PROMO_SATURDAY_SABORES_50' && (
+                          <div className="text-[10px] text-orange-300 mt-0.5 flex items-center gap-1"><Tag size={10} /> Promo sábado 50%</div>
+                        )}
+                        {item.discount_reason === 'PROMO_FRIDAY_MANTEQUILLA_2X1' && (
+                          <div className="text-[10px] text-amber-300 mt-0.5 flex items-center gap-1"><Tag size={10} /> Promo viernes 2x1</div>
                         )}
                     </div>
                     <div className="flex items-center gap-3">
@@ -1060,7 +1110,12 @@ export const POS = () => {
                         {disc > 0 ? (
                           <>
                             <div className="text-xs text-cc-text-muted line-through">${lineTotal.toFixed(0)}</div>
-                            <div className={`font-bold ${item.discount_reason?.startsWith('PROMO_') ? 'text-cc-accent' : 'text-green-400'}`}>${(lineTotal - disc).toFixed(0)}</div>
+                            <div className={`font-bold ${
+                              item.discount_reason === 'PROMO_SATURDAY_SABORES_50' ? 'text-orange-300'
+                              : item.discount_reason === 'PROMO_FRIDAY_MANTEQUILLA_2X1' ? 'text-amber-300'
+                              : item.discount_reason?.startsWith('PROMO_') ? 'text-cc-accent'
+                              : 'text-green-400'
+                            }`}>${(lineTotal - disc).toFixed(0)}</div>
                           </>
                         ) : (
                           <span className="font-bold text-cc-text-main">${lineTotal}</span>
@@ -1070,49 +1125,109 @@ export const POS = () => {
                 );
             })}
             {cart.length === 0 && (
-                <div className="text-center text-cc-text-muted mt-20 opacity-50">
-                    <div className="flex justify-center mb-2"><ShoppingBag size={48} /></div>
-                    <p>Carrito vacío</p>
+                <div className="flex flex-col items-center justify-center h-full text-cc-text-muted" style={{ opacity: 0.6 }}>
+                    <ShoppingBag size={40} className="mb-2" />
+                    <p style={{ fontSize: 18 }}>Carrito vacío</p>
                 </div>
             )}
         </div>
 
-        <div className="flex-shrink-0 p-6 bg-black/20 border-t border-white/10 rounded-b-xl overflow-y-auto">
+        {/* ── FIXED FOOTER: totals + payment + checkout ── */}
+        <div className="flex-shrink-0 p-3 bg-black/20 border-t border-white/10 rounded-b-xl space-y-2">
+
+            {/* ── Discount breakdown ── */}
             {totalDiscount > 0 && (
-              <div className="flex justify-between items-center mb-1 text-xs">
-                <span className="text-cc-text-muted">Subtotal</span>
-                <span className="text-cc-text-muted">${cartSubtotal.toFixed(2)}</span>
+              <div className="space-y-1 px-1">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-cc-text-muted">Subtotal</span>
+                  <span className="text-cc-text-muted">${cartSubtotal.toFixed(2)}</span>
+                </div>
+                {hasRewardApplied && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-green-400">Desc. Fidelidad</span>
+                    <span className="text-green-400">-${cart.filter(i => i.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
+                  </div>
+                )}
+                {hasPromoApplied && !hasInstagramApplied && !hasSaboresPromoApplied && !hasMantequillaPromoApplied && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-cc-accent">Desc. Promoción</span>
+                    <span className="text-cc-accent">-${cart.filter(i => i.discount_reason?.startsWith('PROMO_') && i.discount_reason !== 'PROMOCION_INSTAGRAM_15' && i.discount_reason !== 'PROMO_SATURDAY_SABORES_50' && i.discount_reason !== 'PROMO_FRIDAY_MANTEQUILLA_2X1').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
+                  </div>
+                )}
+                {hasMantequillaPromoApplied && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-amber-300">Promo viernes mantequilla 2x1</span>
+                    <span className="text-amber-300">-${cart.filter(i => i.discount_reason === 'PROMO_FRIDAY_MANTEQUILLA_2X1').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
+                  </div>
+                )}
+                {hasSaboresPromoApplied && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-orange-300">Promo sábado sabores 50%</span>
+                    <span className="text-orange-300">-${cart.filter(i => i.discount_reason === 'PROMO_SATURDAY_SABORES_50').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
+                  </div>
+                )}
+                {hasInstagramApplied && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-pink-300">Desc. Instagram 15%</span>
+                    <span className="text-pink-300">-${cart.filter(i => i.discount_reason === 'PROMOCION_INSTAGRAM_15').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
+                  </div>
+                )}
               </div>
             )}
-            {hasRewardApplied && (
-              <div className="flex justify-between items-center mb-1 text-xs">
-                <span className="text-green-400">Desc. Fidelidad</span>
-                <span className="text-green-400">-${cart.filter(i => i.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
-              </div>
-            )}
-            {hasPromoApplied && !hasInstagramApplied && (
-              <div className="flex justify-between items-center mb-1 text-xs">
-                <span className="text-cc-accent">Desc. Promoción</span>
-                <span className="text-cc-accent">-${cart.filter(i => i.discount_reason?.startsWith('PROMO_') && i.discount_reason !== 'PROMOCION_INSTAGRAM_15').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
-              </div>
-            )}
-            {hasInstagramApplied && (
-              <div className="flex justify-between items-center mb-1 text-xs">
-                <span className="text-pink-300">Desc. Instagram 15%</span>
-                <span className="text-pink-300">-${cart.filter(i => i.discount_reason === 'PROMOCION_INSTAGRAM_15').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
-              </div>
-            )}
-            <div className="flex justify-between items-center mb-3">
-                <span className="text-cc-text-muted">Total a Pagar</span>
-                <span className="text-3xl font-bold text-cc-primary">${cartTotal.toFixed(2)}</span>
+
+            {/* ── TOTAL GIGANTE ── */}
+            <div
+              style={{ transition: 'box-shadow 0.25s ease, transform 0.2s ease' }}
+              className={`relative rounded-xl p-3 text-center select-none ${
+                hasSaboresPromoApplied
+                  ? 'bg-gradient-to-br from-orange-900/40 to-black/60 border border-orange-400/30 shadow-[0_0_24px_rgba(251,146,60,0.18)]'
+                  : hasMantequillaPromoApplied
+                    ? 'bg-gradient-to-br from-amber-900/40 to-black/60 border border-amber-400/30 shadow-[0_0_24px_rgba(251,191,36,0.18)]'
+                    : hasInstagramApplied
+                      ? 'bg-gradient-to-br from-pink-900/40 to-black/60 border border-pink-400/30 shadow-[0_0_24px_rgba(236,72,153,0.18)]'
+                      : hasRewardApplied || hasPromoApplied
+                        ? 'bg-gradient-to-br from-green-900/30 to-black/60 border border-green-500/30 shadow-[0_0_24px_rgba(34,197,94,0.14)]'
+                        : cart.length > 0
+                          ? 'bg-gradient-to-br from-cc-primary/10 to-black/60 border border-cc-primary/30 shadow-[0_0_28px_rgba(255,180,0,0.15)]'
+                          : 'bg-black/30 border border-white/5'
+              }`}
+            >
+              <p className="text-xs font-semibold uppercase tracking-widest text-cc-text-muted mb-1">Total a Pagar</p>
+              <p
+                key={cartTotal.toFixed(2)}
+                style={{
+                  fontSize: 'clamp(1.8rem, 4vw, 2.5rem)',
+                  lineHeight: 1.1,
+                  transition: 'color 0.2s ease',
+                  animation: cart.length > 0 ? 'posTotal 0.18s ease' : undefined,
+                }}
+                className={`font-black tabular-nums ${
+                  hasSaboresPromoApplied
+                    ? 'text-orange-300'
+                    : hasMantequillaPromoApplied
+                      ? 'text-amber-300'
+                      : hasInstagramApplied
+                        ? 'text-pink-300'
+                        : hasRewardApplied || hasPromoApplied
+                          ? 'text-green-400'
+                          : 'text-cc-primary'
+                }`}
+              >
+                ${cartTotal.toFixed(2)}
+              </p>
+              {totalDiscount > 0 && (
+                <p className="text-xs text-cc-text-muted mt-1">
+                  Ahorro: <span className="font-bold text-green-400">${totalDiscount.toFixed(2)}</span>
+                </p>
+              )}
             </div>
 
-            {/* Instagram Promo Button */}
-            <div className="mb-4">
+            {/* ── Instagram Promo Button ── */}
+            <div>
               <button
                 onClick={toggleInstagramPromo}
                 disabled={cart.length === 0 || (!instagramPromoActive && instagramBlocked)}
-                className={`w-full py-2.5 px-4 rounded-lg border text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+                className={`w-full py-2 px-4 rounded-lg border text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
                   instagramPromoActive
                     ? 'bg-gradient-to-r from-pink-500/20 to-purple-500/20 border-pink-500/50 text-pink-300 shadow-lg shadow-pink-500/10'
                     : cart.length === 0 || instagramBlocked
@@ -1120,89 +1235,89 @@ export const POS = () => {
                       : 'bg-white/5 border-white/10 text-cc-text-main hover:bg-pink-500/10 hover:border-pink-500/30 hover:text-pink-300'
                 }`}
               >
-                <Sparkles size={16} />
+                <Sparkles size={15} />
                 {instagramPromoActive ? '✓ Promoción Instagram activa' : 'Promoción Instagram'}
               </button>
               {instagramPromoActive && instagramDiscountInfo && (
-                <div className="mt-1.5 flex justify-between items-center text-xs px-1">
+                <div className="mt-1 flex justify-between items-center text-xs px-1">
                   <span className="text-pink-300/80">15% en {instagramDiscountInfo.itemName}</span>
                   <span className="text-pink-300 font-semibold">-${instagramDiscountInfo.discountAmount.toFixed(2)}</span>
                 </div>
               )}
               {!instagramPromoActive && instagramBlocked && cart.length > 0 && (
-                <p className="text-xs text-cc-text-muted mt-1 px-1">No combinable con otras promos/fidelidad</p>
+                <p className="text-xs text-cc-text-muted mt-0.5 px-1">No combinable con otras promos/fidelidad</p>
               )}
             </div>
 
-            {/* Payment inputs */}
+            {/* ── Payment inputs ── */}
             {!cashRegisterOpen && !cashLoading && (
-              <div className="text-center py-2 mb-2">
+              <div className="text-center py-1">
                 <p className="text-xs text-red-400 font-medium">Abre una caja para cobrar</p>
               </div>
             )}
-            <div className="space-y-3">
-              {/* Cash + Card + Transfer inputs */}
-              <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-2.5">
+              {/* Cash + Card + Transfer */}
+              <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="flex items-center gap-1.5 text-xs font-medium text-cc-text-muted mb-1.5">
-                    <Banknote size={12} className="text-cc-primary" /> Efectivo
+                  <label className="flex items-center gap-1 text-xs font-medium text-cc-text-muted mb-1">
+                    <Banknote size={11} className="text-cc-primary" /> Efectivo
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cc-text-muted font-semibold">$</span>
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-cc-text-muted font-semibold text-sm">$</span>
                     <input
                       type="number"
                       min="0"
                       step="0.01"
                       value={cashInput || ''}
                       onChange={(e) => setCashInput(parseFloat(e.target.value) || 0)}
-                      className="w-full bg-black/30 border border-white/10 rounded-lg pl-7 pr-3 py-2.5 text-lg font-bold text-cc-cream focus:ring-2 focus:ring-cc-primary outline-none text-right"
-                      placeholder="0.00"
+                      className="w-full bg-black/30 border border-white/10 rounded-lg pl-6 pr-2 py-2 text-base font-bold text-cc-cream focus:ring-2 focus:ring-cc-primary outline-none text-right"
+                      placeholder="0"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="flex items-center gap-1.5 text-xs font-medium text-cc-text-muted mb-1.5">
-                    <CreditCard size={12} className="text-cc-accent" /> Tarjeta
+                  <label className="flex items-center gap-1 text-xs font-medium text-cc-text-muted mb-1">
+                    <CreditCard size={11} className="text-cc-accent" /> Tarjeta
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cc-text-muted font-semibold">$</span>
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-cc-text-muted font-semibold text-sm">$</span>
                     <input
                       type="number"
                       min="0"
                       step="0.01"
                       value={cardInput || ''}
                       onChange={(e) => setCardInput(parseFloat(e.target.value) || 0)}
-                      className="w-full bg-black/30 border border-white/10 rounded-lg pl-7 pr-3 py-2.5 text-lg font-bold text-cc-cream focus:ring-2 focus:ring-cc-accent outline-none text-right"
-                      placeholder="0.00"
+                      className="w-full bg-black/30 border border-white/10 rounded-lg pl-6 pr-2 py-2 text-base font-bold text-cc-cream focus:ring-2 focus:ring-cc-accent outline-none text-right"
+                      placeholder="0"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="flex items-center gap-1.5 text-xs font-medium text-cc-text-muted mb-1.5">
-                    <Landmark size={12} className="text-violet-300" /> Transferencia
+                  <label className="flex items-center gap-1 text-xs font-medium text-cc-text-muted mb-1">
+                    <Landmark size={11} className="text-violet-300" /> Transfer
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cc-text-muted font-semibold">$</span>
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-cc-text-muted font-semibold text-sm">$</span>
                     <input
                       type="number"
                       min="0"
                       step="0.01"
                       value={transferInput || ''}
                       onChange={(e) => setTransferInput(parseFloat(e.target.value) || 0)}
-                      className="w-full bg-black/30 border border-white/10 rounded-lg pl-7 pr-3 py-2.5 text-lg font-bold text-cc-cream focus:ring-2 focus:ring-violet-400 outline-none text-right"
-                      placeholder="0.00"
+                      className="w-full bg-black/30 border border-white/10 rounded-lg pl-6 pr-2 py-2 text-base font-bold text-cc-cream focus:ring-2 focus:ring-violet-400 outline-none text-right"
+                      placeholder="0"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Quick amount buttons (apply to cash) */}
-              <div className="grid grid-cols-5 gap-1.5">
+              {/* Quick cash amounts */}
+              <div className="grid grid-cols-5 gap-1">
                 {[50, 100, 200, 500, 1000].map((amount) => (
                   <button
                     key={amount}
                     onClick={() => setCashInput(amount)}
-                    className={`py-1.5 px-1 text-xs font-bold rounded-md border transition-all ${
+                    className={`py-1.5 text-xs font-bold rounded-md border transition-all ${
                       cashInput === amount
                         ? 'bg-cc-primary/20 border-cc-primary text-cc-primary'
                         : 'bg-white/5 border-white/10 text-cc-text-muted hover:bg-white/10 hover:text-cc-text-main'
@@ -1213,8 +1328,8 @@ export const POS = () => {
                 ))}
               </div>
 
-              {/* Quick: pay full with one method */}
-              <div className="grid grid-cols-3 gap-2">
+              {/* Quick full-method buttons */}
+              <div className="grid grid-cols-3 gap-1.5">
                 <button
                   onClick={() => { setCashInput(cartTotal); setCardInput(0); setTransferInput(0); }}
                   disabled={cart.length === 0}
@@ -1234,7 +1349,7 @@ export const POS = () => {
                   disabled={cart.length === 0}
                   className="py-1.5 text-[10px] font-bold rounded-md border bg-white/5 border-white/10 text-cc-text-muted hover:bg-violet-500/15 hover:text-violet-300 hover:border-violet-400/30 transition-all disabled:opacity-30"
                 >
-                  Todo transferencia
+                  Todo transf.
                 </button>
               </div>
 
