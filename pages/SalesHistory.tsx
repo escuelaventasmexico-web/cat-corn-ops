@@ -6,6 +6,7 @@ import { formatDateTimeMX } from '../lib/datetime';
 
 interface SaleItemPreview {
   quantity: number;
+  product_name?: string | null;
   products: { name: string } | null;
 }
 
@@ -19,7 +20,8 @@ interface Sale {
 
 interface SaleItem {
   id: string;
-  product_id: string;
+  product_id: string | null;
+  product_name?: string | null;
   quantity: number;
   price: number;
   products: {
@@ -66,7 +68,7 @@ export const SalesHistory = () => {
     if (!items || items.length === 0) return 'Venta';
     const grouped: Record<string, number> = {};
     for (const item of items) {
-      const name = item.products?.name || 'Producto';
+      const name = item.products?.name || item.product_name || 'Producto genérico';
       grouped[name] = (grouped[name] || 0) + item.quantity;
     }
     const entries = Object.entries(grouped);
@@ -139,7 +141,7 @@ export const SalesHistory = () => {
       
       let query = supabase
         .from('sales')
-        .select('id, total, payment_method, created_at, sale_items(quantity, products(name))')
+        .select('id, total, payment_method, created_at, sale_items(quantity, product_name, products(name))')
         .order('created_at', { ascending: false });
 
       // Si hay alguna fecha seleccionada, aplica filtros
@@ -168,6 +170,7 @@ export const SalesHistory = () => {
         created_at: s.created_at,
         sale_items: (s.sale_items || []).map((si: any) => ({
           quantity: si.quantity,
+          product_name: si.product_name || null,
           products: Array.isArray(si.products) ? (si.products[0] || null) : (si.products || null)
         }))
       }));
@@ -228,6 +231,7 @@ export const SalesHistory = () => {
         .select(`
           id,
           product_id,
+          product_name,
           quantity,
           price,
           products (
@@ -249,6 +253,7 @@ export const SalesHistory = () => {
         return {
           id: item.id,
           product_id: item.product_id,
+          product_name: item.product_name || null,
           quantity: item.quantity,
           price: item.price,
           products: raw ? {
@@ -698,7 +703,7 @@ export const SalesHistory = () => {
                         {/* Product name + description */}
                         <div>
                           <div className="font-semibold text-cc-text-main">
-                            {item.products?.name || 'Producto'}
+                            {item.products?.name || item.product_name || 'Producto genérico'}
                           </div>
                           {description && (
                             <div className="text-xs text-cc-text-muted mt-0.5">

@@ -41,6 +41,8 @@ export interface CartItem extends Product {
   quantity: number;
   discount_amount?: number;
   discount_reason?: string;
+  /** True for manually entered products with no SKU/product_id in the catalog */
+  is_generic?: boolean;
 }
 
 export interface Customer {

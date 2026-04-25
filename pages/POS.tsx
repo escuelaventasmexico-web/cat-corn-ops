@@ -4,7 +4,7 @@ import type { Customer } from '../supabase';
 import { normalizePhone, fetchCustomerByPhoneNorm, fetchCustomerById, createCustomerRecord, fetchCustomersList } from '../lib/loyalty';
 import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion, isTodayWeekday } from '../lib/promotions';
 import type { PromotionCode } from '../lib/promotions';
-import { Search, Plus, Minus, CreditCard, Banknote, Landmark, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings } from 'lucide-react';
+import { Search, Plus, Minus, CreditCard, Banknote, Landmark, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings, Package } from 'lucide-react';
 import { fetchCashStatus, getOpenSessionId, EMPTY_CASH_STATUS } from '../lib/cashRegister';
 import type { CashRegisterStatus } from '../lib/cashRegister';
 import { CashRegisterStatusPanel } from '../components/CashRegisterStatus';
@@ -15,6 +15,7 @@ import type { TestPrintResult } from '../lib/qzService';
 import { OpenCashRegisterModal } from '../components/OpenCashRegisterModal';
 import { WithdrawalModal } from '../components/WithdrawalModal';
 import { CloseCashRegisterModal } from '../components/CloseCashRegisterModal';
+import { GenericSaleModal } from '../components/GenericSaleModal';
 
 export const POS = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -78,6 +79,7 @@ export const POS = () => {
   const [showOpenCashModal, setShowOpenCashModal] = useState(false);
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
   const [showCloseCashModal, setShowCloseCashModal] = useState(false);
+  const [showGenericModal, setShowGenericModal] = useState(false);
   const cashRegisterOpen = !!cashStatus.session_id;
 
   useEffect(() => {
@@ -95,6 +97,24 @@ export const POS = () => {
     } finally {
       setCashLoading(false);
     }
+  };
+
+  /** Add a manually-entered generic product (no SKU, no inventory) to the cart */
+  const addGenericItem = (name: string, price: number, quantity: number) => {
+    const genericId = `GENERIC_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const genericItem: CartItem = {
+      id: genericId,
+      name,
+      product_name: name,
+      size: '',
+      price,
+      quantity,
+      is_generic: true,
+    };
+    setCart(prev => {
+      // Each generic item gets its own unique id so they never merge
+      return [...prev, genericItem];
+    });
   };
 
   // Keep barcode input focused
@@ -382,7 +402,9 @@ export const POS = () => {
             : item.price;
           return {
             sale_id: sale.id,
-            product_id: item.id,
+            product_id: item.is_generic ? null : item.id,
+            product_name: item.product_name || item.name || null,
+            is_generic: item.is_generic ?? false,
             quantity: item.quantity,
             price: effectivePrice,
             discount_amount: disc,
@@ -471,7 +493,7 @@ export const POS = () => {
       // 2. Fetch sale items with product info
       const { data: items, error: itemsErr } = await supabase
         .from('sale_items')
-        .select('quantity, price, discount_amount, discount_reason, product_id, products(product_name, name, size, price)')
+        .select('quantity, price, discount_amount, discount_reason, product_id, product_name, products(product_name, name, size, price)')
         .eq('sale_id', sale.id);
 
       if (itemsErr) throw itemsErr;
@@ -492,7 +514,7 @@ export const POS = () => {
       // We must reconstruct the BASE unit price for the ticket display.
       const receiptItems = (items || []).map((it: any) => {
         const prod = it.products || {};
-        const productName = prod.product_name || prod.name || 'Producto';
+        const productName = prod.product_name || prod.name || it.product_name || 'Producto genérico';
         const size = prod.size || '';
         const qty = it.quantity || 1;
         const storedPrice = it.price || 0;        // effective (discounted) unit price
@@ -800,15 +822,25 @@ export const POS = () => {
             </div>
           )}
           {/* Text search */}
-          <div className="relative">
-            <input 
-                type="text"
-                placeholder="Buscar producto por nombre..."
-                className="w-full bg-cc-surface border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm text-black placeholder-gray-400 caret-black focus:ring-2 focus:ring-cc-primary outline-none"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-            />
-            <Search className="absolute left-3 top-2.5 text-cc-text-muted" size={18} />
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <input 
+                  type="text"
+                  placeholder="Buscar producto por nombre..."
+                  className="w-full bg-cc-surface border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm text-black placeholder-gray-400 caret-black focus:ring-2 focus:ring-cc-primary outline-none"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+              />
+              <Search className="absolute left-3 top-2.5 text-cc-text-muted" size={18} />
+            </div>
+            <button
+              onClick={() => setShowGenericModal(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-cc-surface border border-white/10 rounded-xl text-xs font-semibold text-cc-text-muted hover:text-cc-cream hover:border-cc-primary/40 hover:bg-cc-primary/5 transition-all whitespace-nowrap"
+              title="Agregar producto sin SKU"
+            >
+              <Package size={15} className="text-cc-primary" />
+              Venta genérica
+            </button>
           </div>
         </div>
 
@@ -1428,6 +1460,14 @@ export const POS = () => {
             </div>
         </div>
       </div>
+
+      {/* Generic Sale Modal */}
+      {showGenericModal && (
+        <GenericSaleModal
+          onClose={() => setShowGenericModal(false)}
+          onAdd={addGenericItem}
+        />
+      )}
 
       {/* New Customer Modal */}
       {showNewCustomerModal && (
