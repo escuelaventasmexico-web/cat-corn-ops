@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase, Product } from '../supabase';
-import { Printer, Loader2, CheckCircle2, AlertCircle, Check } from 'lucide-react';
-import { printLabelViaQZ } from '../lib/printReceipt';
+import { Printer, Loader2, CheckCircle2, AlertCircle, Check, Package } from 'lucide-react';
+import { printLabelViaQZ, printGenericLabelViaQZ } from '../lib/printReceipt';
 import type { LabelPrintData } from '../lib/printReceipt';
 
 interface PrintResult {
@@ -53,6 +53,14 @@ export const PrintLabels = () => {
   const [fetchingProducts, setFetchingProducts] = useState(true);
   const [result, setResult] = useState<PrintResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ── Generic label state ──
+  const [genericName, setGenericName] = useState('');
+  const [genericPrice, setGenericPrice] = useState('');
+  const [genericQty, setGenericQty] = useState(1);
+  const [genericLoading, setGenericLoading] = useState(false);
+  const [genericSuccess, setGenericSuccess] = useState(false);
+  const [genericError, setGenericError] = useState<string | null>(null);
 
   // ── Fetch active products ──
   useEffect(() => {
@@ -174,6 +182,31 @@ export const PrintLabels = () => {
   };
 
   const selectedProduct = products.find((p) => p.id === selectedProductId);
+
+  // ── Generic label print handler ──
+  const handleGenericPrint = async () => {
+    setGenericError(null);
+    setGenericSuccess(false);
+    const name = genericName.trim();
+    const price = parseFloat(genericPrice);
+    const qty = Math.max(1, genericQty);
+    if (!name) { setGenericError('El nombre del producto es obligatorio.'); return; }
+    if (!genericPrice || isNaN(price) || price <= 0) { setGenericError('El precio debe ser mayor a $0.'); return; }
+    setGenericLoading(true);
+    try {
+      await printGenericLabelViaQZ(name, price, qty);
+      setGenericSuccess(true);
+    } catch (err: any) {
+      const msg = err?.message || 'Error al imprimir etiqueta';
+      setGenericError(
+        msg.includes('QZ') || msg.includes('websocket') || msg.includes('connect')
+          ? 'QZ Tray no está conectado. Asegúrate de que esté abierto y vuelve a intentar.'
+          : msg
+      );
+    } finally {
+      setGenericLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -318,6 +351,95 @@ export const PrintLabels = () => {
           <div className="bg-red-900/30 border border-red-600/40 rounded-lg p-4 flex items-start gap-3">
             <AlertCircle className="text-red-400 mt-0.5" size={20} />
             <p className="text-sm text-red-300">{error}</p>
+          </div>
+        )}
+      </div>
+      {/* ── Generic / manual label ───────────────────────────────── */}
+      <div className="bg-cc-surface rounded-2xl p-6 border border-white/5 max-w-lg space-y-5">
+        <div>
+          <h2 className="text-base font-bold text-cc-cream flex items-center gap-2">
+            <Package size={18} className="text-cc-primary" /> Etiqueta genérica
+          </h2>
+          <p className="text-cc-text-muted text-sm mt-1">
+            Imprime una etiqueta informativa para productos sin SKU.<br />
+            No crea producto, no descuenta inventario, no registra venta.
+          </p>
+        </div>
+
+        {/* Name */}
+        <div>
+          <label className="block text-sm text-cc-text-muted mb-1">Nombre del producto</label>
+          <input
+            type="text"
+            placeholder="Ej: Mix Caramelo más mantequilla"
+            value={genericName}
+            onChange={(e) => { setGenericName(e.target.value); setGenericSuccess(false); setGenericError(null); }}
+            className="w-full bg-white text-black placeholder-gray-400 border border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cc-primary"
+          />
+        </div>
+
+        {/* Price + Qty row */}
+        <div className="flex gap-4">
+          <div className="flex-1">
+            <label className="block text-sm text-cc-text-muted mb-1">Precio ($)</label>
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              placeholder="69.00"
+              value={genericPrice}
+              onChange={(e) => { setGenericPrice(e.target.value); setGenericSuccess(false); setGenericError(null); }}
+              className="w-full bg-white text-black placeholder-gray-400 border border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cc-primary"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-cc-text-muted mb-1">Etiquetas</label>
+            <input
+              type="number"
+              min={1}
+              value={genericQty}
+              onChange={(e) => { setGenericQty(Math.max(1, Number(e.target.value))); setGenericSuccess(false); }}
+              className="w-24 bg-white text-black placeholder-gray-400 border border-white/10 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cc-primary"
+            />
+          </div>
+        </div>
+
+        {/* Preview */}
+        {genericName.trim() && parseFloat(genericPrice) > 0 && (
+          <div className="bg-cc-bg rounded-lg p-3 text-xs border border-white/5 font-mono space-y-0.5 text-cc-text-muted">
+            <p className="text-cc-cream font-bold text-center">CAT CORN</p>
+            <p className="text-center border-t border-white/10 pt-1">{genericName.trim()}</p>
+            <p className="text-cc-primary font-bold text-center text-sm">${parseFloat(genericPrice).toFixed(2)}</p>
+            <p className="text-center text-cc-text-muted/70">Venta genérica</p>
+          </div>
+        )}
+
+        {/* Print button */}
+        <button
+          onClick={handleGenericPrint}
+          disabled={genericLoading}
+          className="flex items-center gap-2 bg-cc-primary text-cc-bg font-semibold px-5 py-2.5 rounded-lg hover:brightness-110 transition disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {genericLoading ? <Loader2 className="animate-spin" size={18} /> : <Printer size={18} />}
+          {genericLoading ? 'Imprimiendo…' : `Imprimir ${genericQty} etiqueta${genericQty !== 1 ? 's' : ''}`}
+        </button>
+
+        {/* Success */}
+        {genericSuccess && (
+          <div className="bg-green-900/30 border border-green-600/40 rounded-lg p-4 flex items-start gap-3">
+            <CheckCircle2 className="text-green-400 mt-0.5 shrink-0" size={20} />
+            <div className="text-sm">
+              <p className="text-green-300 font-medium">{genericQty} etiqueta{genericQty !== 1 ? 's' : ''} impresa{genericQty !== 1 ? 's' : ''} correctamente.</p>
+              <p className="text-cc-text-muted mt-0.5">Para cobrar este producto, usa <span className="text-cc-cream font-medium">POS &rarr; Venta genérica</span>.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Error */}
+        {genericError && (
+          <div className="bg-red-900/30 border border-red-600/40 rounded-lg p-4 flex items-start gap-3">
+            <AlertCircle className="text-red-400 mt-0.5" size={20} />
+            <p className="text-sm text-red-300">{genericError}</p>
           </div>
         )}
       </div>

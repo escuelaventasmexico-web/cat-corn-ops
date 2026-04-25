@@ -541,3 +541,88 @@ export async function printOrderLabel(customerName: string): Promise<void> {
   await printRaw(printerName, cmds);
   console.info(TAG, `✅ Etiqueta impresa — ${name}`);
 }
+
+// ─── Generic / manual label ──────────────────────────────────────────
+
+/**
+ * Print simple informational labels for manually-priced products.
+ * No SKU, no barcode — just name, price, and a "Venta genérica" tag.
+ *
+ * Layout (centered, 58 mm thermal):
+ *   CAT CORN
+ *   ────────────────
+ *   <Product Name>
+ *   (wrapped if long)
+ *   ────────────────
+ *   Precio: $XX.XX
+ *   Venta genérica
+ *   DD/MM/YYYY
+ *   ════════════════  + cut
+ */
+export async function printGenericLabelViaQZ(
+  productName: string,
+  price: number,
+  quantity: number,
+): Promise<void> {
+  const printerName = getSavedPrinterName();
+  if (!printerName) {
+    throw new Error('No hay impresora configurada. Configura tu impresora en el POS.');
+  }
+
+  const name = productName.trim();
+
+  // Date string in Mexico format
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('es-MX', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    timeZone: 'America/Mexico_City',
+  });
+
+  // Build one label's ESC/POS commands
+  const buildOne = (): string[] => {
+    const c: string[] = [];
+    c.push(INIT);
+    c.push(LF);
+
+    // Header: brand
+    c.push(CENTER + BOLD_ON + DOUBLE_SIZE);
+    c.push('CAT CORN' + LF);
+    c.push(NORMAL_SIZE + BOLD_OFF);
+    c.push('-'.repeat(LINE_W) + LF);
+
+    // Product name (centered, bold, auto-wrap)
+    c.push(CENTER + BOLD_ON);
+    for (let i = 0; i < name.length; i += LINE_W) {
+      c.push(name.slice(i, i + LINE_W) + LF);
+    }
+    c.push(BOLD_OFF);
+    c.push('-'.repeat(LINE_W) + LF);
+
+    // Price (large)
+    c.push(CENTER + BOLD_ON + DOUBLE_SIZE);
+    c.push('$' + price.toFixed(2) + LF);
+    c.push(NORMAL_SIZE + BOLD_OFF);
+
+    // Tag line
+    c.push(CENTER);
+    c.push('Venta generica' + LF);
+
+    // Date
+    c.push(dateStr + LF);
+
+    // Footer
+    c.push(LF + LF + LF);
+    c.push(CUT);
+
+    return c;
+  };
+
+  const allCmds: string[] = [];
+  for (let i = 0; i < quantity; i++) {
+    allCmds.push(...buildOne());
+  }
+
+  console.info(TAG, `🏷️ Etiqueta genérica × ${quantity} → "${name}" $${price} en "${printerName}"`);
+  await printRaw(printerName, allCmds);
+  console.info(TAG, `✅ ${quantity} etiqueta(s) genérica(s) impresa(s) — ${name}`);
+}
