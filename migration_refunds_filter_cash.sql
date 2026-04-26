@@ -13,14 +13,27 @@
 --
 -- COALESCE(is_refunded, false) = false handles rows that existed before the
 -- column was added (they have NULL → treated as not-refunded, safe).
+--
+-- NOTE: CREATE OR REPLACE VIEW fails with "cannot drop columns from view" when
+-- the column list changes. We DROP each view first, then recreate from scratch.
+-- CASCADE is used in case Supabase has internal dependencies on these views.
 -- ============================================================================
+
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- DROP all views first (CASCADE handles any internal Supabase dependencies)
+-- Order: leaf views first, then views they depend on.
+-- ────────────────────────────────────────────────────────────────────────────
+DROP VIEW IF EXISTS public.v_cash_register_session_sales      CASCADE;
+DROP VIEW IF EXISTS public.v_open_cash_register_status        CASCADE;
+DROP VIEW IF EXISTS public.v_cash_register_sessions_summary   CASCADE;
 
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- 1) v_cash_register_sessions_summary
 --    Aggregates all closed + open sessions for the Corte de Caja history page.
 -- ────────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW public.v_cash_register_sessions_summary AS
+CREATE VIEW public.v_cash_register_sessions_summary AS
 SELECT
   s.id                     AS session_id,
   s.status,
@@ -97,11 +110,15 @@ LEFT JOIN LATERAL (
 ORDER BY s.opened_at DESC;
 
 
+-- Grant access on the recreated view
+GRANT SELECT ON public.v_cash_register_sessions_summary TO authenticated;
+
+
 -- ────────────────────────────────────────────────────────────────────────────
 -- 2) v_open_cash_register_status
 --    Live status panel shown in the POS while a session is open.
 -- ────────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW public.v_open_cash_register_status AS
+CREATE VIEW public.v_open_cash_register_status AS
 SELECT
   s.id                     AS session_id,
   s.opening_cash,
@@ -146,12 +163,16 @@ ORDER BY s.opened_at DESC
 LIMIT 1;
 
 
+-- Grant access on the recreated view
+GRANT SELECT ON public.v_open_cash_register_status TO authenticated;
+
+
 -- ────────────────────────────────────────────────────────────────────────────
 -- 3) v_cash_register_session_sales
 --    Detail view: all non-refunded sales belonging to a session.
 --    Used by CashSessionDetailModal + fetchSessionSales() in cashRegister.ts.
 -- ────────────────────────────────────────────────────────────────────────────
-CREATE OR REPLACE VIEW public.v_cash_register_session_sales AS
+CREATE VIEW public.v_cash_register_session_sales AS
 SELECT
   sa.cash_session_id        AS session_id,
   sa.id                     AS sale_id,

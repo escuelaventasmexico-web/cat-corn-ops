@@ -50,6 +50,7 @@ interface Order {
   status: OrderStatus;
   created_at: string;
   updated_at: string;
+  label_printed?: boolean;
   /* joined */
   products?: { name: string; price: number } | null;
 }
@@ -772,7 +773,11 @@ export const Pedidos = () => {
                     return (
                       <tr
                         key={o.id}
-                        className="border-b border-white/5 hover:bg-white/5 transition-colors"
+                        className={`border-b border-white/5 transition-colors ${
+                          o.label_printed
+                            ? 'bg-violet-500/10 hover:bg-violet-500/15 border-b-violet-500/20'
+                            : 'hover:bg-white/5'
+                        }`}
                       >
                         <td className="py-2.5 px-3 text-cc-text-muted whitespace-nowrap">
                           {fmtDateShort(o.delivery_date)}
@@ -814,15 +819,27 @@ export const Pedidos = () => {
                               onClick={async () => {
                                 try {
                                   await printOrderLabel(o.customer_name);
+                                  if (!o.label_printed && supabase) {
+                                    await supabase
+                                      .from('orders')
+                                      .update({ label_printed: true })
+                                      .eq('id', o.id);
+                                    setOrders(prev =>
+                                      prev.map(x => x.id === o.id ? { ...x, label_printed: true } : x)
+                                    );
+                                  }
                                 } catch (err: any) {
                                   alert(err.message || 'Error al imprimir etiqueta');
                                 }
                               }}
                               title="Imprimir etiqueta con nombre del cliente"
-                              className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all
-                                bg-violet-500/15 border-violet-500/30 text-violet-400 hover:bg-violet-500/25"
+                              className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all ${
+                                o.label_printed
+                                  ? 'bg-violet-500/25 border-violet-400/50 text-violet-300'
+                                  : 'bg-violet-500/15 border-violet-500/30 text-violet-400 hover:bg-violet-500/25'
+                              }`}
                             >
-                              <Tag size={11} /> Etiqueta
+                              <Tag size={11} />{o.label_printed ? '✔ Impresa' : 'Etiqueta'}
                             </button>
                             <button
                               onClick={() => { setOrderToCheckout(o); setCheckoutPaymentMethod('CASH'); }}
