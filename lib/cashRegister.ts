@@ -558,8 +558,9 @@ export async function fetchAndPrintCorteDeCaja(
 
   console.info('[CORTE PRINT] Fetching data for session', sessionId);
 
-  // 1. Fetch sales for this session
-  const sales = await fetchSessionSales(sessionId);
+  // 1. Fetch sales for this session (view already excludes refunded; filter here as safety net)
+  const allSales = await fetchSessionSales(sessionId);
+  const sales = allSales.filter(s => !(s as unknown as Record<string,unknown>).is_refunded);
 
   // 2. Fetch sale_items with product names for all sales
   let saleItemsMap: Record<string, { quantity: number; name: string }[]> = {};

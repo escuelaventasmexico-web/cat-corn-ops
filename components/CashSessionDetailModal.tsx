@@ -257,7 +257,8 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
             const { data: fallback } = await supabase
               .from('sales')
               .select('id, created_at, payment_method, total, customer_id, promotion_code, loyalty_reward_applied, loyalty_discount_amount')
-              .eq('cash_session_id', resolvedSessionId);
+              .eq('cash_session_id', resolvedSessionId)
+              .eq('is_refunded', false);
             if (fallback) {
               loadedSales = fallback.map((d: Record<string, unknown>) => ({
                 id: String(d.id ?? ''),
