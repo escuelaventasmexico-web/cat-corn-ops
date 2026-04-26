@@ -189,7 +189,7 @@ export const Pedidos = () => {
 
     let query = supabase
       .from('orders')
-      .select('*, products(name, price)')
+      .select('*, label_printed, products(name, price)')
       .order('delivery_date', { ascending: true })
       .order('created_at', { ascending: true });
 
@@ -820,13 +820,17 @@ export const Pedidos = () => {
                                 try {
                                   await printOrderLabel(o.customer_name);
                                   if (!o.label_printed && supabase) {
-                                    await supabase
+                                    const { error: updateErr } = await supabase
                                       .from('orders')
                                       .update({ label_printed: true })
                                       .eq('id', o.id);
-                                    setOrders(prev =>
-                                      prev.map(x => x.id === o.id ? { ...x, label_printed: true } : x)
-                                    );
+                                    if (updateErr) {
+                                      alert('Etiqueta impresa, pero no se pudo guardar el estado: ' + updateErr.message);
+                                    } else {
+                                      setOrders(prev =>
+                                        prev.map(x => x.id === o.id ? { ...x, label_printed: true } : x)
+                                      );
+                                    }
                                   }
                                 } catch (err: any) {
                                   alert(err.message || 'Error al imprimir etiqueta');
