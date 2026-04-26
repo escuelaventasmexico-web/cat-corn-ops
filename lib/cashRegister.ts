@@ -154,7 +154,8 @@ export async function fetchCashStatus(): Promise<CashRegisterStatus> {
   const { data: salesRows } = await supabase
     .from('sales')
     .select('payment_method, total, cash_amount, card_amount')
-    .eq('cash_session_id', sessionId);
+    .eq('cash_session_id', sessionId)
+    .eq('is_refunded', false);
 
   let cashSalesTotal = 0;
   let cardSalesTotal = 0;
@@ -450,6 +451,7 @@ export async function fetchSessionSales(sessionId: string): Promise<CashSessionS
     .from('sales')
     .select('id, created_at, payment_method, total, customer_id, promotion_code, loyalty_reward_applied, loyalty_discount_amount')
     .eq('cash_session_id', sessionId)
+    .eq('is_refunded', false)
     .order('created_at', { ascending: false });
 
   if (tableErr) {

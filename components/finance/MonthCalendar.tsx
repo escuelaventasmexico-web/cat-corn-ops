@@ -107,6 +107,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
         .select('id, total, payment_method, promotion_code, created_at')
         .gte('created_at', dayStart)
         .lt('created_at', nextDay)
+        .eq('is_refunded', false)
         .order('created_at', { ascending: true });
 
       const sales: DaySale[] = (salesData || []).map(s => ({

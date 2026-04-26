@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
-import { Receipt, X, CreditCard, Banknote, Landmark, Download, Calendar, Filter } from 'lucide-react';
+import { Receipt, X, CreditCard, Banknote, Landmark, Download, Calendar, Filter, RotateCcw, AlertTriangle } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { formatDateTimeMX } from '../lib/datetime';
 
@@ -15,6 +15,9 @@ interface Sale {
   total: number;
   payment_method: string;
   created_at: string;
+  is_refunded?: boolean;
+  refunded_at?: string | null;
+  refund_reason?: string | null;
   sale_items?: SaleItemPreview[];
 }
 
@@ -51,6 +54,12 @@ export const SalesHistory = () => {
   const [toDate, setToDate] = useState<string>('');
   const [samples, setSamples] = useState<Sample[]>([]);
   const [loadingSamples, setLoadingSamples] = useState(true);
+
+  // ── Refund state ──
+  const [refundTarget, setRefundTarget] = useState<Sale | null>(null);
+  const [refundReason, setRefundReason] = useState('');
+  const [refundLoading, setRefundLoading] = useState(false);
+  const [refundError, setRefundError] = useState<string | null>(null);
 
   // --- Helpers ---
 
@@ -92,6 +101,31 @@ export const SalesHistory = () => {
     if (p.size) parts.push(p.size);
     if (p.grams) parts.push(`${p.grams}g`);
     return parts.join(' · ');
+  };
+
+  const handleRefund = async () => {
+    if (!refundTarget || !supabase) return;
+    setRefundLoading(true);
+    setRefundError(null);
+    try {
+      const { error } = await supabase.rpc('refund_sale', {
+        p_sale_id: refundTarget.id,
+        p_reason: refundReason.trim() || null,
+      });
+      if (error) throw error;
+      // Update local state — mark as refunded without reload
+      setSales(prev => prev.map(s =>
+        s.id === refundTarget.id
+          ? { ...s, is_refunded: true, refunded_at: new Date().toISOString(), refund_reason: refundReason.trim() || null }
+          : s
+      ));
+      setRefundTarget(null);
+      setRefundReason('');
+    } catch (err: any) {
+      setRefundError(err?.message || 'Error al procesar la devolución');
+    } finally {
+      setRefundLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -141,7 +175,7 @@ export const SalesHistory = () => {
       
       let query = supabase
         .from('sales')
-        .select('id, total, payment_method, created_at, sale_items(quantity, product_name, products(name))')
+        .select('id, total, payment_method, created_at, is_refunded, refunded_at, refund_reason, sale_items(quantity, product_name, products(name))')
         .order('created_at', { ascending: false });
 
       // Si hay alguna fecha seleccionada, aplica filtros
@@ -168,6 +202,9 @@ export const SalesHistory = () => {
         total: s.total,
         payment_method: s.payment_method,
         created_at: s.created_at,
+        is_refunded: s.is_refunded ?? false,
+        refunded_at: s.refunded_at ?? null,
+        refund_reason: s.refund_reason ?? null,
         sale_items: (s.sale_items || []).map((si: any) => ({
           quantity: si.quantity,
           product_name: si.product_name || null,
@@ -539,10 +576,10 @@ export const SalesHistory = () => {
               <div className="bg-cc-primary/10 p-4 rounded-lg border border-cc-primary/20">
                 <div className="text-sm text-cc-text-muted mb-1">Total General</div>
                 <div className="text-3xl font-bold text-cc-primary">
-                  ${totalGeneral.toFixed(2)}
+                  ${sales.filter(s => !s.is_refunded).reduce((sum, s) => sum + Number(s.total), 0).toFixed(2)}
                 </div>
                 <div className="text-xs text-cc-text-muted mt-1">
-                  {sales.length} ventas totales
+                  {sales.filter(s => !s.is_refunded).length} ventas · {sales.filter(s => s.is_refunded).length > 0 && <span className="text-red-400">{sales.filter(s => s.is_refunded).length} devuelta(s)</span>}
                 </div>
               </div>
             </div>
@@ -564,19 +601,30 @@ export const SalesHistory = () => {
           {sales.map((sale) => (
             <div
               key={sale.id}
-              onClick={() => loadSaleDetails(sale)}
-              className="bg-cc-surface p-5 rounded-xl border border-white/5 hover:border-cc-primary/30 cursor-pointer transition-all hover:shadow-lg group"
+              onClick={() => !sale.is_refunded && loadSaleDetails(sale)}
+              className={`bg-cc-surface p-5 rounded-xl border transition-all ${
+                sale.is_refunded
+                  ? 'border-red-500/20 opacity-60 cursor-default'
+                  : 'border-white/5 hover:border-cc-primary/30 cursor-pointer hover:shadow-lg group'
+              }`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-lg bg-cc-primary/10 flex items-center justify-center group-hover:bg-cc-primary/20 transition-colors">
-                    <Receipt size={24} className="text-cc-primary" />
+                  <div className={`w-12 h-12 rounded-lg flex items-center justify-center transition-colors ${
+                    sale.is_refunded ? 'bg-red-500/10' : 'bg-cc-primary/10 group-hover:bg-cc-primary/20'
+                  }`}>
+                    <Receipt size={24} className={sale.is_refunded ? 'text-red-400' : 'text-cc-primary'} />
                   </div>
                   <div>
-                    <div className="font-semibold text-cc-text-main mb-1 line-clamp-1">
+                    <div className="font-semibold text-cc-text-main mb-1 line-clamp-1 flex items-center gap-2">
                       {buildProductSummary(sale.sale_items)}
+                      {sale.is_refunded && (
+                        <span className="text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                          DEVUELTO
+                        </span>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-xs text-cc-text-muted">
                         #{sale.id.substring(0, 8).toUpperCase()}
                       </span>
@@ -588,16 +636,34 @@ export const SalesHistory = () => {
                         {getPaymentIcon(sale.payment_method)}
                         <span className="text-cc-text-muted">{getPaymentLabel(sale.payment_method)}</span>
                       </span>
+                      {sale.is_refunded && sale.refunded_at && (
+                        <span className="text-[10px] text-red-400/70">
+                          Devuelta {formatDateTimeMX(sale.refunded_at)}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold text-cc-primary">
-                    ${Number(sale.total).toFixed(2)}
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <div className={`text-2xl font-bold ${
+                      sale.is_refunded ? 'text-red-400 line-through decoration-red-400/60' : 'text-cc-primary'
+                    }`}>
+                      ${Number(sale.total).toFixed(2)}
+                    </div>
+                    <div className="text-xs text-cc-text-muted">
+                      {sale.is_refunded ? 'Devuelta' : 'Click para ver detalles'}
+                    </div>
                   </div>
-                  <div className="text-xs text-cc-text-muted">
-                    Click para ver detalles
-                  </div>
+                  {!sale.is_refunded && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setRefundTarget(sale); setRefundReason(''); setRefundError(null); }}
+                      className="p-2 rounded-lg bg-white/5 border border-white/10 text-cc-text-muted hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 transition-all"
+                      title="Devolver venta"
+                    >
+                      <RotateCcw size={15} />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -737,10 +803,71 @@ export const SalesHistory = () => {
             <div className="p-6 border-t border-white/10 bg-black/20">
               <div className="flex justify-between items-center">
                 <span className="text-lg font-medium text-cc-text-muted">Total de la Venta</span>
-                <span className="text-3xl font-bold text-cc-primary">
+                <span className={`text-3xl font-bold ${selectedSale.is_refunded ? 'text-red-400 line-through' : 'text-cc-primary'}`}>
                   ${Number(selectedSale.total).toFixed(2)}
                 </span>
               </div>
+              {selectedSale.is_refunded && (
+                <div className="mt-3 flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                  <RotateCcw size={14} className="text-red-400 shrink-0" />
+                  <span className="text-sm text-red-300 font-medium">DEVUELTO</span>
+                  {selectedSale.refunded_at && <span className="text-xs text-red-400/70 ml-1">{formatDateTimeMX(selectedSale.refunded_at)}</span>}
+                  {selectedSale.refund_reason && <span className="text-xs text-red-400/70 ml-1">— {selectedSale.refund_reason}</span>}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Refund confirm modal ── */}
+      {refundTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75">
+          <div className="bg-[#1a1a2e] border border-red-500/20 rounded-2xl shadow-2xl w-full max-w-sm">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-white/10">
+              <AlertTriangle size={18} className="text-red-400 shrink-0" />
+              <h2 className="font-bold text-cc-cream text-base">Devolver venta</h2>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <div className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 space-y-1">
+                <p className="text-xs text-cc-text-muted">Ticket</p>
+                <p className="font-mono text-sm font-bold text-cc-cream">#{refundTarget.id.substring(0, 8).toUpperCase()}</p>
+                <p className="text-xs text-cc-text-muted">{formatDateTimeMX(refundTarget.created_at)}</p>
+                <p className="text-cc-primary font-bold">${Number(refundTarget.total).toFixed(2)}</p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-cc-text-muted uppercase tracking-wide mb-1.5">
+                  Motivo (opcional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Venta duplicada, error de cobro…"
+                  value={refundReason}
+                  onChange={(e) => setRefundReason(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-cc-cream placeholder-gray-500 focus:ring-2 focus:ring-red-400/40 focus:border-red-400/40 outline-none"
+                />
+              </div>
+              <p className="text-xs text-cc-text-muted leading-relaxed">
+                La venta quedará marcada como <span className="text-red-400 font-semibold">DEVUELTA</span> y no afectará métricas ni totales. El registro <strong>no se elimina</strong>.
+              </p>
+              {refundError && (
+                <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{refundError}</p>
+              )}
+            </div>
+            <div className="px-5 pb-5 flex gap-3">
+              <button
+                onClick={() => { setRefundTarget(null); setRefundReason(''); setRefundError(null); }}
+                className="flex-1 py-2.5 rounded-xl border border-white/10 bg-white/5 text-cc-text-muted text-sm font-semibold hover:bg-white/10 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleRefund}
+                disabled={refundLoading}
+                className="flex-1 py-2.5 rounded-xl bg-red-500/80 text-white text-sm font-bold hover:bg-red-500 transition-colors disabled:opacity-50"
+              >
+                {refundLoading ? 'Procesando…' : 'Confirmar devolución'}
+              </button>
             </div>
           </div>
         </div>

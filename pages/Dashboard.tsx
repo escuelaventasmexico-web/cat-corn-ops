@@ -54,7 +54,8 @@ export const Dashboard = () => {
         .from('sales')
         .select('total, payment_method, promotion_code')
         .gte('created_at', todayStr)
-        .lt('created_at', tomorrowStr);
+        .lt('created_at', tomorrowStr)
+        .eq('is_refunded', false);
       
       const totalToday = salesToday?.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
       const ordersToday = salesToday?.length || 0;
@@ -92,7 +93,8 @@ export const Dashboard = () => {
         .from('sales')
         .select('total')
         .gte('created_at', yesterdayStr)
-        .lt('created_at', todayStr);
+        .lt('created_at', todayStr)
+        .eq('is_refunded', false);
       
       const totalYesterday = salesYesterday?.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
 
@@ -117,7 +119,8 @@ export const Dashboard = () => {
         .from('sales')
         .select('id')
         .gte('created_at', todayStr)
-        .lt('created_at', tomorrowStr);
+        .lt('created_at', tomorrowStr)
+        .eq('is_refunded', false);
       
       const todaySaleIds = todaysSales?.map(s => s.id) || [];
 
@@ -193,7 +196,8 @@ export const Dashboard = () => {
         .from('sales')
         .select('id')
         .gte('created_at', monthStartStr)
-        .lt('created_at', tomorrowStr);
+        .lt('created_at', tomorrowStr)
+        .eq('is_refunded', false);
 
       const monthSaleIds = monthSales?.map(s => s.id) || [];
       let topMonthList: TopProduct[] = [];
