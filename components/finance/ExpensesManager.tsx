@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../supabase';
-import { CreditCard, X, Plus, Edit2, Trash2, AlertCircle } from 'lucide-react';
+import { CreditCard, X, Plus, Edit2, Trash2, AlertCircle, FileDown } from 'lucide-react';
 import { ExpenseFormModal } from './ExpenseFormModal.tsx';
+import { exportExpensesToExcel } from '../../lib/exportExpenses';
 
 interface Expense {
   id: string;
@@ -112,6 +113,12 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
 
   const totalExpenses = expenses.reduce((sum, exp) => sum + Number(exp.amount_mxn), 0);
 
+  const handleExport = () => {
+    const now = new Date();
+    const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    exportExpensesToExcel(expenses, yearMonth);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -123,6 +130,14 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleExport}
+            disabled={expenses.length === 0}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <FileDown size={18} />
+            Exportar Excel
+          </button>
           <button
             onClick={() => setIsFormOpen(true)}
             className="flex items-center gap-2 px-4 py-2 bg-cc-primary text-cc-bg rounded-lg hover:bg-cc-primary/90 transition-colors font-medium"
