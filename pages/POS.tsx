@@ -4,7 +4,7 @@ import type { Customer } from '../supabase';
 import { normalizePhone, fetchCustomerByPhoneNorm, fetchCustomerById, createCustomerRecord, fetchCustomersList } from '../lib/loyalty';
 import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion, isTodayWeekday } from '../lib/promotions';
 import type { PromotionCode } from '../lib/promotions';
-import { Search, Plus, Minus, CreditCard, Banknote, Landmark, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings, Package } from 'lucide-react';
+import { Search, Plus, Minus, CreditCard, Banknote, Landmark, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings, Package, Truck } from 'lucide-react';
 import { fetchCashStatus, getOpenSessionId, EMPTY_CASH_STATUS } from '../lib/cashRegister';
 import type { CashRegisterStatus } from '../lib/cashRegister';
 import { CashRegisterStatusPanel } from '../components/CashRegisterStatus';
@@ -80,6 +80,7 @@ export const POS = () => {
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
   const [showCloseCashModal, setShowCloseCashModal] = useState(false);
   const [showGenericModal, setShowGenericModal] = useState(false);
+  const [deliveryPlatform, setDeliveryPlatform] = useState<'uber_eats' | 'didi_food' | 'rappi' | null>(null);
   const cashRegisterOpen = !!cashStatus.session_id;
 
   useEffect(() => {
@@ -323,34 +324,36 @@ export const POS = () => {
 
   const handleCheckout = async () => {
     if (cart.length === 0 || !supabase) return;
-    if (!isPaymentSufficient) return;
+    if (!deliveryPlatform && !isPaymentSufficient) return;
 
-    // Block if no cash register is open
-    if (!cashRegisterOpen) {
+    // Block if no cash register is open (delivery is allowed without an open session)
+    if (!cashRegisterOpen && !deliveryPlatform) {
       alert('Debes abrir una caja antes de registrar ventas.');
       return;
     }
 
     // Transferencia must be a single-method payment (no mixed with cash/card)
-    if (transferInput > 0 && (cashInput > 0 || cardInput > 0)) {
+    if (!deliveryPlatform && transferInput > 0 && (cashInput > 0 || cardInput > 0)) {
       alert('La transferencia no se puede combinar con efectivo o tarjeta en esta pantalla.');
       return;
     }
-    if (transferInput > 0 && Math.abs(transferInput - cartTotal) > 0.009) {
+    if (!deliveryPlatform && transferInput > 0 && Math.abs(transferInput - cartTotal) > 0.009) {
       alert('Para transferencia captura exactamente el total del ticket.');
       return;
     }
 
-    // Determine actual amounts (change only applies to cash)
-    const effectiveCash = Math.min(cashInput, cartTotal - cardInput - transferInput);
-    const effectiveCard = cardInput;
-    const method = transferInput > 0
-      ? 'TRANSFER'
-      : effectiveCash > 0 && effectiveCard > 0
-        ? 'MIXED'
-        : effectiveCard > 0
-          ? 'CARD'
-          : 'CASH';
+    // Determine payment method
+    const effectiveCash = deliveryPlatform ? 0 : Math.min(cashInput, cartTotal - cardInput - transferInput);
+    const effectiveCard = deliveryPlatform ? 0 : cardInput;
+    const method = deliveryPlatform
+      ? 'PLATFORM'
+      : transferInput > 0
+        ? 'TRANSFER'
+        : effectiveCash > 0 && effectiveCard > 0
+          ? 'MIXED'
+          : effectiveCard > 0
+            ? 'CARD'
+            : 'CASH';
 
     setProcessing(true);
 
@@ -372,9 +375,12 @@ export const POS = () => {
         const salePayload: Record<string, unknown> = {
             total: cartTotal,
             payment_method: method,
-          cash_amount: method === 'CASH' ? cashInput : method === 'MIXED' ? effectiveCash : 0,
-          card_amount: method === 'CARD' || method === 'MIXED' ? effectiveCard : 0,
-          transfer_amount: method === 'TRANSFER' ? cartTotal : 0,
+          cash_amount: deliveryPlatform ? 0 : (method === 'CASH' ? cashInput : method === 'MIXED' ? effectiveCash : 0),
+          card_amount: deliveryPlatform ? 0 : (method === 'CARD' || method === 'MIXED' ? effectiveCard : 0),
+          transfer_amount: deliveryPlatform ? 0 : (method === 'TRANSFER' ? cartTotal : 0),
+          platform_amount: deliveryPlatform ? cartTotal : 0,
+          sale_origin: deliveryPlatform ? 'delivery' : 'pos',
+          delivery_platform: deliveryPlatform || null,
             cashier_id: user.id,
             customer_id: customer?.id || null,
             loyalty_reward_applied: rewardApplied,
@@ -426,6 +432,7 @@ export const POS = () => {
 
         // Refresh cash register status after sale
         loadCashStatus();
+        setDeliveryPlatform(null);
 
         // Build receipt data BEFORE clearing the cart
         const receiptData: ReceiptData = {
@@ -841,6 +848,25 @@ export const POS = () => {
               <Package size={15} className="text-cc-primary" />
               Venta genérica
             </button>
+          </div>
+          {/* Delivery Platform Selector */}
+          <div className="flex gap-1.5">
+            {([
+              { key: 'uber_eats', label: 'Uber Eats', color: 'bg-orange-500/15 border-orange-500/30 text-orange-300 hover:bg-orange-500/25', active: 'bg-orange-500/30 border-orange-400 text-orange-200' },
+              { key: 'didi_food', label: 'DiDi Food', color: 'bg-orange-600/15 border-orange-600/30 text-orange-400 hover:bg-orange-600/25', active: 'bg-orange-600/30 border-orange-500 text-orange-200' },
+              { key: 'rappi',    label: 'Rappi',     color: 'bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25',           active: 'bg-red-500/30 border-red-400 text-red-200' },
+            ] as const).map(p => (
+              <button
+                key={p.key}
+                onClick={() => setDeliveryPlatform(prev => prev === p.key ? null : p.key)}
+                className={`flex items-center gap-1 px-3 py-2 rounded-xl border text-xs font-bold transition-all ${
+                  deliveryPlatform === p.key ? p.active : p.color
+                }`}
+                title={`Venta delivery ${p.label}`}
+              >
+                <Truck size={12} />{p.label}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -1281,13 +1307,48 @@ export const POS = () => {
               )}
             </div>
 
-            {/* ── Payment inputs ── */}
-            {!cashRegisterOpen && !cashLoading && (
+            {/* ── Payment inputs or Delivery confirmation ── */}
+            {!cashRegisterOpen && !cashLoading && !deliveryPlatform && (
               <div className="text-center py-1">
                 <p className="text-xs text-red-400 font-medium">Abre una caja para cobrar</p>
               </div>
             )}
-            <div className="space-y-2.5">
+            {deliveryPlatform ? (
+              /* ── DELIVERY MODE ── */
+              <div className="space-y-2">
+                <div className="bg-orange-500/10 border border-orange-500/25 rounded-xl px-4 py-3 flex items-center gap-3">
+                  <Truck size={18} className="text-orange-300 shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold text-orange-200 uppercase tracking-wide">Venta Delivery</p>
+                    <p className="text-sm font-semibold text-orange-100">
+                      {deliveryPlatform === 'uber_eats' ? 'Uber Eats'
+                        : deliveryPlatform === 'didi_food' ? 'DiDi Food'
+                        : 'Rappi'}
+                    </p>
+                    <p className="text-[10px] text-orange-300/70 mt-0.5">Liquidación pendiente — no entra a caja física</p>
+                  </div>
+                  <button
+                    onClick={() => setDeliveryPlatform(null)}
+                    className="ml-auto text-orange-400/60 hover:text-orange-300 transition-colors"
+                    title="Cancelar modo delivery"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                <button
+                  onClick={() => handleCheckout()}
+                  disabled={processing || cart.length === 0}
+                  className="w-full py-3 bg-orange-500 hover:bg-orange-400 text-white rounded-lg text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {processing ? (
+                    <><span className="animate-spin">⏳</span> Procesando…</>
+                  ) : (
+                    <><Truck size={16} /> Registrar delivery ${cartTotal.toFixed(2)}</>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
               {/* Cash + Card + Transfer */}
               <div className="grid grid-cols-3 gap-2">
                 <div>
@@ -1458,6 +1519,7 @@ export const POS = () => {
                 {selectedPrinter ? `Impresora: ${selectedPrinter}` : 'Configurar impresora'}
               </button>
             </div>
+            )} {/* end delivery conditional */}
         </div>
       </div>
 

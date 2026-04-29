@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
-import { Receipt, X, CreditCard, Banknote, Landmark, Download, Calendar, Filter, RotateCcw, AlertTriangle } from 'lucide-react';
+import { Receipt, X, CreditCard, Banknote, Landmark, Download, Calendar, Filter, RotateCcw, AlertTriangle, Truck } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { formatDateTimeMX } from '../lib/datetime';
 
@@ -18,6 +18,8 @@ interface Sale {
   is_refunded?: boolean;
   refunded_at?: string | null;
   refund_reason?: string | null;
+  sale_origin?: string;
+  delivery_platform?: string | null;
   sale_items?: SaleItemPreview[];
 }
 
@@ -175,7 +177,7 @@ export const SalesHistory = () => {
       
       let query = supabase
         .from('sales')
-        .select('id, total, payment_method, created_at, is_refunded, refunded_at, refund_reason, sale_items(quantity, product_name, products(name))')
+        .select('id, total, payment_method, created_at, is_refunded, refunded_at, refund_reason, sale_origin, delivery_platform, sale_items(quantity, product_name, products(name))')
         .order('created_at', { ascending: false });
 
       // Si hay alguna fecha seleccionada, aplica filtros
@@ -205,6 +207,8 @@ export const SalesHistory = () => {
         is_refunded: s.is_refunded ?? false,
         refunded_at: s.refunded_at ?? null,
         refund_reason: s.refund_reason ?? null,
+        sale_origin: s.sale_origin ?? 'pos',
+        delivery_platform: s.delivery_platform ?? null,
         sale_items: (s.sale_items || []).map((si: any) => ({
           quantity: si.quantity,
           product_name: si.product_name || null,
@@ -636,6 +640,12 @@ export const SalesHistory = () => {
                         {getPaymentIcon(sale.payment_method)}
                         <span className="text-cc-text-muted">{getPaymentLabel(sale.payment_method)}</span>
                       </span>
+                      {sale.sale_origin === 'delivery' && (
+                        <span className="flex items-center gap-1 text-xs font-bold text-orange-300 bg-orange-500/15 border border-orange-500/25 rounded-full px-2 py-0.5">
+                          <Truck size={10} />
+                          {sale.delivery_platform === 'uber_eats' ? 'Uber Eats' : sale.delivery_platform === 'didi_food' ? 'DiDi Food' : 'Rappi'}
+                        </span>
+                      )}
                       {sale.is_refunded && sale.refunded_at && (
                         <span className="text-[10px] text-red-400/70">
                           Devuelta {formatDateTimeMX(sale.refunded_at)}

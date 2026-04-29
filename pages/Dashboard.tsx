@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
-import { DollarSign, ShoppingBag, AlertTriangle, TrendingUp, TrendingDown, Banknote, CreditCard, Landmark, Store, Receipt } from 'lucide-react';
+import { DollarSign, ShoppingBag, AlertTriangle, TrendingUp, TrendingDown, Banknote, CreditCard, Landmark, Store, Receipt, Truck } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 interface TopProduct {
@@ -24,7 +24,7 @@ export const Dashboard = () => {
   const [topMonthProducts, setTopMonthProducts] = useState<TopProduct[]>([]);
   const [topMode, setTopMode] = useState<'day' | 'month'>('day');
   const [chartData, setChartData] = useState<any[]>([]);
-  const [breakdown, setBreakdown] = useState({ cajaTotal: 0, cajaCash: 0, cajaCard: 0, cajaMixed: 0, pedidosTotal: 0, pedidosCash: 0, pedidosCard: 0, pedidosTransfer: 0 });
+  const [breakdown, setBreakdown] = useState({ cajaTotal: 0, cajaCash: 0, cajaCard: 0, cajaMixed: 0, pedidosTotal: 0, pedidosCash: 0, pedidosCard: 0, pedidosTransfer: 0, deliveryTotal: 0, deliveryUber: 0, deliveryDidi: 0, deliveryRappi: 0 });
 
   useEffect(() => {
     loadDashboardData();
@@ -52,7 +52,7 @@ export const Dashboard = () => {
       // 1. Sales Today - total and count (also get payment_method + promotion_code for breakdown)
       const { data: salesToday } = await supabase
         .from('sales')
-        .select('total, payment_method, promotion_code')
+        .select('total, payment_method, promotion_code, sale_origin, delivery_platform')
         .gte('created_at', todayStr)
         .lt('created_at', tomorrowStr)
         .eq('is_refunded', false);
@@ -60,33 +60,45 @@ export const Dashboard = () => {
       const totalToday = salesToday?.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
       const ordersToday = salesToday?.length || 0;
 
-      // Split by origin: ORDER_CHECKOUT = pedido, everything else = caja directa
+      // Split by origin
       const normPM = (m: string) => (m || '').toUpperCase().trim();
-      const isOrder = (s: any) => s.promotion_code === 'ORDER_CHECKOUT';
+      // Backward compat: ORDER_CHECKOUT promotion_code OR sale_origin = 'order'
+      const isOrder    = (s: any) => s.sale_origin === 'order' || s.promotion_code === 'ORDER_CHECKOUT';
+      const isDelivery = (s: any) => s.sale_origin === 'delivery';
+      const isCaja     = (s: any) => !isOrder(s) && !isDelivery(s);
 
       // Caja directa (POS)
-      const cajaCash = salesToday?.filter(s => !isOrder(s) && normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const cajaCard = salesToday?.filter(s => !isOrder(s) && normPM(s.payment_method) === 'CARD').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const cajaMixed = salesToday?.filter(s => !isOrder(s) && normPM(s.payment_method) === 'MIXED').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const cajaCash  = salesToday?.filter(s => isCaja(s) && normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const cajaCard  = salesToday?.filter(s => isCaja(s) && normPM(s.payment_method) === 'CARD').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const cajaMixed = salesToday?.filter(s => isCaja(s) && normPM(s.payment_method) === 'MIXED').reduce((sum, s) => sum + Number(s.total), 0) || 0;
       const cajaTotal = cajaCash + cajaCard + cajaMixed;
 
       // Pedidos (orders)
-      const pedidosCash = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const pedidosCard = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'CARD').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const pedidosCash     = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const pedidosCard     = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'CARD').reduce((sum, s) => sum + Number(s.total), 0) || 0;
       const pedidosTransfer = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'TRANSFER').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const pedidosTotal = pedidosCash + pedidosCard + pedidosTransfer;
+      const pedidosTotal    = pedidosCash + pedidosCard + pedidosTransfer;
+
+      // Delivery platforms
+      const deliveryUber  = salesToday?.filter(s => isDelivery(s) && s.delivery_platform === 'uber_eats').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const deliveryDidi  = salesToday?.filter(s => isDelivery(s) && s.delivery_platform === 'didi_food').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const deliveryRappi = salesToday?.filter(s => isDelivery(s) && s.delivery_platform === 'rappi').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const deliveryTotal = deliveryUber + deliveryDidi + deliveryRappi;
 
       const paymentMethodChart = [
-        { name: 'Caja Efectivo', amount: cajaCash, color: '#4CAF50' },
-        { name: 'Caja Tarjeta', amount: cajaCard, color: '#2196F3' },
-        { name: 'Pedidos Efectivo', amount: pedidosCash, color: '#F59E0B' },
-        { name: 'Pedidos Tarjeta', amount: pedidosCard, color: '#06B6D4' },
+        { name: 'Caja Efectivo',   amount: cajaCash,        color: '#4CAF50' },
+        { name: 'Caja Tarjeta',    amount: cajaCard,        color: '#2196F3' },
+        { name: 'Pedidos Efectivo',amount: pedidosCash,     color: '#F59E0B' },
+        { name: 'Pedidos Tarjeta', amount: pedidosCard,     color: '#06B6D4' },
         { name: 'Pedidos Transf.', amount: pedidosTransfer, color: '#8B5CF6' },
-        { name: 'Caja Mixto', amount: cajaMixed, color: '#F97316' },
+        { name: 'Caja Mixto',      amount: cajaMixed,       color: '#F97316' },
+        { name: 'Uber Eats',       amount: deliveryUber,    color: '#FF6900' },
+        { name: 'DiDi Food',       amount: deliveryDidi,    color: '#FF4C00' },
+        { name: 'Rappi',           amount: deliveryRappi,   color: '#FF441A' },
       ].filter(d => d.amount > 0);
 
       // Breakdown summary for the panel
-      const breakdownSummary = { cajaTotal, cajaCash, cajaCard, cajaMixed, pedidosTotal, pedidosCash, pedidosCard, pedidosTransfer };
+      const breakdownSummary = { cajaTotal, cajaCash, cajaCard, cajaMixed, pedidosTotal, pedidosCash, pedidosCard, pedidosTransfer, deliveryTotal, deliveryUber, deliveryDidi, deliveryRappi };
 
       // 2. Sales Yesterday - for percentage calculation
       const { data: salesYesterday } = await supabase
@@ -325,6 +337,12 @@ export const Dashboard = () => {
                 color="bg-violet-400"
             />
             <StatCard 
+                title="Venta Delivery" 
+                value={`$${breakdown.deliveryTotal.toFixed(2)}`} 
+                icon={Truck} 
+                color="bg-orange-500"
+            />
+            <StatCard 
                 title="Total del Día" 
                 value={`$${stats.salesToday.toFixed(2)}`} 
                 icon={DollarSign} 
@@ -420,6 +438,38 @@ export const Dashboard = () => {
                             </div>
                         </div>
                     </div>
+
+                    {/* Delivery plataformas */}
+                    {breakdown.deliveryTotal > 0 && (
+                    <div className="bg-neutral-900 rounded-xl p-4 border border-orange-500/20 col-span-2">
+                        <div className="flex items-center gap-2 mb-3">
+                            <Truck size={16} className="text-orange-400" />
+                            <span className="text-sm font-bold text-cc-cream">Delivery plataformas</span>
+                            <span className="ml-auto text-lg font-bold text-orange-400">${breakdown.deliveryTotal.toFixed(2)}</span>
+                            <span className="text-[10px] text-orange-400/60 font-medium border border-orange-500/30 rounded-full px-2 py-0.5">Liquidación pendiente</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3">
+                            {breakdown.deliveryUber > 0 && (
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="text-orange-300 font-medium">Uber Eats</span>
+                                    <span className="text-cc-cream font-bold">${breakdown.deliveryUber.toFixed(2)}</span>
+                                </div>
+                            )}
+                            {breakdown.deliveryDidi > 0 && (
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="text-orange-400 font-medium">DiDi Food</span>
+                                    <span className="text-cc-cream font-bold">${breakdown.deliveryDidi.toFixed(2)}</span>
+                                </div>
+                            )}
+                            {breakdown.deliveryRappi > 0 && (
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="text-red-400 font-medium">Rappi</span>
+                                    <span className="text-cc-cream font-bold">${breakdown.deliveryRappi.toFixed(2)}</span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    )}
                 </div>
 
                 {/* Bar chart */}
