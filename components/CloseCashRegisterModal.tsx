@@ -109,6 +109,10 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
               <span className="text-sm text-cc-text-muted">Efectivo esperado</span>
               <span className="text-lg font-bold text-cc-cream">${closeResult.expected_cash.toFixed(2)}</span>
             </div>
+            <div className="flex justify-between items-center px-3 py-2.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
+              <span className="text-sm text-cc-text-muted flex items-center gap-1"><CreditCard size={13} className="text-blue-400" /> Tarjeta esperada</span>
+              <span className="text-lg font-bold text-blue-400">${status.card_sales_total.toFixed(2)}</span>
+            </div>
             <div className="flex justify-between items-center px-3 py-2.5 bg-black/30 rounded-lg border border-white/5">
               <span className="text-sm text-cc-text-muted">Efectivo contado</span>
               <span className="text-lg font-bold text-cc-primary">${closeResult.counted_cash.toFixed(2)}</span>
@@ -194,6 +198,10 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
           <div className="flex justify-between items-center px-3 py-2.5 bg-cc-primary/10 border border-cc-primary/20 rounded-lg">
             <span className="text-sm font-medium text-cc-text-muted">Efectivo esperado</span>
             <span className="text-xl font-bold text-cc-primary">${expectedCash.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between items-center px-3 py-2.5 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+            <span className="text-sm font-medium text-cc-text-muted flex items-center gap-1"><CreditCard size={13} className="text-blue-400" /> Tarjeta esperada</span>
+            <span className="text-xl font-bold text-blue-400">${status.card_sales_total.toFixed(2)}</span>
           </div>
         </div>
 

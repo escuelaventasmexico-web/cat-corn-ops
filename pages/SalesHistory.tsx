@@ -177,7 +177,7 @@ export const SalesHistory = () => {
       
       let query = supabase
         .from('sales')
-        .select('id, total, payment_method, created_at, is_refunded, refunded_at, refund_reason, sale_origin, delivery_platform, sale_items(quantity, product_name, products(name))')
+        .select('id, total, payment_method, created_at, is_refunded, refunded_at, refund_reason, sale_origin, delivery_platform, promotion_code, sale_items(quantity, product_name, products(name))')
         .order('created_at', { ascending: false });
 
       // Si hay alguna fecha seleccionada, aplica filtros
@@ -207,7 +207,8 @@ export const SalesHistory = () => {
         is_refunded: s.is_refunded ?? false,
         refunded_at: s.refunded_at ?? null,
         refund_reason: s.refund_reason ?? null,
-        sale_origin: s.sale_origin ?? 'pos',
+        sale_origin: s.sale_origin
+          ?? (s.promotion_code === 'ORDER_CHECKOUT' ? 'order' : 'pos'),
         delivery_platform: s.delivery_platform ?? null,
         sale_items: (s.sale_items || []).map((si: any) => ({
           quantity: si.quantity,
@@ -314,21 +315,38 @@ export const SalesHistory = () => {
     }
   };
 
-  const getPaymentIcon = (method: string) => {
+  const getPaymentBadge = (method: string, origin?: string | null) => {
     const norm = normalizePaymentMethod(method);
-    if (norm === 'cash') return <Banknote size={16} className="text-green-400" />;
-    if (norm === 'card') return <CreditCard size={16} className="text-blue-400" />;
-    if (norm === 'transfer') return <Landmark size={16} className="text-violet-400" />;
-    return <Receipt size={16} />;
+    const isOrderCash = norm === 'cash' && origin === 'order';
+    if (isOrderCash) return {
+      icon: <Banknote size={16} className="text-yellow-400" />,
+      label: 'Efectivo',
+      color: 'text-yellow-400',
+    };
+    if (norm === 'cash') return {
+      icon: <Banknote size={16} className="text-green-400" />,
+      label: 'Efectivo',
+      color: 'text-green-400',
+    };
+    if (norm === 'card') return {
+      icon: <CreditCard size={16} className="text-blue-400" />,
+      label: 'Tarjeta',
+      color: 'text-blue-400',
+    };
+    if (norm === 'transfer') return {
+      icon: <Landmark size={16} className="text-violet-400" />,
+      label: 'Transferencia',
+      color: 'text-violet-400',
+    };
+    return {
+      icon: <Receipt size={16} />,
+      label: method || 'Otro',
+      color: 'text-cc-text-muted',
+    };
   };
 
-  const getPaymentLabel = (method: string) => {
-    const norm = normalizePaymentMethod(method);
-    if (norm === 'cash') return 'Efectivo';
-    if (norm === 'card') return 'Tarjeta';
-    if (norm === 'transfer') return 'Transferencia';
-    return method || 'Otro';
-  };
+  // Keep legacy single-arg wrappers so the CSV export line still compiles
+  const getPaymentLabel = (method: string) => getPaymentBadge(method).label;
 
   const setQuickFilter = (filter: 'today' | 'last7' | 'month' | 'clear') => {
     const today = new Date();
@@ -396,31 +414,35 @@ export const SalesHistory = () => {
     document.body.removeChild(link);
   };
 
-  // Calculate payment method distribution (robust: normalizes payment_method variants)
-  const cashTotal = sales
-    .filter(s => normalizePaymentMethod(s.payment_method) === 'cash')
-    .reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const cardTotal = sales
-    .filter(s => normalizePaymentMethod(s.payment_method) === 'card')
-    .reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const transferTotal = sales
-    .filter(s => normalizePaymentMethod(s.payment_method) === 'transfer')
-    .reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const otherTotal = sales
-    .filter(s => normalizePaymentMethod(s.payment_method) === 'other')
-    .reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const totalGeneral = sales.reduce((sum, s) => sum + Number(s.total || 0), 0);
+  // ── Split sales by origin ────────────────────────────────────────────────
+  const cajasSales    = sales.filter(s => !s.is_refunded && (s.sale_origin === 'pos'      || !s.sale_origin));
+  const pedidosSales  = sales.filter(s => !s.is_refunded &&  s.sale_origin === 'order');
+  const deliverySales = sales.filter(s => !s.is_refunded &&  s.sale_origin === 'delivery');
 
-  console.log('[SALES] totals efectivo', cashTotal);
-  console.log('[SALES] totals tarjeta', cardTotal);
-  console.log('[SALES] total general', totalGeneral);
-  console.log('[SALES] filtered count', sales.length);
+  // Caja (pos) — CASH & CARD only for the register breakdown
+  const cashTotal     = cajasSales.filter(s => normalizePaymentMethod(s.payment_method) === 'cash').reduce((sum, s) => sum + Number(s.total || 0), 0);
+  const cardTotal     = cajasSales.filter(s => normalizePaymentMethod(s.payment_method) === 'card').reduce((sum, s) => sum + Number(s.total || 0), 0);
+  const cajaTotal     = cashTotal + cardTotal;
 
+  // Pedidos — informativo, separado de caja
+  const pedidosCash     = pedidosSales.filter(s => normalizePaymentMethod(s.payment_method) === 'cash').reduce((sum, s) => sum + Number(s.total || 0), 0);
+  const pedidosCard     = pedidosSales.filter(s => normalizePaymentMethod(s.payment_method) === 'card').reduce((sum, s) => sum + Number(s.total || 0), 0);
+  const pedidosTransfer = pedidosSales.filter(s => normalizePaymentMethod(s.payment_method) === 'transfer').reduce((sum, s) => sum + Number(s.total || 0), 0);
+  const pedidosTotal    = pedidosSales.reduce((sum, s) => sum + Number(s.total || 0), 0);
+
+  // Delivery — informativo, separado de caja
+  const deliveryTotal = deliverySales.reduce((sum, s) => sum + Number(s.total || 0), 0);
+
+  const totalGeneral = sales.filter(s => !s.is_refunded).reduce((sum, s) => sum + Number(s.total || 0), 0);
+
+  // Chart includes all origins, labeled clearly
   const paymentChartData = [
-    { name: 'Efectivo', value: cashTotal, color: '#4CAF50' },
-    { name: 'Tarjeta', value: cardTotal, color: '#2196F3' },
-    { name: 'Transferencia', value: transferTotal, color: '#8B5CF6' },
-    { name: 'Otro', value: otherTotal, color: '#FF9800' }
+    { name: 'Caja Efectivo',    value: cashTotal,        color: '#4CAF50' },
+    { name: 'Caja Tarjeta',     value: cardTotal,        color: '#2196F3' },
+    { name: 'Pedidos Efectivo', value: pedidosCash,      color: '#F59E0B' },
+    { name: 'Pedidos Tarjeta',  value: pedidosCard,      color: '#06B6D4' },
+    { name: 'Pedidos Transf.',  value: pedidosTransfer,  color: '#8B5CF6' },
+    { name: 'Delivery',         value: deliveryTotal,    color: '#FF6900' },
   ].filter(item => item.value > 0);
 
   return (
@@ -496,11 +518,12 @@ export const SalesHistory = () => {
         </div>
       </div>
 
-      {/* Payment Method Chart */}
+      {/* Sales breakdown by origin */}
       {sales.length > 0 && (
         <div className="bg-cc-surface p-6 rounded-xl border border-white/5">
-          <h3 className="text-lg font-bold text-cc-cream mb-4">Distribución por método de pago</h3>
+          <h3 className="text-lg font-bold text-cc-cream mb-4">Desglose por origen</h3>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Chart */}
             <div className="h-64">
               {paymentChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
@@ -519,7 +542,7 @@ export const SalesHistory = () => {
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip 
+                    <Tooltip
                       formatter={(value: number) => `$${value.toFixed(2)}`}
                       contentStyle={{ backgroundColor: '#2A2A2A', border: '1px solid #444', color: '#F5F5F5' }}
                     />
@@ -531,59 +554,87 @@ export const SalesHistory = () => {
                 </div>
               )}
             </div>
-            
-            <div className="flex flex-col justify-center space-y-4">
-              <div className="bg-black/20 p-4 rounded-lg border border-white/5">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 rounded bg-green-500"></div>
-                    <span className="text-cc-text-muted">Efectivo</span>
-                  </div>
-                  <Banknote size={20} className="text-green-400" />
-                </div>
-                <div className="text-2xl font-bold text-cc-cream">${cashTotal.toFixed(2)}</div>
-                <div className="text-xs text-cc-text-muted mt-1">
-                  {sales.filter(s => normalizePaymentMethod(s.payment_method) === 'cash').length} ventas
-                </div>
-              </div>
-              
-              <div className="bg-black/20 p-4 rounded-lg border border-white/5">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 rounded bg-blue-500"></div>
-                    <span className="text-cc-text-muted">Tarjeta</span>
-                  </div>
-                  <CreditCard size={20} className="text-blue-400" />
-                </div>
-                <div className="text-2xl font-bold text-cc-cream">${cardTotal.toFixed(2)}</div>
-                <div className="text-xs text-cc-text-muted mt-1">
-                  {sales.filter(s => normalizePaymentMethod(s.payment_method) === 'card').length} ventas
-                </div>
-              </div>
 
-              {transferTotal > 0 && (
-                <div className="bg-black/20 p-4 rounded-lg border border-white/5">
+            {/* Stats panels */}
+            <div className="flex flex-col justify-start gap-3">
+
+              {/* Caja directa */}
+              {cajasSales.length > 0 && (
+                <div className="bg-black/20 p-4 rounded-lg border border-green-500/20">
                   <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-4 h-4 rounded bg-violet-500"></div>
-                      <span className="text-cc-text-muted">Transferencia</span>
-                    </div>
-                    <Landmark size={20} className="text-violet-400" />
+                    <span className="text-sm font-bold text-green-400">🏪 Caja directa</span>
+                    <span className="text-xs text-cc-text-muted">{cajasSales.length} ventas</span>
                   </div>
-                  <div className="text-2xl font-bold text-cc-cream">${transferTotal.toFixed(2)}</div>
-                  <div className="text-xs text-cc-text-muted mt-1">
-                    {sales.filter(s => normalizePaymentMethod(s.payment_method) === 'transfer').length} ventas
+                  <div className="flex justify-between text-sm mt-1">
+                    <span className="text-cc-text-muted flex items-center gap-1"><Banknote size={13} className="text-green-400" /> Efectivo</span>
+                    <span className="text-cc-cream font-semibold">${cashTotal.toFixed(2)} <span className="text-cc-text-muted font-normal">({cajasSales.filter(s => normalizePaymentMethod(s.payment_method) === 'cash').length})</span></span>
+                  </div>
+                  <div className="flex justify-between text-sm mt-1">
+                    <span className="text-cc-text-muted flex items-center gap-1"><CreditCard size={13} className="text-blue-400" /> Tarjeta</span>
+                    <span className="text-cc-cream font-semibold">${cardTotal.toFixed(2)} <span className="text-cc-text-muted font-normal">({cajasSales.filter(s => normalizePaymentMethod(s.payment_method) === 'card').length})</span></span>
+                  </div>
+                  <div className="flex justify-between text-sm mt-2 pt-2 border-t border-white/10">
+                    <span className="text-green-300 font-bold">Total caja</span>
+                    <span className="text-green-300 font-bold">${cajaTotal.toFixed(2)}</span>
                   </div>
                 </div>
               )}
-              
-              <div className="bg-cc-primary/10 p-4 rounded-lg border border-cc-primary/20">
-                <div className="text-sm text-cc-text-muted mb-1">Total General</div>
-                <div className="text-3xl font-bold text-cc-primary">
-                  ${sales.filter(s => !s.is_refunded).reduce((sum, s) => sum + Number(s.total), 0).toFixed(2)}
+
+              {/* Pedidos */}
+              {pedidosSales.length > 0 && (
+                <div className="bg-black/20 p-4 rounded-lg border border-violet-500/20">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-bold text-violet-400">📦 Pedidos</span>
+                    <span className="text-xs text-cc-text-muted">{pedidosSales.length} pedidos · NO entra a caja</span>
+                  </div>
+                  {pedidosCash > 0 && (
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-cc-text-muted">Efectivo</span>
+                      <span className="text-cc-cream">${pedidosCash.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {pedidosCard > 0 && (
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-cc-text-muted">Tarjeta</span>
+                      <span className="text-cc-cream">${pedidosCard.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {pedidosTransfer > 0 && (
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-cc-text-muted flex items-center gap-1"><Landmark size={13} className="text-violet-400" /> Transferencia</span>
+                      <span className="text-cc-cream">${pedidosTransfer.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-sm mt-2 pt-2 border-t border-white/10">
+                    <span className="text-violet-300 font-bold">Total pedidos</span>
+                    <span className="text-violet-300 font-bold">${pedidosTotal.toFixed(2)}</span>
+                  </div>
                 </div>
+              )}
+
+              {/* Delivery */}
+              {deliverySales.length > 0 && (
+                <div className="bg-black/20 p-4 rounded-lg border border-orange-500/20">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-bold text-orange-400 flex items-center gap-1"><Truck size={13} /> Delivery plataformas</span>
+                    <span className="text-xs text-cc-text-muted">{deliverySales.length} ventas · NO entra a caja</span>
+                  </div>
+                  <div className="flex justify-between text-sm mt-2 pt-1">
+                    <span className="text-orange-300 font-bold">Total delivery</span>
+                    <span className="text-orange-300 font-bold">${deliveryTotal.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Grand total */}
+              <div className="bg-cc-primary/10 p-4 rounded-lg border border-cc-primary/20">
+                <div className="text-sm text-cc-text-muted mb-1">Total General (todos los orígenes)</div>
+                <div className="text-3xl font-bold text-cc-primary">${totalGeneral.toFixed(2)}</div>
                 <div className="text-xs text-cc-text-muted mt-1">
-                  {sales.filter(s => !s.is_refunded).length} ventas · {sales.filter(s => s.is_refunded).length > 0 && <span className="text-red-400">{sales.filter(s => s.is_refunded).length} devuelta(s)</span>}
+                  {sales.filter(s => !s.is_refunded).length} ventas
+                  {sales.filter(s => s.is_refunded).length > 0 && (
+                    <> · <span className="text-red-400">{sales.filter(s => s.is_refunded).length} devuelta(s)</span></>
+                  )}
                 </div>
               </div>
             </div>
@@ -637,8 +688,7 @@ export const SalesHistory = () => {
                         {formatDateTimeMX(sale.created_at)}
                       </span>
                       <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-white/5">
-                        {getPaymentIcon(sale.payment_method)}
-                        <span className="text-cc-text-muted">{getPaymentLabel(sale.payment_method)}</span>
+                        {(() => { const b = getPaymentBadge(sale.payment_method, sale.sale_origin); return <>{b.icon}<span className={b.color}>{b.label}</span></>; })()}
                       </span>
                       {sale.sale_origin === 'delivery' && (
                         <span className="flex items-center gap-1 text-xs font-bold text-orange-300 bg-orange-500/15 border border-orange-500/25 rounded-full px-2 py-0.5">
@@ -747,8 +797,7 @@ export const SalesHistory = () => {
                   <span>{formatDateTimeMX(selectedSale.created_at)}</span>
                   <span>•</span>
                   <span className="flex items-center gap-1">
-                    {getPaymentIcon(selectedSale.payment_method)}
-                    {getPaymentLabel(selectedSale.payment_method)}
+                    {(() => { const b = getPaymentBadge(selectedSale.payment_method, selectedSale.sale_origin); return <>{b.icon}<span className={b.color}>{b.label}</span></>; })()}
                   </span>
                 </div>
               </div>

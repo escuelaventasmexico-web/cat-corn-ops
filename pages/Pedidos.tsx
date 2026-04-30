@@ -301,6 +301,7 @@ export const Pedidos = () => {
         loyalty_reward_applied: false,
         loyalty_discount_amount: 0,
         promotion_code: 'ORDER_CHECKOUT',
+        sale_origin: 'order',  // ★ MUST be 'order' — pedidos must NEVER count as physical caja
         // cash_session_id is intentionally NOT set for order checkouts.
         // Pedidos are NOT part of the physical cash register.
       };

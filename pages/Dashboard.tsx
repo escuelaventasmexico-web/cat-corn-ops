@@ -52,7 +52,7 @@ export const Dashboard = () => {
       // 1. Sales Today - total and count (also get payment_method + promotion_code for breakdown)
       const { data: salesToday } = await supabase
         .from('sales')
-        .select('total, payment_method, promotion_code, sale_origin, delivery_platform')
+        .select('total, payment_method, promotion_code, sale_origin, delivery_platform, cash_amount, card_amount')
         .gte('created_at', todayStr)
         .lt('created_at', tomorrowStr)
         .eq('is_refunded', false);
@@ -65,13 +65,26 @@ export const Dashboard = () => {
       // Backward compat: ORDER_CHECKOUT promotion_code OR sale_origin = 'order'
       const isOrder    = (s: any) => s.sale_origin === 'order' || s.promotion_code === 'ORDER_CHECKOUT';
       const isDelivery = (s: any) => s.sale_origin === 'delivery';
-      const isCaja     = (s: any) => !isOrder(s) && !isDelivery(s);
+      // Positive logic: sale_origin='pos', OR legacy NULL that is NOT a pedido/delivery
+      const isCaja     = (s: any) => s.sale_origin === 'pos' || (!s.sale_origin && !isOrder(s) && !isDelivery(s));
 
       // Caja directa (POS)
-      const cajaCash  = salesToday?.filter(s => isCaja(s) && normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const cajaCard  = salesToday?.filter(s => isCaja(s) && normPM(s.payment_method) === 'CARD').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const cajaMixed = salesToday?.filter(s => isCaja(s) && normPM(s.payment_method) === 'MIXED').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const cajaTotal = cajaCash + cajaCard + cajaMixed;
+      // MIXED sales are split: cash_amount goes to cash drawer, card_amount to terminal
+      const cajaCash = salesToday?.filter(s => isCaja(s)).reduce((sum, s) => {
+        const method = normPM(s.payment_method);
+        if (method === 'CASH')  return sum + Number(s.total);
+        if (method === 'MIXED') return sum + Number(s.cash_amount ?? 0);
+        return sum;
+      }, 0) || 0;
+      const cajaCard = salesToday?.filter(s => isCaja(s)).reduce((sum, s) => {
+        const method = normPM(s.payment_method);
+        if (method === 'CARD')  return sum + Number(s.total);
+        if (method === 'MIXED') return sum + Number(s.card_amount ?? 0);
+        return sum;
+      }, 0) || 0;
+      const cajaMixed = 0; // MIXED is split into cash+card above — no separate bucket
+      // cajaTotal = cajaCash + cajaCard — single source of truth, matches the desglose exactly
+      const cajaTotal = cajaCash + cajaCard;
 
       // Pedidos (orders)
       const pedidosCash     = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
@@ -91,7 +104,6 @@ export const Dashboard = () => {
         { name: 'Pedidos Efectivo',amount: pedidosCash,     color: '#F59E0B' },
         { name: 'Pedidos Tarjeta', amount: pedidosCard,     color: '#06B6D4' },
         { name: 'Pedidos Transf.', amount: pedidosTransfer, color: '#8B5CF6' },
-        { name: 'Caja Mixto',      amount: cajaMixed,       color: '#F97316' },
         { name: 'Uber Eats',       amount: deliveryUber,    color: '#FF6900' },
         { name: 'DiDi Food',       amount: deliveryDidi,    color: '#FF4C00' },
         { name: 'Rappi',           amount: deliveryRappi,   color: '#FF441A' },

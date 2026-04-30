@@ -35,6 +35,7 @@ interface DayOrder {
   payment_method: string;
   created_at: string;   // when the order was placed
   charged_at: string;   // when it was charged (updated_at → 'delivered')
+  sale_id: string | null; // UUID of the linked sale (for ticket display)
 }
 
 interface DayDetail {
@@ -154,12 +155,14 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
         // Find closest pedido sale by time
         const orderTs = new Date(o.updated_at).getTime();
         let matchedMethod = 'CASH';
+        let matchedSaleId: string | null = null;
         let minDiff = Infinity;
         for (const ps of pedidoSales) {
           const diff = Math.abs(new Date(ps.created_at).getTime() - orderTs);
           if (diff < minDiff) {
             minDiff = diff;
             matchedMethod = ps.payment_method;
+            matchedSaleId = ps.id;
           }
         }
 
@@ -172,6 +175,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
           payment_method: matchedMethod,
           created_at: o.created_at,
           charged_at: o.updated_at,
+          sale_id: matchedSaleId,
         };
       });
 
@@ -510,7 +514,10 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                                   <span className={`text-[10px] ml-2 font-medium ${methodColor}`}>{methodLabel}</span>
                                 </div>
                               </div>
-                              <div className="flex gap-4 mt-1.5 text-[10px] text-cc-text-muted/70">
+                              <div className="flex items-center gap-4 mt-1.5 text-[10px] text-cc-text-muted/70">
+                                <span className="font-mono font-semibold text-cc-text-muted">
+                                  {o.sale_id ? `#${o.sale_id.substring(0, 8).toUpperCase()}` : '—'}
+                                </span>
                                 <span>Pedido: {new Date(o.created_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
                                 <span>Cobro: {new Date(o.charged_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
                               </div>
