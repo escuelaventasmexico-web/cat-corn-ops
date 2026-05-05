@@ -10,7 +10,9 @@ import {
   Upload,
   ArrowLeft,
   AlertCircle,
-  BarChart3
+  BarChart3,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { supabase } from '../supabase';
 import { FinanceChart } from '../components/finance/FinanceChart.tsx';
@@ -139,12 +141,20 @@ const FinanceResumenTest = () => {
   const [error, setError] = useState<any>(null);
   const [showDailyBreakdown, setShowDailyBreakdown] = useState(false);
   
-  // Get current month start date
   const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth(); // 0-indexed
-  const monthStartDate = new Date(currentYear, currentMonth, 1);
-  const monthStartISO = monthStartDate.toISOString().slice(0, 10);
+  const [navYear,  setNavYear]  = useState(now.getFullYear());
+  const [navMonth, setNavMonth] = useState(now.getMonth()); // 0-indexed
+
+  const monthStartISO = `${navYear}-${String(navMonth + 1).padStart(2, '0')}-01`;
+
+  const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const monthLabel = `${MONTH_NAMES[navMonth]} ${navYear}`;
+
+  const goMonth = (delta: number) => {
+    const d = new Date(navYear, navMonth + delta, 1);
+    setNavYear(d.getFullYear());
+    setNavMonth(d.getMonth());
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -223,11 +233,22 @@ const FinanceResumenTest = () => {
         </div>
       </div>
 
-      {/* Month Info */}
-      <div className="bg-cc-surface p-4 rounded-lg border border-cc-primary/20">
-        <p className="text-cc-text-muted">
-          <span className="font-semibold text-cc-primary">Mes consultado:</span> {monthStartISO}
-        </p>
+      {/* Month navigation */}
+      <div className="flex items-center justify-center gap-3">
+        <button
+          onClick={() => goMonth(-1)}
+          className="p-2 rounded-lg bg-cc-surface border border-white/10 hover:bg-white/10 transition-colors"
+        >
+          <ChevronLeft size={20} className="text-cc-text-muted" />
+        </button>
+        <span className="text-xl font-bold text-cc-cream min-w-[180px] text-center">{monthLabel}</span>
+        <button
+          onClick={() => goMonth(1)}
+          disabled={navYear === now.getFullYear() && navMonth === now.getMonth()}
+          className="p-2 rounded-lg bg-cc-surface border border-white/10 hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <ChevronRight size={20} className="text-cc-text-muted" />
+        </button>
       </div>
 
       {/* Error Alert */}
