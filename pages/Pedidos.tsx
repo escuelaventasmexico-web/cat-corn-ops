@@ -126,6 +126,7 @@ export const Pedidos = () => {
   /* ── Checkout modal ── */
   const [orderToCheckout, setOrderToCheckout] = useState<Order | null>(null);
   const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState<'CASH' | 'CARD' | 'TRANSFER'>('CASH');
+  const [checkoutAmount, setCheckoutAmount] = useState<string>('');
   const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   /* ── Delete modal ── */
@@ -284,7 +285,10 @@ export const Pedidos = () => {
     try {
       const product = order.products;
       const unitPrice = product?.price ?? 0;
-      const total = unitPrice * order.quantity;
+      const estimatedTotal = unitPrice * order.quantity;
+      // Use the manually-entered amount — falls back to estimated if invalid
+      const finalTotal = Math.max(0, parseFloat(checkoutAmount) || estimatedTotal);
+      const total = finalTotal;
 
       // NOTE: pedido checkouts do NOT link to the cash register session.
       // Orders are collected separately and must NOT appear in the physical
@@ -320,7 +324,7 @@ export const Pedidos = () => {
           sale_id: sale.id,
           product_id: order.product_id,
           quantity: order.quantity,
-          price: unitPrice,
+          price: order.quantity > 0 ? total / order.quantity : total,
           discount_amount: 0,
           discount_reason: null,
         });
@@ -337,6 +341,7 @@ export const Pedidos = () => {
 
       setOrderToCheckout(null);
       setCheckoutPaymentMethod('CASH');
+      setCheckoutAmount('');
       setSuccessMsg('Pedido cobrado ✓');
       setTimeout(() => setSuccessMsg(''), 3000);
       loadOrders();
@@ -519,6 +524,14 @@ export const Pedidos = () => {
     if (!orderToCheckout) return 0;
     const price = orderToCheckout.products?.price ?? 0;
     return price * orderToCheckout.quantity;
+  }, [orderToCheckout]);
+
+  // Pre-fill editable amount whenever the selected order changes
+  useEffect(() => {
+    if (orderToCheckout) {
+      const price = orderToCheckout.products?.price ?? 0;
+      setCheckoutAmount((price * orderToCheckout.quantity).toFixed(2));
+    }
   }, [orderToCheckout]);
 
   /* ── Computed: economic summary of visible orders ── */
@@ -1070,6 +1083,32 @@ export const Pedidos = () => {
                     <Landmark size={18} /> Transferencia
                   </button>
                 </div>
+              </div>
+
+              {/* Editable amount */}
+              <div>
+                <label className="text-xs text-cc-text-muted mb-1.5 block">Cantidad a cobrar</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cc-text-muted font-bold">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.50"
+                    value={checkoutAmount}
+                    onChange={(e) => setCheckoutAmount(e.target.value)}
+                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg pl-7 pr-4 py-2.5 text-lg font-bold text-cc-cream text-right focus:ring-2 focus:ring-green-500/40 focus:border-green-500/40 outline-none"
+                  />
+                </div>
+                {(() => {
+                  const parsed = parseFloat(checkoutAmount);
+                  const isAdjusted = !isNaN(parsed) && Math.abs(parsed - checkoutTotal) > 0.009;
+                  if (isAdjusted) return (
+                    <p className="text-xs text-yellow-400 mt-1.5 flex items-center gap-1">
+                      ⚠️ Monto ajustado manualmente (estimado: ${checkoutTotal.toFixed(2)})
+                    </p>
+                  );
+                  return null;
+                })()}
               </div>
 
               {/* Warning if no product_id */}
