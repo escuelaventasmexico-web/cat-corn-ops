@@ -31,7 +31,8 @@ interface DayOrder {
   customer_name: string;
   product_name: string | null;
   quantity: number;
-  total: number;
+  total: number;           // real charged amount from sales.total
+  catalog_total: number;   // estimated from products.price × quantity
   payment_method: string;
   created_at: string;   // when the order was placed
   charged_at: string;   // when it was charged (updated_at → 'delivered')
@@ -79,6 +80,12 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
   const [dayDetail, setDayDetail] = useState<DayDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // Payment correction modal state
+  const [correctingOrder, setCorrectingOrder] = useState<DayOrder | null>(null);
+  const [correctionMethod, setCorrectionMethod] = useState<'CASH' | 'CARD' | 'TRANSFER'>('CASH');
+  const [correctionLoading, setCorrectionLoading] = useState(false);
+  const [correctionError, setCorrectionError] = useState('');
 
   // Parse current month for display
   const [year, month] = monthStartISO.split('-').map(Number);
@@ -150,12 +157,13 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       const orderList: DayOrder[] = (ordersData || []).map((o: any) => {
         const prod = Array.isArray(o.products) ? o.products[0] : o.products;
         const unitPrice = prod?.price ?? 0;
-        const total = unitPrice * (o.quantity ?? 1);
+        const catalogTotal = unitPrice * (o.quantity ?? 1);
 
-        // Find closest pedido sale by time
+        // Find closest pedido sale by time — use REAL total and method from sales
         const orderTs = new Date(o.updated_at).getTime();
         let matchedMethod = 'CASH';
         let matchedSaleId: string | null = null;
+        let matchedSaleTotal: number = catalogTotal; // fallback to catalog if no sale found
         let minDiff = Infinity;
         for (const ps of pedidoSales) {
           const diff = Math.abs(new Date(ps.created_at).getTime() - orderTs);
@@ -163,6 +171,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
             minDiff = diff;
             matchedMethod = ps.payment_method;
             matchedSaleId = ps.id;
+            matchedSaleTotal = ps.total; // ★ real charged amount
           }
         }
 
@@ -171,7 +180,8 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
           customer_name: o.customer_name || '—',
           product_name: prod?.name || '—',
           quantity: o.quantity ?? 1,
-          total,
+          total: matchedSaleTotal,       // ★ real amount from sales.total
+          catalog_total: catalogTotal,   // for reference only
           payment_method: matchedMethod,
           created_at: o.created_at,
           charged_at: o.updated_at,
@@ -192,6 +202,34 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       setDetailLoading(false);
     }
   }, []);
+
+  // Correct payment method of an already-charged order sale
+  const handleCorrectPayment = async () => {
+    if (!supabase || !correctingOrder?.sale_id) return;
+    setCorrectionLoading(true);
+    setCorrectionError('');
+    try {
+      const total = correctingOrder.total;
+      const { error: updateErr } = await supabase
+        .from('sales')
+        .update({
+          payment_method: correctionMethod,
+          cash_amount:     correctionMethod === 'CASH'     ? total : 0,
+          card_amount:     correctionMethod === 'CARD'     ? total : 0,
+          transfer_amount: correctionMethod === 'TRANSFER' ? total : 0,
+        })
+        .eq('id', correctingOrder.sale_id)
+        .eq('sale_origin', 'order'); // safety: never touch pos sales
+      if (updateErr) throw updateErr;
+      // Reload the day detail to reflect the change
+      if (selectedDay) await loadDayDetail(selectedDay);
+      setCorrectingOrder(null);
+    } catch (e: any) {
+      setCorrectionError(e.message || 'Error al actualizar');
+    } finally {
+      setCorrectionLoading(false);
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -502,6 +540,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                             o.payment_method === 'TRANSFER' ? 'text-violet-400'
                             : o.payment_method === 'CARD' ? 'text-blue-400'
                             : 'text-green-400';
+                          const isAdjusted = Math.abs(o.total - o.catalog_total) > 0.009;
                           return (
                             <div key={o.id} className="bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-3">
                               <div className="flex items-center justify-between">
@@ -514,12 +553,25 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                                   <span className={`text-[10px] ml-2 font-medium ${methodColor}`}>{methodLabel}</span>
                                 </div>
                               </div>
-                              <div className="flex items-center gap-4 mt-1.5 text-[10px] text-cc-text-muted/70">
-                                <span className="font-mono font-semibold text-cc-text-muted">
-                                  {o.sale_id ? `#${o.sale_id.substring(0, 8).toUpperCase()}` : '—'}
-                                </span>
-                                <span>Pedido: {new Date(o.created_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-                                <span>Cobro: {new Date(o.charged_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                              {isAdjusted && (
+                                <p className="text-[10px] text-yellow-400/80 mt-0.5">⚠️ Monto ajustado (catálogo: {fmt(o.catalog_total)})</p>
+                              )}
+                              <div className="flex items-center justify-between mt-1.5">
+                                <div className="flex items-center gap-4 text-[10px] text-cc-text-muted/70">
+                                  <span className="font-mono font-semibold text-cc-text-muted">
+                                    {o.sale_id ? `#${o.sale_id.substring(0, 8).toUpperCase()}` : '—'}
+                                  </span>
+                                  <span>Pedido: {new Date(o.created_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                                  <span>Cobro: {new Date(o.charged_at).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                                </div>
+                                {o.sale_id && (
+                                  <button
+                                    onClick={() => { setCorrectingOrder(o); setCorrectionMethod(o.payment_method as any); setCorrectionError(''); }}
+                                    className="text-[10px] text-cc-text-muted hover:text-cc-cream px-2 py-1 rounded hover:bg-white/5 transition-colors border border-white/10"
+                                  >
+                                    Corregir pago
+                                  </button>
+                                )}
                               </div>
                             </div>
                           );
@@ -535,6 +587,76 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
               ) : (
                 <p className="text-sm text-cc-text-muted text-center py-8">No se pudo cargar el detalle</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Payment correction modal */}
+      {correctingOrder && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
+          <div className="bg-neutral-950 border border-neutral-800 rounded-2xl shadow-2xl w-full max-w-sm">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-800">
+              <h3 className="font-bold text-cc-cream text-sm">Corregir forma de pago</h3>
+              <button onClick={() => setCorrectingOrder(null)} className="p-1.5 hover:bg-neutral-800 rounded-lg">
+                <X size={16} className="text-cc-text-muted" />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              {/* Sale summary */}
+              <div className="bg-neutral-900 rounded-lg px-4 py-3 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-cc-text-muted">Cliente</span>
+                  <span className="font-semibold text-cc-cream">{correctingOrder.customer_name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-cc-text-muted">Producto</span>
+                  <span className="text-cc-cream">{correctingOrder.product_name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-cc-text-muted">Ticket</span>
+                  <span className="font-mono text-cc-cream">{correctingOrder.sale_id ? `#${correctingOrder.sale_id.substring(0,8).toUpperCase()}` : '—'}</span>
+                </div>
+                <div className="flex justify-between border-t border-neutral-800 pt-2 mt-1">
+                  <span className="text-cc-text-muted">Monto cobrado</span>
+                  <span className="font-bold text-cc-primary">{fmt(correctingOrder.total)}</span>
+                </div>
+              </div>
+              {/* Method selector */}
+              <div>
+                <p className="text-xs text-cc-text-muted mb-2">Nuevo método de pago</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['CASH', 'CARD', 'TRANSFER'] as const).map((m) => {
+                    const icons = { CASH: <Banknote size={15}/>, CARD: <CreditCard size={15}/>, TRANSFER: <Landmark size={15}/> };
+                    const labels = { CASH: 'Efectivo', CARD: 'Tarjeta', TRANSFER: 'Transfer.' };
+                    const active = correctionMethod === m;
+                    const colors = {
+                      CASH:     active ? 'bg-green-950 border-green-700 text-green-400'   : 'bg-neutral-900 border-neutral-700 text-cc-text-muted',
+                      CARD:     active ? 'bg-blue-950 border-blue-700 text-blue-400'      : 'bg-neutral-900 border-neutral-700 text-cc-text-muted',
+                      TRANSFER: active ? 'bg-violet-950 border-violet-700 text-violet-300': 'bg-neutral-900 border-neutral-700 text-cc-text-muted',
+                    };
+                    return (
+                      <button key={m} onClick={() => setCorrectionMethod(m)}
+                        className={`flex flex-col items-center gap-1 py-2.5 rounded-lg border text-xs font-bold transition-all ${colors[m]}`}>
+                        {icons[m]}{labels[m]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {correctionError && (
+                <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{correctionError}</p>
+              )}
+            </div>
+            <div className="px-5 pb-5 flex gap-3">
+              <button onClick={() => setCorrectingOrder(null)}
+                className="flex-1 py-2 text-sm text-cc-text-muted bg-neutral-900 border border-neutral-700 rounded-lg hover:bg-neutral-800 transition-colors">
+                Cancelar
+              </button>
+              <button onClick={handleCorrectPayment} disabled={correctionLoading || correctionMethod === correctingOrder.payment_method}
+                className="flex-1 py-2 text-sm font-bold text-white bg-cc-primary rounded-lg hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5">
+                {correctionLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                {correctionLoading ? 'Guardando…' : 'Guardar corrección'}
+              </button>
             </div>
           </div>
         </div>
