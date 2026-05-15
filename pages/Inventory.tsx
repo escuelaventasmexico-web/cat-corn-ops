@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
-import { AlertCircle, Plus, Edit2, Minus, X, RefreshCw } from 'lucide-react';
+import { AlertCircle, Plus, Edit2, Minus, X, RefreshCw, FlaskConical, Package } from 'lucide-react';
+import { SeasoningsInventory } from '../components/inventory/SeasoningsInventory';
 
 interface RawMaterial {
   id: string;
@@ -56,6 +57,7 @@ export const Inventory = () => {
   const [formMinStock, setFormMinStock] = useState('');
   const [formCurrentStock, setFormCurrentStock] = useState('');
   const [adjustAmount, setAdjustAmount] = useState('');
+  const [activeTab, setActiveTab] = useState<'general' | 'saborizantes'>('general');
 
   useEffect(() => {
     fetchMaterials();
@@ -195,6 +197,35 @@ export const Inventory = () => {
 
   return (
     <div className="space-y-6">
+      {/* Tab switcher */}
+      <div className="flex gap-1 bg-black/30 p-1 rounded-xl w-fit border border-white/5">
+        <button
+          onClick={() => setActiveTab('general')}
+          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
+            activeTab === 'general'
+              ? 'bg-cc-accent text-cc-bg shadow-[0_0_12px_rgba(244,197,66,0.25)]'
+              : 'text-cc-text-muted hover:text-cc-text-main'
+          }`}
+        >
+          <Package size={16} /> Insumos Generales
+        </button>
+        <button
+          onClick={() => setActiveTab('saborizantes')}
+          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
+            activeTab === 'saborizantes'
+              ? 'bg-cc-accent text-cc-bg shadow-[0_0_12px_rgba(244,197,66,0.25)]'
+              : 'text-cc-text-muted hover:text-cc-text-main'
+          }`}
+        >
+          <FlaskConical size={16} /> Inventario de Saborizantes
+        </button>
+      </div>
+
+      {/* Saborizantes tab */}
+      {activeTab === 'saborizantes' && <SeasoningsInventory />}
+
+      {/* General tab */}
+      {activeTab === 'general' && (<div className="space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-cc-cream">Inventario de Insumos</h2>
@@ -624,6 +655,7 @@ export const Inventory = () => {
           </div>
         </div>
       )}
+    </div>)}
     </div>
   );
 };
