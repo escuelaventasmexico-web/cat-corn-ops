@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../supabase';
-import { CreditCard, X, Plus, Edit2, Trash2, AlertCircle, FileDown } from 'lucide-react';
+import { CreditCard, X, Plus, Edit2, Trash2, AlertCircle, FileDown, Calendar } from 'lucide-react';
 import { ExpenseFormModal } from './ExpenseFormModal.tsx';
 import { exportExpensesToExcel } from '../../lib/exportExpenses';
 
@@ -22,37 +22,38 @@ interface ExpensesManagerProps {
   onClose: () => void;
 }
 
+// Helper: today as YYYY-MM-DD
+const toISO = (d: Date) => d.toISOString().split('T')[0];
+
 export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [dateError, setDateError] = useState<string>('');
 
-  useEffect(() => {
-    loadExpenses();
-  }, []);
+  // Date range state — default: current month
+  const now = new Date();
+  const [fromDate, setFromDate] = useState<string>(
+    toISO(new Date(now.getFullYear(), now.getMonth(), 1))
+  );
+  const [toDate, setToDate] = useState<string>(
+    toISO(new Date(now.getFullYear(), now.getMonth() + 1, 0))
+  );
 
-  const loadExpenses = async () => {
+  const loadExpenses = useCallback(async (from: string, to: string) => {
     setLoading(true);
     setError('');
-
     try {
       if (!supabase) throw new Error('Supabase no configurado');
-
-      const now = new Date();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-
       const { data, error: dbError } = await supabase
         .from('expenses')
         .select('*')
-        .gte('expense_date', monthStart.toISOString().split('T')[0])
-        .lte('expense_date', monthEnd.toISOString().split('T')[0])
+        .gte('expense_date', from)
+        .lte('expense_date', to)
         .order('expense_date', { ascending: false });
-
       if (dbError) throw dbError;
-
       setExpenses(data || []);
     } catch (err: any) {
       console.error('Error loading expenses:', err);
@@ -60,22 +61,50 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    loadExpenses(fromDate, toDate);
+  }, [fromDate, toDate, loadExpenses]);
+
+  // Validate and update fromDate
+  const handleFromChange = (val: string) => {
+    setFromDate(val);
+    setDateError(val > toDate ? 'La fecha inicial no puede ser mayor que la fecha final' : '');
+  };
+  // Validate and update toDate
+  const handleToChange = (val: string) => {
+    setToDate(val);
+    setDateError(fromDate > val ? 'La fecha inicial no puede ser mayor que la fecha final' : '');
+  };
+
+  // Quick filters
+  const applyQuickFilter = (preset: 'today' | 'last7' | 'month' | 'prevMonth' | 'clear') => {
+    const n = new Date();
+    setDateError('');
+    if (preset === 'today') {
+      const t = toISO(n); setFromDate(t); setToDate(t);
+    } else if (preset === 'last7') {
+      const from = new Date(n); from.setDate(n.getDate() - 6);
+      setFromDate(toISO(from)); setToDate(toISO(n));
+    } else if (preset === 'month') {
+      setFromDate(toISO(new Date(n.getFullYear(), n.getMonth(), 1)));
+      setToDate(toISO(new Date(n.getFullYear(), n.getMonth() + 1, 0)));
+    } else if (preset === 'prevMonth') {
+      setFromDate(toISO(new Date(n.getFullYear(), n.getMonth() - 1, 1)));
+      setToDate(toISO(new Date(n.getFullYear(), n.getMonth(), 0)));
+    } else {
+      setFromDate(''); setToDate('');
+    }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('¿Eliminar este gasto?')) return;
-
     try {
       if (!supabase) throw new Error('Supabase no configurado');
-
-      const { error: dbError } = await supabase
-        .from('expenses')
-        .delete()
-        .eq('id', id);
-
+      const { error: dbError } = await supabase.from('expenses').delete().eq('id', id);
       if (dbError) throw dbError;
-
-      await loadExpenses();
+      await loadExpenses(fromDate, toDate);
     } catch (err: any) {
       alert(err.message || 'Error al eliminar gasto');
     }
@@ -89,7 +118,7 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
   const handleFormClose = () => {
     setIsFormOpen(false);
     setEditingExpense(null);
-    loadExpenses();
+    loadExpenses(fromDate, toDate);
   };
 
   const getTypeLabel = (type: string) => {
@@ -114,9 +143,8 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
   const totalExpenses = expenses.reduce((sum, exp) => sum + Number(exp.amount_mxn), 0);
 
   const handleExport = () => {
-    const now = new Date();
-    const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    exportExpensesToExcel(expenses, yearMonth);
+    const rangeLabel = fromDate && toDate ? `${fromDate}_a_${toDate}` : fromDate || toDate || 'rango';
+    exportExpensesToExcel(expenses, rangeLabel);
   };
 
   return (
@@ -125,7 +153,7 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
         <div className="flex items-center gap-3">
           <CreditCard size={32} className="text-cc-primary" />
           <div>
-            <h2 className="text-3xl font-bold text-cc-cream">Gastos del Mes</h2>
+            <h2 className="text-3xl font-bold text-cc-cream">Gastos por Periodo</h2>
             <p className="text-cc-text-muted">Total: ${totalExpenses.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</p>
           </div>
         </div>
@@ -145,13 +173,60 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
             <Plus size={20} />
             Nuevo Gasto
           </button>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-          >
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
             <X size={24} className="text-cc-text-muted" />
           </button>
         </div>
+      </div>
+
+      {/* ── Date range filters ── */}
+      <div className="bg-cc-surface border border-white/10 rounded-xl p-4 space-y-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-cc-text-muted">
+          <Calendar size={16} />
+          Filtros por fecha
+        </div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-cc-text-muted">Desde</label>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => handleFromChange(e.target.value)}
+              className="bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-cc-cream focus:ring-2 focus:ring-cc-primary/40 outline-none"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-cc-text-muted">Hasta</label>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => handleToChange(e.target.value)}
+              className="bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-cc-cream focus:ring-2 focus:ring-cc-primary/40 outline-none"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2 pb-0.5">
+            {([
+              { key: 'today',     label: 'Hoy' },
+              { key: 'last7',     label: 'Últimos 7 días' },
+              { key: 'month',     label: 'Este mes' },
+              { key: 'prevMonth', label: 'Mes anterior' },
+              { key: 'clear',     label: 'Limpiar' },
+            ] as const).map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => applyQuickFilter(key)}
+                className="px-3 py-2 text-xs rounded-lg bg-white/5 border border-white/10 text-cc-text-muted hover:bg-white/10 hover:text-cc-cream transition-colors"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {dateError && (
+          <p className="text-xs text-red-400 flex items-center gap-1">
+            <AlertCircle size={12} /> {dateError}
+          </p>
+        )}
       </div>
 
       {error && (
@@ -188,7 +263,7 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
                 {expenses.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="text-center py-8 text-cc-text-muted">
-                      No hay gastos registrados este mes
+                      No hay gastos registrados en este periodo
                     </td>
                   </tr>
                 ) : (

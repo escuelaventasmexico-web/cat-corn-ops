@@ -58,7 +58,7 @@ function styleHeader(ws: any, cellRef: string, bgColor = 'FFF5E6') {
 }
 
 export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
-  // Determine YYYY-MM label
+  // yearMonth may now be a range label like "2026-04-01_a_2026-05-31" or a plain "YYYY-MM"
   const now = new Date();
   const label = yearMonth ?? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const fileName = `gastos_catcorn_${label}.xlsx`;
