@@ -25,6 +25,13 @@ interface ExpensesManagerProps {
 // Helper: today as YYYY-MM-DD
 const toISO = (d: Date) => d.toISOString().split('T')[0];
 
+// Helper: safely format YYYY-MM-DD string to DD/MM/YYYY without timezone shifts
+const formatDateOnly = (dateString: string): string => {
+  if (!dateString) return '';
+  const [year, month, day] = dateString.split('-');
+  return `${day}/${month}/${year}`;
+};
+
 export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
@@ -270,7 +277,7 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
                   expenses.map((expense) => (
                     <tr key={expense.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="py-3 px-4 text-cc-text-main text-sm">
-                        {new Date(expense.expense_date).toLocaleDateString('es-MX')}
+                        {formatDateOnly(expense.expense_date)}
                       </td>
                       <td className="py-3 px-4">
                         <span className={`text-xs px-2 py-1 rounded ${

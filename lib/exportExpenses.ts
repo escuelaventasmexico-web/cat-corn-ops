@@ -43,6 +43,13 @@ function currencyMX(value: number): string {
   return value.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Helper: safely format YYYY-MM-DD string to DD/MM/YYYY without timezone shifts
+function formatDateOnly(dateString: string): string {
+  if (!dateString) return '';
+  const [year, month, day] = dateString.split('-');
+  return `${day}/${month}/${year}`;
+}
+
 // Helper: apply bold + background fill to a cell
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function styleHeader(ws: any, cellRef: string, bgColor = 'FFF5E6') {
@@ -71,7 +78,7 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
   const headers = ['Fecha', 'Tipo', 'Categoría', 'Proveedor', 'Monto (MXN)', 'Método de Pago', 'Factura', 'Notas'];
 
   const rows = expenses.map((e) => [
-    new Date(e.expense_date + 'T12:00:00').toLocaleDateString('es-MX'),
+    formatDateOnly(e.expense_date),
     TYPE_LABELS[e.type] ?? e.type,
     e.category ?? '-',
     e.vendor ?? '-',
