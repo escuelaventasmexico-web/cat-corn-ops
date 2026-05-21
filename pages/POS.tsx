@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { supabase, Product, CartItem } from '../supabase';
 import type { Customer } from '../supabase';
 import { normalizePhone, fetchCustomerByPhoneNorm, fetchCustomerById, createCustomerRecord, fetchCustomersList } from '../lib/loyalty';
+import { exportCustomersToExcel } from '../lib/exportCustomers';
 import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion, isTodayWeekday } from '../lib/promotions';
 import type { PromotionCode } from '../lib/promotions';
 import { Search, Plus, Minus, CreditCard, Banknote, Landmark, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings, Package, Truck } from 'lucide-react';
@@ -1881,7 +1882,23 @@ export const POS = () => {
           <div className="bg-cc-surface border border-white/10 rounded-xl p-5 w-[28rem] shadow-2xl max-h-[75vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-3">
               <h3 className="font-bold text-cc-cream flex items-center gap-2"><Users size={16} className="text-cc-primary" /> Clientes</h3>
-              <button onClick={() => setShowCustomersList(false)} className="text-cc-text-muted hover:text-cc-text-main"><X size={16} /></button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => exportCustomersToExcel(filteredCustomersList, customersList.length)}
+                  className="text-[10px] font-bold bg-cc-primary/20 text-cc-primary px-2 py-1 rounded hover:bg-cc-primary/30 transition-colors whitespace-nowrap"
+                  title="Descargar clientes filtrados"
+                >
+                  📥 Exportar filtrados
+                </button>
+                <button
+                  onClick={() => exportCustomersToExcel(customersList)}
+                  className="text-[10px] font-bold bg-cc-primary/20 text-cc-primary px-2 py-1 rounded hover:bg-cc-primary/30 transition-colors whitespace-nowrap"
+                  title="Descargar todos los clientes"
+                >
+                  📥 Exportar todos
+                </button>
+                <button onClick={() => setShowCustomersList(false)} className="text-cc-text-muted hover:text-cc-text-main"><X size={16} /></button>
+              </div>
             </div>
             <div className="relative mb-3">
               <input
