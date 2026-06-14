@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../supabase';
 import { connectQZ, printRaw, getSavedPrinterName } from '../../lib/qzService';
 import {
-  AlertCircle, Plus, X, Clock, Printer, RefreshCw, ChevronDown, ChevronUp, ShoppingCart
+  AlertCircle, Plus, X, Clock, Printer, RefreshCw, ChevronDown, ChevronUp, ShoppingCart, Edit2
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -10,7 +10,7 @@ import {
 interface SeasoningItem {
   id: string;
   name: string;
-  category: 'sabores' | 'caramelizadas';
+  category: 'sabores' | 'caramelizadas' | 'insumos';
   active: boolean;
   min_quantity_numeric: number | null;
   min_unit: string | null;
@@ -73,7 +73,7 @@ export const SeasoningsInventory = () => {
   const [error, setError] = useState('');
 
   // Category filter
-  const [activeCategory, setActiveCategory] = useState<'all' | 'sabores' | 'caramelizadas'>('all');
+  const [activeCategory, setActiveCategory] = useState<'all' | 'sabores' | 'caramelizadas' | 'insumos' | 'purchase'>('all');
 
   // Count modal
   const [countTarget, setCountTarget] = useState<ItemWithCounts | null>(null);
@@ -88,12 +88,26 @@ export const SeasoningsInventory = () => {
   // 'form' = filling fields, 'purchase' = asking ¿comprar?
   const [countStep, setCountStep] = useState<'form' | 'purchase'>('form');
 
+  // Edit mode
+  const [editingCountId, setEditingCountId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const [editNumeric, setEditNumeric] = useState('');
+  const [editUnit, setEditUnit] = useState('');
+  const [editDate, setEditDate] = useState('');
+  const [editResponsible, setEditResponsible] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editNeedsPurchase, setEditNeedsPurchase] = useState(false);
+  const [editPurchaseNote, setEditPurchaseNote] = useState('');
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState('');
+
   // History modal
   const [historyTarget, setHistoryTarget] = useState<ItemWithCounts | null>(null);
 
   // Collapsed categories
   const [collapsedSabores, setCollapsedSabores] = useState(false);
   const [collapsedCaramelizadas, setCollapsedCaramelizadas] = useState(false);
+  const [collapsedInsumos, setCollapsedInsumos] = useState(false);
 
   // Print
   const [printLoading, setPrintLoading] = useState(false);
@@ -190,6 +204,117 @@ export const SeasoningsInventory = () => {
     setCountResponsible('');
     setCountError('');
     setCountStep('form');
+    setEditingCountId(null);
+  };
+
+  // ── Edit count ─────────────────────────────────────────────────────────────
+
+  const handleEditCount = (count: SeasoningCount) => {
+    setEditingCountId(count.id);
+    setEditText(count.quantity_text);
+    setEditNumeric(count.quantity_numeric?.toString() || '');
+    setEditUnit(count.unit || '');
+    setEditDate(count.count_date);
+    setEditResponsible(count.responsible || '');
+    setEditNotes(count.notes || '');
+    setEditNeedsPurchase(count.needs_purchase || false);
+    setEditPurchaseNote(count.purchase_note || '');
+    setEditError('');
+  };
+
+  const closeEditModal = () => {
+    setEditingCountId(null);
+    setEditText('');
+    setEditNumeric('');
+    setEditUnit('');
+    setEditDate('');
+    setEditResponsible('');
+    setEditNotes('');
+    setEditNeedsPurchase(false);
+    setEditPurchaseNote('');
+    setEditError('');
+  };
+
+  const handleSaveEdit = async (countId: string) => {
+    if (!editText.trim()) {
+      setEditError('La cantidad es obligatoria');
+      return;
+    }
+    setEditLoading(true);
+    setEditError('');
+    try {
+      if (!supabase) throw new Error('Supabase not initialized');
+      const { error } = await supabase
+        .from('seasoning_counts')
+        .update({
+          quantity_text: editText.trim(),
+          quantity_numeric: editNumeric ? parseFloat(editNumeric) : null,
+          unit: editUnit.trim() || null,
+          count_date: editDate,
+          responsible: editResponsible.trim() || null,
+          notes: editNotes.trim() || null,
+          needs_purchase: editNeedsPurchase,
+          purchase_note: editPurchaseNote.trim() || null,
+        })
+        .eq('id', countId);
+      if (error) throw error;
+      setEditingCountId(null);
+      // Clear edit fields
+      setEditText('');
+      setEditNumeric('');
+      setEditUnit('');
+      setEditDate('');
+      setEditResponsible('');
+      setEditNotes('');
+      setEditNeedsPurchase(false);
+      setEditPurchaseNote('');
+      await loadData();
+    } catch (e: any) {
+      setEditError('Error al guardar: ' + e.message);
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  // ── Delete count ───────────────────────────────────────────────────────────
+
+  const handleDeleteCount = async (countId: string, itemName: string) => {
+    if (!confirm(`¿Seguro que deseas eliminar este conteo de "${itemName}"? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+    if (!supabase) return;
+    setCountLoading(true);
+    try {
+      const { error } = await supabase
+        .from('seasoning_counts')
+        .delete()
+        .eq('id', countId);
+      if (error) throw error;
+      await loadData();
+    } catch (e: any) {
+      alert('Error: ' + e.message);
+    } finally {
+      setCountLoading(false);
+    }
+  };
+
+  // ── Remove from purchase ───────────────────────────────────────────────────
+
+  const handleRemoveFromPurchase = async (countId: string) => {
+    if (!supabase) return;
+    setCountLoading(true);
+    try {
+      const { error } = await supabase
+        .from('seasoning_counts')
+        .update({ needs_purchase: false, purchase_note: null })
+        .eq('id', countId);
+      if (error) throw error;
+      await loadData();
+    } catch (e: any) {
+      alert('Error: ' + e.message);
+    } finally {
+      setCountLoading(false);
+    }
   };
 
   // ── Print via QZ Tray ─────────────────────────────────────────────────────
@@ -213,6 +338,7 @@ export const SeasoningsInventory = () => {
 
       const sabores = items.filter((i) => i.category === 'sabores');
       const caramelizadas = items.filter((i) => i.category === 'caramelizadas');
+      const insumos = items.filter((i) => i.category === 'insumos');
       const porComprar = items.filter((i) => i.counts[0]?.needs_purchase === true);
 
       const SEP  = '--------------------------------\n';
@@ -241,7 +367,7 @@ export const SeasoningsInventory = () => {
         '\x1B\x45\x01',       // bold on
         'CAT CORN\n',
         '\x1B\x45\x00',       // bold off
-        'INVENTARIO SABORIZANTES\n',
+        'INVENTARIO FÍSICO\n',
         `${ts}\n`,
         '\x1B\x61\x00',       // left
         SEP,
@@ -256,6 +382,12 @@ export const SeasoningsInventory = () => {
         '\x1B\x45\x00',
         THIN,
         ...buildSection(caramelizadas),
+        SEP,
+        '\x1B\x45\x01',
+        'INSUMOS\n',
+        '\x1B\x45\x00',
+        THIN,
+        ...buildSection(insumos),
         SEP,
         '\x1B\x45\x01',
         'POR COMPRAR\n',
@@ -346,7 +478,7 @@ export const SeasoningsInventory = () => {
                     </span>
                   </td>
                   <td className="p-3">
-                    <div className="flex items-center justify-end gap-2">
+                    <div className="flex items-center justify-end gap-1">
                       <button
                         onClick={() => setHistoryTarget(item)}
                         className="p-1.5 hover:bg-white/10 rounded-lg text-cc-text-muted hover:text-cc-cream transition-colors"
@@ -354,6 +486,15 @@ export const SeasoningsInventory = () => {
                       >
                         <Clock size={15} />
                       </button>
+                      {last && (
+                        <button
+                          onClick={() => handleEditCount(last)}
+                          className="p-1.5 hover:bg-white/10 rounded-lg text-cc-text-muted hover:text-cc-cream transition-colors"
+                          title="Editar conteo"
+                        >
+                          <Edit2 size={15} />
+                        </button>
+                      )}
                       <button
                         onClick={() => openCountModal(item)}
                         className="px-3 py-1 bg-cc-accent/20 hover:bg-cc-accent/30 border border-cc-accent/30 rounded-lg text-cc-accent text-sm font-medium transition-colors flex items-center gap-1"
@@ -378,8 +519,8 @@ export const SeasoningsInventory = () => {
       {/* Header */}
       <div className="flex flex-wrap justify-between items-center gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-cc-cream">Inventario de Saborizantes</h2>
-          <p className="text-cc-text-muted text-sm mt-0.5">Control físico de saborizantes por categoría</p>
+          <h2 className="text-2xl font-bold text-cc-cream">Inventario Físico</h2>
+          <p className="text-cc-text-muted text-sm mt-0.5">Control de saborizantes e insumos por categoría</p>
         </div>
         <div className="flex gap-2 flex-wrap">
           <button
@@ -400,7 +541,7 @@ export const SeasoningsInventory = () => {
 
       {/* Category filter tabs */}
       <div className="flex flex-wrap gap-2 border-b border-white/10 pb-1">
-        {(['all', 'sabores', 'caramelizadas'] as const).map((cat) => (
+        {(['all', 'sabores', 'caramelizadas', 'insumos'] as const).map((cat) => (
           <button
             key={cat}
             onClick={() => setActiveCategory(cat)}
@@ -484,6 +625,25 @@ export const SeasoningsInventory = () => {
               {!collapsedCaramelizadas && renderTable(caramelizadasList)}
             </div>
           )}
+
+          {/* INSUMOS */}
+          {(activeCategory === 'all' || activeCategory === 'insumos') && (() => {
+            const insumosList = filtered.filter((i) => i.category === 'insumos');
+            return (
+              <div className="bg-cc-surface rounded-xl border border-white/5 overflow-hidden">
+                <button
+                  className="w-full flex items-center justify-between bg-black/30 px-6 py-4 border-b border-white/5 hover:bg-black/40 transition-colors"
+                  onClick={() => setCollapsedInsumos((v) => !v)}
+                >
+                  <h3 className="text-base font-semibold text-cc-cream uppercase tracking-wide">
+                    Insumos <span className="ml-2 text-cc-text-muted font-normal text-sm normal-case">({insumosList.length})</span>
+                  </h3>
+                  {collapsedInsumos ? <ChevronDown size={18} className="text-cc-text-muted" /> : <ChevronUp size={18} className="text-cc-text-muted" />}
+                </button>
+                {!collapsedInsumos && renderTable(insumosList)}
+              </div>
+            );
+          })()}
 
           {/* POR COMPRAR */}
           {activeCategory === 'all' && (() => {
@@ -706,7 +866,7 @@ export const SeasoningsInventory = () => {
                     className={`rounded-lg p-3 border ${idx === 0 ? 'border-[#b08d57]/40 bg-[#b08d57]/10' : 'border-white/5 bg-black/20'}`}
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <div>
+                      <div className="flex-1">
                         <span className="text-cc-cream font-semibold text-sm">{c.quantity_text}</span>
                         {c.unit && (
                           <span className="ml-1 text-cc-text-muted text-xs">{c.unit}</span>
@@ -716,6 +876,29 @@ export const SeasoningsInventory = () => {
                             Más reciente
                           </span>
                         )}
+                        {c.needs_purchase && (
+                          <span className="ml-2 text-xs bg-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded-full border border-orange-500/30 font-medium">
+                            Por comprar
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex gap-1 flex-shrink-0">
+                        {c.needs_purchase && (
+                          <button
+                            onClick={() => handleRemoveFromPurchase(c.id)}
+                            className="p-1 hover:bg-orange-500/20 rounded text-orange-400 hover:text-orange-300 text-xs font-medium transition-colors"
+                            title="Quitar de compra"
+                          >
+                            ✕
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeleteCount(c.id, historyTarget.name)}
+                          className="p-1 hover:bg-red-500/20 rounded text-red-400 hover:text-red-300 transition-colors"
+                          title="Eliminar conteo"
+                        >
+                          🗑️
+                        </button>
                       </div>
                       <span className="text-cc-text-muted text-xs whitespace-nowrap">{fmtDate(c.count_date)}</span>
                     </div>
@@ -740,6 +923,130 @@ export const SeasoningsInventory = () => {
               >
                 <Plus size={15} /> Registrar nuevo conteo
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── EDIT MODAL ────────────────────────────────────────────────────── */}
+      {editingCountId && (
+        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-gradient-to-br from-[#2a2316] to-[#1f1a12] border-2 border-[#b08d57] rounded-xl p-6 max-w-md w-full shadow-2xl">
+            <div className="flex justify-between items-center mb-5">
+              <h3 className="text-lg font-semibold text-[#f4c542]">Editar conteo</h3>
+              <button
+                onClick={closeEditModal}
+                className="text-zinc-400 hover:text-white transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {editError && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex items-start gap-2">
+                  <AlertCircle size={15} className="text-red-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-red-400 text-sm">{editError}</p>
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">
+                  Cantidad <span className="text-red-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  placeholder='Ej: Medio bote, 1 kilo + 800gr, 500gr'
+                  className="w-full bg-black/40 border border-[#b08d57]/30 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-[#b08d57] focus:border-transparent outline-none"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-zinc-300 mb-1">Cantidad numérica (opcional)</label>
+                  <input
+                    type="number" step="any" value={editNumeric}
+                    onChange={(e) => setEditNumeric(e.target.value)}
+                    placeholder='500'
+                    className="w-full bg-black/40 border border-[#b08d57]/30 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-[#b08d57] focus:border-transparent outline-none"
+                  />
+                </div>
+                <div className="w-28">
+                  <label className="block text-sm font-medium text-zinc-300 mb-1">Unidad</label>
+                  <input
+                    type="text" value={editUnit}
+                    onChange={(e) => setEditUnit(e.target.value)}
+                    placeholder='g, kg, bote'
+                    className="w-full bg-black/40 border border-[#b08d57]/30 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-[#b08d57] focus:border-transparent outline-none"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">Fecha del conteo</label>
+                <input
+                  type="date" value={editDate}
+                  onChange={(e) => setEditDate(e.target.value)}
+                  className="w-full bg-black/40 border border-[#b08d57]/30 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-[#b08d57] focus:border-transparent outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">Responsable (opcional)</label>
+                <input
+                  type="text" value={editResponsible}
+                  onChange={(e) => setEditResponsible(e.target.value)}
+                  placeholder='Nombre de quien contó'
+                  className="w-full bg-black/40 border border-[#b08d57]/30 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-[#b08d57] focus:border-transparent outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">Notas (opcional)</label>
+                <textarea
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder='Observaciones...'
+                  rows={2}
+                  className="w-full bg-black/40 border border-[#b08d57]/30 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-[#b08d57] focus:border-transparent outline-none resize-none"
+                />
+              </div>
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editNeedsPurchase}
+                    onChange={(e) => setEditNeedsPurchase(e.target.checked)}
+                    className="w-4 h-4 accent-cc-accent"
+                  />
+                  <span className="text-sm text-zinc-300">Marcar para compra</span>
+                </label>
+              </div>
+              {editNeedsPurchase && (
+                <div>
+                  <label className="block text-sm font-medium text-zinc-300 mb-1">Nota de compra (opcional)</label>
+                  <input
+                    type="text" value={editPurchaseNote}
+                    onChange={(e) => setEditPurchaseNote(e.target.value)}
+                    placeholder='Ej: Urgente, marca específica...'
+                    className="w-full bg-black/40 border border-[#b08d57]/30 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-[#b08d57] focus:border-transparent outline-none"
+                  />
+                </div>
+              )}
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={closeEditModal}
+                  disabled={editLoading}
+                  className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-lg text-white font-semibold transition-colors disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleSaveEdit(editingCountId)}
+                  disabled={editLoading}
+                  className="flex-1 px-4 py-2.5 bg-[#b08d57] hover:bg-[#c49d67] rounded-lg text-white font-semibold transition-colors disabled:opacity-50"
+                >
+                  {editLoading ? 'Guardando...' : 'Guardar cambios'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

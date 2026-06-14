@@ -4,11 +4,11 @@
 -- NO modifica raw_materials, inventory_items ni ninguna tabla existente
 -- ============================================================
 
--- 1. Tabla maestra de saborizantes
+-- 1. Tabla maestra de saborizantes e insumos
 CREATE TABLE IF NOT EXISTS public.seasoning_items (
   id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   name                 TEXT        NOT NULL,
-  category             TEXT        NOT NULL CHECK (category IN ('sabores', 'caramelizadas')),
+  category             TEXT        NOT NULL CHECK (category IN ('sabores', 'caramelizadas', 'insumos')),
   active               BOOLEAN     DEFAULT true,
   min_quantity_numeric NUMERIC     NULL,
   min_unit             TEXT        NULL,
@@ -100,8 +100,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_seasoning_name_category
   WHERE active = true;
 
 -- ============================================================
--- PASO C: Seed inicial — idempotente (no inserta si ya existe)
+-- PASO C: Actualizar CHECK de category para incluir 'insumos'
+-- Esto permite la categoría nueva sin perder datos existentes
+-- ============================================================
+ALTER TABLE public.seasoning_items
+  DROP CONSTRAINT IF EXISTS seasoning_items_category_check;
+
+ALTER TABLE public.seasoning_items
+  ADD CONSTRAINT seasoning_items_category_check
+    CHECK (category IN ('sabores', 'caramelizadas', 'insumos'));
+
+-- ============================================================
+-- PASO D: Seed inicial — idempotente (no inserta si ya existe)
 -- Chipileta, Esquites y Pica fresa NO están en el seed (se marcan inactive)
+-- Incluye 7 nuevos insumos
 -- ============================================================
 INSERT INTO public.seasoning_items (name, category)
 SELECT v.name, v.category
@@ -121,7 +133,14 @@ FROM (VALUES
   ('Caramelo',             'caramelizadas'),
   ('Cereza',               'caramelizadas'),
   ('Uva',                  'caramelizadas'),
-  ('Mango dulce',          'caramelizadas')
+  ('Mango dulce',          'caramelizadas'),
+  ('Bolsa 20x30',          'insumos'),
+  ('Bolsa 25x35',          'insumos'),
+  ('Bolsa 30x40',          'insumos'),
+  ('Bolsa stand up 500 gr','insumos'),
+  ('Bolsa stand up 90 gr', 'insumos'),
+  ('Maíz palomero',        'insumos'),
+  ('Aceite',               'insumos')
 ) AS v(name, category)
 WHERE NOT EXISTS (
   SELECT 1 FROM public.seasoning_items si
@@ -131,7 +150,7 @@ WHERE NOT EXISTS (
 );
 
 -- ============================================================
--- PASO D: Desactivar Chipileta, Esquites y Pica fresa
+-- PASO E: Desactivar Chipileta, Esquites y Pica fresa
 -- Usa active = false para conservar historial si existiera.
 -- El frontend filtra active = true, así que dejan de aparecer.
 -- ============================================================

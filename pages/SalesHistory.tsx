@@ -56,6 +56,21 @@ export const SalesHistory = () => {
   const [toDate, setToDate] = useState<string>('');
   const [samples, setSamples] = useState<Sample[]>([]);
   const [loadingSamples, setLoadingSamples] = useState(true);
+  // Summary (from RPC)
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [grossTotal, setGrossTotal] = useState(0);
+  const [refundedTotal, setRefundedTotal] = useState(0);
+  const [netTotal, setNetTotal] = useState(0);
+  const [totalSalesCount, setTotalSalesCount] = useState(0);
+  const [refundedCount, setRefundedCount] = useState(0);
+  const [posCashTotal, setPosCashTotal] = useState(0);
+  const [posCardTotal, setPosCardTotal] = useState(0);
+  const [orderCashTotal, setOrderCashTotal] = useState(0);
+  const [orderCardTotal, setOrderCardTotal] = useState(0);
+  const [orderTransferTotal, setOrderTransferTotal] = useState(0);
+  const [deliveryTotal, setDeliveryTotal] = useState(0);
+  const [totalsByOrigin, setTotalsByOrigin] = useState<Record<string, any>>({});
+  const [totalsByPaymentMethod, setTotalsByPaymentMethod] = useState<Record<string, any>>({});
 
   // ── Refund state ──
   const [refundTarget, setRefundTarget] = useState<Sale | null>(null);
@@ -133,7 +148,38 @@ export const SalesHistory = () => {
   useEffect(() => {
     loadSales();
     loadSamples();
+    loadSummary();
   }, [fromDate, toDate]);
+
+  const loadSummary = async () => {
+    setSummaryLoading(true);
+    try {
+      if (!supabase) return;
+      const { data, error } = await supabase.rpc('sales_history_summary', {
+        p_start_date: fromDate || null,
+        p_end_date: toDate || null,
+      });
+      if (error) throw error;
+      const s = Array.isArray(data) ? data[0] || {} : data || {};
+      setGrossTotal(Number(s.gross_total ?? 0));
+      setRefundedTotal(Number(s.refunded_total ?? 0));
+      setNetTotal(Number(s.net_total ?? 0));
+      setTotalSalesCount(Number(s.total_sales_count ?? 0));
+      setRefundedCount(Number(s.refunded_count ?? 0));
+      setPosCashTotal(Number(s.pos_cash_total ?? 0));
+      setPosCardTotal(Number(s.pos_card_total ?? 0));
+      setOrderCashTotal(Number(s.order_cash_total ?? 0));
+      setOrderCardTotal(Number(s.order_card_total ?? 0));
+      setOrderTransferTotal(Number(s.order_transfer_total ?? 0));
+      setDeliveryTotal(Number(s.delivery_total ?? 0));
+      setTotalsByOrigin(s.totals_by_origin ?? {});
+      setTotalsByPaymentMethod(s.totals_by_payment_method ?? {});
+    } catch (err: any) {
+      console.error('Error loading sales summary:', err);
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
 
   // Helper to build date range considering local timezone (America/Mexico_City)
   const buildDateRange = (fromDateStr: string, toDateStr: string) => {
@@ -414,35 +460,26 @@ export const SalesHistory = () => {
     document.body.removeChild(link);
   };
 
-  // ── Split sales by origin ────────────────────────────────────────────────
-  const cajasSales    = sales.filter(s => !s.is_refunded && (s.sale_origin === 'pos'      || !s.sale_origin));
-  const pedidosSales  = sales.filter(s => !s.is_refunded &&  s.sale_origin === 'order');
-  const deliverySales = sales.filter(s => !s.is_refunded &&  s.sale_origin === 'delivery');
+  // ── Summary-driven buckets (from RPC) ─────────────────────────────────
+  // Use values returned by sales_history_summary RPC (not the loaded rows)
+  const cajaTotal = posCashTotal + posCardTotal;
+  const pedidosCash = orderCashTotal;
+  const pedidosCard = orderCardTotal;
+  const pedidosTransfer = orderTransferTotal;
+  const pedidosTotal = orderCashTotal + orderCardTotal + orderTransferTotal;
+  const deliveryTotalRPC = deliveryTotal;
 
-  // Caja (pos) — CASH & CARD only for the register breakdown
-  const cashTotal     = cajasSales.filter(s => normalizePaymentMethod(s.payment_method) === 'cash').reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const cardTotal     = cajasSales.filter(s => normalizePaymentMethod(s.payment_method) === 'card').reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const cajaTotal     = cashTotal + cardTotal;
+  // Primary total comes from RPC netTotal
+  const totalGeneral = netTotal;
 
-  // Pedidos — informativo, separado de caja
-  const pedidosCash     = pedidosSales.filter(s => normalizePaymentMethod(s.payment_method) === 'cash').reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const pedidosCard     = pedidosSales.filter(s => normalizePaymentMethod(s.payment_method) === 'card').reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const pedidosTransfer = pedidosSales.filter(s => normalizePaymentMethod(s.payment_method) === 'transfer').reduce((sum, s) => sum + Number(s.total || 0), 0);
-  const pedidosTotal    = pedidosSales.reduce((sum, s) => sum + Number(s.total || 0), 0);
-
-  // Delivery — informativo, separado de caja
-  const deliveryTotal = deliverySales.reduce((sum, s) => sum + Number(s.total || 0), 0);
-
-  const totalGeneral = sales.filter(s => !s.is_refunded).reduce((sum, s) => sum + Number(s.total || 0), 0);
-
-  // Chart includes all origins, labeled clearly
+  // Chart includes all origins, labeled clearly — using RPC buckets
   const paymentChartData = [
-    { name: 'Caja Efectivo',    value: cashTotal,        color: '#4CAF50' },
-    { name: 'Caja Tarjeta',     value: cardTotal,        color: '#2196F3' },
-    { name: 'Pedidos Efectivo', value: pedidosCash,      color: '#F59E0B' },
-    { name: 'Pedidos Tarjeta',  value: pedidosCard,      color: '#06B6D4' },
-    { name: 'Pedidos Transf.',  value: pedidosTransfer,  color: '#8B5CF6' },
-    { name: 'Delivery',         value: deliveryTotal,    color: '#FF6900' },
+    { name: 'Caja Efectivo',    value: posCashTotal,        color: '#4CAF50' },
+    { name: 'Caja Tarjeta',     value: posCardTotal,        color: '#2196F3' },
+    { name: 'Pedidos Efectivo', value: orderCashTotal,      color: '#F59E0B' },
+    { name: 'Pedidos Tarjeta',  value: orderCardTotal,      color: '#06B6D4' },
+    { name: 'Pedidos Transf.',  value: orderTransferTotal,  color: '#8B5CF6' },
+    { name: 'Delivery',         value: deliveryTotalRPC,    color: '#FF6900' },
   ].filter(item => item.value > 0);
 
   return (
@@ -558,20 +595,20 @@ export const SalesHistory = () => {
             {/* Stats panels */}
             <div className="flex flex-col justify-start gap-3">
 
-              {/* Caja directa */}
-              {cajasSales.length > 0 && (
+              {/* Caja directa (desde RPC) */}
+              {(totalsByOrigin['pos']?.count || 0) > 0 && (
                 <div className="bg-black/20 p-4 rounded-lg border border-green-500/20">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-bold text-green-400">🏪 Caja directa</span>
-                    <span className="text-xs text-cc-text-muted">{cajasSales.length} ventas</span>
+                    <span className="text-xs text-cc-text-muted">{totalsByOrigin['pos']?.count || 0} ventas</span>
                   </div>
                   <div className="flex justify-between text-sm mt-1">
                     <span className="text-cc-text-muted flex items-center gap-1"><Banknote size={13} className="text-green-400" /> Efectivo</span>
-                    <span className="text-cc-cream font-semibold">${cashTotal.toFixed(2)} <span className="text-cc-text-muted font-normal">({cajasSales.filter(s => normalizePaymentMethod(s.payment_method) === 'cash').length})</span></span>
+                    <span className="text-cc-cream font-semibold">${posCashTotal.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm mt-1">
                     <span className="text-cc-text-muted flex items-center gap-1"><CreditCard size={13} className="text-blue-400" /> Tarjeta</span>
-                    <span className="text-cc-cream font-semibold">${cardTotal.toFixed(2)} <span className="text-cc-text-muted font-normal">({cajasSales.filter(s => normalizePaymentMethod(s.payment_method) === 'card').length})</span></span>
+                    <span className="text-cc-cream font-semibold">${posCardTotal.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm mt-2 pt-2 border-t border-white/10">
                     <span className="text-green-300 font-bold">Total caja</span>
@@ -580,29 +617,29 @@ export const SalesHistory = () => {
                 </div>
               )}
 
-              {/* Pedidos */}
-              {pedidosSales.length > 0 && (
+              {/* Pedidos (desde RPC) */}
+              {(totalsByOrigin['order']?.count || 0) > 0 && (
                 <div className="bg-black/20 p-4 rounded-lg border border-violet-500/20">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-bold text-violet-400">📦 Pedidos</span>
-                    <span className="text-xs text-cc-text-muted">{pedidosSales.length} pedidos · NO entra a caja</span>
+                    <span className="text-xs text-cc-text-muted">{totalsByOrigin['order']?.count || 0} pedidos · NO entra a caja</span>
                   </div>
-                  {pedidosCash > 0 && (
+                  {orderCashTotal > 0 && (
                     <div className="flex justify-between text-sm mt-1">
                       <span className="text-cc-text-muted">Efectivo</span>
-                      <span className="text-cc-cream">${pedidosCash.toFixed(2)}</span>
+                      <span className="text-cc-cream">${orderCashTotal.toFixed(2)}</span>
                     </div>
                   )}
-                  {pedidosCard > 0 && (
+                  {orderCardTotal > 0 && (
                     <div className="flex justify-between text-sm mt-1">
                       <span className="text-cc-text-muted">Tarjeta</span>
-                      <span className="text-cc-cream">${pedidosCard.toFixed(2)}</span>
+                      <span className="text-cc-cream">${orderCardTotal.toFixed(2)}</span>
                     </div>
                   )}
-                  {pedidosTransfer > 0 && (
+                  {orderTransferTotal > 0 && (
                     <div className="flex justify-between text-sm mt-1">
                       <span className="text-cc-text-muted flex items-center gap-1"><Landmark size={13} className="text-violet-400" /> Transferencia</span>
-                      <span className="text-cc-cream">${pedidosTransfer.toFixed(2)}</span>
+                      <span className="text-cc-cream">${orderTransferTotal.toFixed(2)}</span>
                     </div>
                   )}
                   <div className="flex justify-between text-sm mt-2 pt-2 border-t border-white/10">
@@ -612,12 +649,12 @@ export const SalesHistory = () => {
                 </div>
               )}
 
-              {/* Delivery */}
-              {deliverySales.length > 0 && (
+              {/* Delivery (desde RPC) */}
+              {(totalsByOrigin['delivery_platform']?.count || 0) > 0 && (
                 <div className="bg-black/20 p-4 rounded-lg border border-orange-500/20">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-bold text-orange-400 flex items-center gap-1"><Truck size={13} /> Delivery plataformas</span>
-                    <span className="text-xs text-cc-text-muted">{deliverySales.length} ventas · NO entra a caja</span>
+                    <span className="text-xs text-cc-text-muted">{totalsByOrigin['delivery_platform']?.count || 0} ventas · NO entra a caja</span>
                   </div>
                   <div className="flex justify-between text-sm mt-2 pt-1">
                     <span className="text-orange-300 font-bold">Total delivery</span>
@@ -626,15 +663,14 @@ export const SalesHistory = () => {
                 </div>
               )}
 
-              {/* Grand total */}
+              {/* Grand total (from RPC) */}
               <div className="bg-cc-primary/10 p-4 rounded-lg border border-cc-primary/20">
-                <div className="text-sm text-cc-text-muted mb-1">Total General (todos los orígenes)</div>
-                <div className="text-3xl font-bold text-cc-primary">${totalGeneral.toFixed(2)}</div>
-                <div className="text-xs text-cc-text-muted mt-1">
-                  {sales.filter(s => !s.is_refunded).length} ventas
-                  {sales.filter(s => s.is_refunded).length > 0 && (
-                    <> · <span className="text-red-400">{sales.filter(s => s.is_refunded).length} devuelta(s)</span></>
-                  )}
+                <div className="text-sm text-cc-text-muted mb-1">Total General histórico</div>
+                <div className="text-3xl font-bold text-cc-primary">${netTotal.toFixed(2)}</div>
+                <div className="text-sm text-cc-text-muted mt-2 space-y-1">
+                  <div>Bruto: <span className="font-semibold text-cc-cream">${grossTotal.toFixed(2)}</span></div>
+                  <div>Devoluciones: <span className="font-semibold text-red-400">-${refundedTotal.toFixed(2)}</span></div>
+                  <div>Ventas válidas: <span className="font-semibold">{totalSalesCount}</span> · Devoluciones: <span className="font-semibold text-red-400">{refundedCount}</span></div>
                 </div>
               </div>
             </div>
