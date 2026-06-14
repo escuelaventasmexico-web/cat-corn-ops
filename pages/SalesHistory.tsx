@@ -57,7 +57,6 @@ export const SalesHistory = () => {
   const [samples, setSamples] = useState<Sample[]>([]);
   const [loadingSamples, setLoadingSamples] = useState(true);
   // Summary (from RPC)
-  const [summaryLoading, setSummaryLoading] = useState(false);
   const [grossTotal, setGrossTotal] = useState(0);
   const [refundedTotal, setRefundedTotal] = useState(0);
   const [netTotal, setNetTotal] = useState(0);
@@ -70,7 +69,7 @@ export const SalesHistory = () => {
   const [orderTransferTotal, setOrderTransferTotal] = useState(0);
   const [deliveryTotal, setDeliveryTotal] = useState(0);
   const [totalsByOrigin, setTotalsByOrigin] = useState<Record<string, any>>({});
-  const [totalsByPaymentMethod, setTotalsByPaymentMethod] = useState<Record<string, any>>({});
+  
 
   // ── Refund state ──
   const [refundTarget, setRefundTarget] = useState<Sale | null>(null);
@@ -152,7 +151,6 @@ export const SalesHistory = () => {
   }, [fromDate, toDate]);
 
   const loadSummary = async () => {
-    setSummaryLoading(true);
     try {
       if (!supabase) return;
       const { data, error } = await supabase.rpc('sales_history_summary', {
@@ -173,11 +171,9 @@ export const SalesHistory = () => {
       setOrderTransferTotal(Number(s.order_transfer_total ?? 0));
       setDeliveryTotal(Number(s.delivery_total ?? 0));
       setTotalsByOrigin(s.totals_by_origin ?? {});
-      setTotalsByPaymentMethod(s.totals_by_payment_method ?? {});
     } catch (err: any) {
       console.error('Error loading sales summary:', err);
     } finally {
-      setSummaryLoading(false);
     }
   };
 
@@ -463,14 +459,11 @@ export const SalesHistory = () => {
   // ── Summary-driven buckets (from RPC) ─────────────────────────────────
   // Use values returned by sales_history_summary RPC (not the loaded rows)
   const cajaTotal = posCashTotal + posCardTotal;
-  const pedidosCash = orderCashTotal;
-  const pedidosCard = orderCardTotal;
-  const pedidosTransfer = orderTransferTotal;
   const pedidosTotal = orderCashTotal + orderCardTotal + orderTransferTotal;
   const deliveryTotalRPC = deliveryTotal;
 
   // Primary total comes from RPC netTotal
-  const totalGeneral = netTotal;
+  // (netTotal used directly in UI)
 
   // Chart includes all origins, labeled clearly — using RPC buckets
   const paymentChartData = [
