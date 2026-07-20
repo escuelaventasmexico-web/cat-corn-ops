@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabase';
 import { useNavigate } from 'react-router-dom';
-import { Cat } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { Cat, Loader } from 'lucide-react';
 
 export const Login = () => {
   const [email, setEmail] = useState('');
@@ -9,6 +10,23 @@ export const Login = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const { session, profile, profileLoading, blockedReason } = useAuth();
+
+  // Redirect if already logged in and has a valid profile (not blocked)
+  useEffect(() => {
+    // Only redirect if:
+    // 1. There's a session
+    // 2. Profile is loaded (profileLoading is false)
+    // 3. There's no blockedReason (meaning profile is valid and active)
+    if (session && !profileLoading && !blockedReason && profile) {
+      // Redirect based on role
+      if (profile.role === 'admin') {
+        navigate('/', { replace: true });
+      } else if (profile.role === 'socios_comerciales') {
+        navigate('/socios-comerciales', { replace: true });
+      }
+    }
+  }, [session, profile, profileLoading, blockedReason, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,10 +41,21 @@ export const Login = () => {
     if (error) {
       setError(error.message);
       setLoading(false);
-    } else {
-      navigate('/');
     }
+    // Navigation happens via useEffect when profile loads
   };
+
+  // Show loading state if redirecting
+  if (session && !profileLoading && !blockedReason && profile) {
+    return (
+      <div className="min-h-screen bg-cc-bg flex items-center justify-center">
+        <div className="text-center">
+          <Loader size={32} className="animate-spin text-cc-primary mx-auto mb-4" />
+          <p className="text-cc-text-muted">Redirigiendo...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-cc-bg flex items-center justify-center p-4">
@@ -55,6 +84,7 @@ export const Login = () => {
               className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-cc-text-main focus:outline-none focus:border-cc-primary focus:ring-1 focus:ring-cc-primary transition-colors"
               placeholder="usuario@catcorn.com"
               required
+              disabled={loading}
             />
           </div>
 
@@ -67,15 +97,23 @@ export const Login = () => {
               className="w-full bg-black/20 border border-white/10 rounded-lg p-3 text-cc-text-main focus:outline-none focus:border-cc-primary focus:ring-1 focus:ring-cc-primary transition-colors"
               placeholder="••••••••"
               required
+              disabled={loading}
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-cc-primary hover:bg-cc-primary-dark text-cc-bg font-bold py-3 px-4 rounded-lg transition-colors shadow-lg shadow-cc-primary/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full bg-cc-primary hover:bg-cc-primary-dark text-cc-bg font-bold py-3 px-4 rounded-lg transition-colors shadow-lg shadow-cc-primary/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            {loading ? 'Iniciando...' : 'Acceder al Sistema'}
+            {loading ? (
+              <>
+                <Loader size={18} className="animate-spin" />
+                Iniciando...
+              </>
+            ) : (
+              'Acceder al Sistema'
+            )}
           </button>
         </form>
       </div>

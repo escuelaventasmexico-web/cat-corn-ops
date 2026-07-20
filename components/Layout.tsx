@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { supabase } from '../supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { 
   LayoutDashboard, 
   ShoppingCart, 
@@ -13,30 +13,71 @@ import {
   Truck,
   Wallet,
   ClipboardList,
-  Tag
+  Tag,
+  HeartHandshake,
+  Loader
 } from 'lucide-react';
 
 export const Layout = () => {
   const navigate = useNavigate();
+  const { profileLoading, canAccessModule, logout } = useAuth();
 
   const handleLogout = async () => {
-    await supabase?.auth.signOut();
-    navigate('/login');
+    try {
+      await logout();
+      navigate('/login');
+    } catch (err) {
+      console.error('Error logging out:', err);
+    }
   };
 
-  const navItems = [
-    { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-    { to: '/pos', icon: ShoppingCart, label: 'Punto de Venta' },
-    { to: '/inventory', icon: Package, label: 'Inventario' },
-    { to: '/production', icon: ChefHat, label: 'Producción' },
-    { to: '/print-labels', icon: Tag, label: 'Imprimir Etiquetas' },
-    { to: '/waste', icon: Trash2, label: 'Merma' },
-    { to: '/ops', icon: Truck, label: 'Logística y Operación' },
-    { to: '/sales-history', icon: Receipt, label: 'Historial' },
-    { to: '/corte-de-caja', icon: Wallet, label: 'Corte de Caja' },
-    { to: '/pedidos', icon: ClipboardList, label: 'Pedidos' },
-    { to: '/finanzas', icon: DollarSign, label: 'Finanzas' },
+  // All available nav items
+  const allNavItems = [
+    { to: '/', icon: LayoutDashboard, label: 'Dashboard', module: 'dashboard' },
+    { to: '/pos', icon: ShoppingCart, label: 'Punto de Venta', module: 'pos' },
+    { to: '/inventory', icon: Package, label: 'Inventario', module: 'inventario' },
+    { to: '/production', icon: ChefHat, label: 'Producción', module: 'produccion' },
+    { to: '/print-labels', icon: Tag, label: 'Imprimir Etiquetas', module: 'etiquetas' },
+    { to: '/waste', icon: Trash2, label: 'Merma', module: 'merma' },
+    { to: '/ops', icon: Truck, label: 'Logística y Operación', module: 'logistica' },
+    { to: '/socios-comerciales', icon: HeartHandshake, label: 'Socios Comerciales', module: 'socios_comerciales' },
+    { to: '/sales-history', icon: Receipt, label: 'Historial', module: 'historial' },
+    { to: '/corte-de-caja', icon: Wallet, label: 'Corte de Caja', module: 'corte_caja' },
+    { to: '/pedidos', icon: ClipboardList, label: 'Pedidos', module: 'pedidos' },
+    { to: '/finanzas', icon: DollarSign, label: 'Finanzas', module: 'finanzas' },
   ];
+
+  // Filter nav items based on user role
+  const visibleNavItems = allNavItems.filter(item => canAccessModule(item.module));
+
+  // Show loading state while profile is being loaded
+  if (profileLoading) {
+    return (
+      <div className="flex h-screen bg-cc-bg text-cc-text-main overflow-hidden">
+        <aside className="w-20 lg:w-56 bg-cc-surface border-r border-white/5 flex flex-col transition-all duration-300">
+          <div className="h-20 flex items-center justify-center border-b border-white/5">
+            <div className="flex items-center gap-2 text-cc-primary">
+              <Cat size={32} />
+              <span className="hidden lg:block font-bold text-xl tracking-wider text-cc-cream">CAT CORN</span>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center justify-center">
+            <Loader size={24} className="animate-spin text-cc-primary" />
+          </div>
+        </aside>
+        <main className="flex-1 overflow-auto relative">
+          <div className="p-6 max-w-[90rem] mx-auto">
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center">
+                <Loader size={32} className="animate-spin text-cc-primary mx-auto mb-4" />
+                <p className="text-cc-text-muted">Cargando...</p>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-cc-bg text-cc-text-main overflow-hidden">
@@ -50,7 +91,7 @@ export const Layout = () => {
         </div>
 
         <nav className="flex-1 py-6 space-y-2 px-2">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
