@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../../../supabase';
 import { Loader2, AlertCircle } from 'lucide-react';
 import {
@@ -23,6 +23,41 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Procesar y validar datos de conversión
+  const conversionData = useMemo(() => {
+    if (!conversion) return null;
+
+    const registered = conversion.total_registered ?? 0;
+    const active = conversion.active ?? 0;
+    const prospects = conversion.prospects ?? 0;
+    const inNegotiation = conversion.in_negotiation ?? 0;
+    const rejected = conversion.rejected ?? 0;
+
+    // La vista SQL ya calcula correctamente la tasa como fracción (0-1)
+    // Si viene null/undefined, recalcular de forma segura
+    const conversionRate = conversion.conversion_rate ?? 
+      (registered > 0 ? active / registered : 0);
+
+    console.log('B2B_CONVERSION_COUNTS', {
+      registeredCount: registered,
+      activeCount: active,
+      prospectCount: prospects,
+      negotiationCount: inNegotiation,
+      rejectedCount: rejected,
+      rawConversionRate: conversion.conversion_rate,
+      calculatedConversionRate: conversionRate,
+    });
+
+    return {
+      total_registered: registered,
+      prospects,
+      in_negotiation: inNegotiation,
+      active,
+      rejected,
+      conversion_rate: conversionRate,
+    };
+  }, [conversion]);
+
   const loadData = async () => {
     if (!supabase) {
       setError('Supabase no está configurado');
@@ -45,9 +80,22 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
       if (conversionRes.error) throw conversionRes.error;
 
       const summaryData = summaryRes.data?.[0] as B2BDashboardSummary | null;
+      const conversionData = conversionRes.data?.[0] as B2BConversionSummary | null;
+
       setSummary(summaryData);
       setPipeline((pipelineRes.data as B2BPipelineByStatus[]) ?? []);
-      setConversion((conversionRes.data?.[0] as B2BConversionSummary) ?? null);
+      setConversion(conversionData);
+
+      // Log detallado de conversión
+      console.log('B2B_CONVERSION_RAW', conversionData);
+      console.log('B2B_CONVERSION_COUNTS', {
+        registeredCount: conversionData?.total_registered,
+        activeCount: conversionData?.active,
+        prospectCount: conversionData?.prospects,
+        negotiationCount: conversionData?.in_negotiation,
+        rejectedCount: conversionData?.rejected,
+        rawConversionRate: conversionData?.conversion_rate,
+      });
     } catch (err: any) {
       console.error('Error loading B2B summary:', err);
       setError(err?.message || 'Error al cargar resumen');
@@ -62,9 +110,15 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
 
   useEffect(() => {
     if (summary) {
-      console.log('B2B dashboard summary:', summary);
+      console.log('B2B_DASHBOARD_SUMMARY', summary);
     }
   }, [summary]);
+
+  useEffect(() => {
+    if (conversionData) {
+      console.log('B2B_CONVERSION_PROCESSED', conversionData);
+    }
+  }, [conversionData]);
 
   if (loading) {
     return (
@@ -242,49 +296,49 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
       </div>
 
       {/* ── CONVERSION SECTION ─────────────────────────────────── */}
-      {conversion && (
+      {conversionData && (
         <div>
           <h2 className="text-lg font-bold text-cc-text-main mb-4">Tasa de Conversión</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-4">
             <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
               <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Registrados</p>
               <p className="text-2xl font-bold text-cc-cream">
-                {formatNumber(conversion.total_registered)}
+                {formatNumber(conversionData.total_registered)}
               </p>
             </div>
 
             <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
               <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Prospectos</p>
               <p className="text-2xl font-bold text-yellow-400">
-                {formatNumber(conversion.prospects)}
+                {formatNumber(conversionData.prospects)}
               </p>
             </div>
 
             <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
               <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">En negociación</p>
               <p className="text-2xl font-bold text-orange-400">
-                {formatNumber(conversion.in_negotiation)}
+                {formatNumber(conversionData.in_negotiation)}
               </p>
             </div>
 
             <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
               <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Activos</p>
               <p className="text-2xl font-bold text-green-400">
-                {formatNumber(conversion.active)}
+                {formatNumber(conversionData.active)}
               </p>
             </div>
 
             <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
               <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Rechazados</p>
               <p className="text-2xl font-bold text-red-400">
-                {formatNumber(conversion.rejected)}
+                {formatNumber(conversionData.rejected)}
               </p>
             </div>
 
             <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
               <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Tasa conversión</p>
               <p className="text-2xl font-bold text-cc-cream">
-                {formatPercent(conversion.conversion_rate)}
+                {formatPercent(conversionData.conversion_rate)}
               </p>
             </div>
           </div>

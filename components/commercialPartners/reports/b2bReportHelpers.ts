@@ -50,9 +50,38 @@ export const formatDateFull = (value: string | null | undefined): string => {
   }
 };
 
+/**
+ * Calcula un porcentaje de forma segura.
+ * Devuelve 0 si el denominador es 0 o los valores son inválidos.
+ */
+export const safePercentage = (
+  numerator: number | null | undefined,
+  denominator: number | null | undefined
+): number => {
+  const num = numerator ?? 0;
+  const denom = denominator ?? 0;
+
+  if (!Number.isFinite(num) || !Number.isFinite(denom) || denom <= 0) {
+    return 0;
+  }
+
+  return (num / denom) * 100;
+};
+
 export const formatPercent = (value: number | null | undefined, decimals = 1): string => {
   if (value === null || value === undefined) return '0%';
-  return `${formatNumber(value * 100, decimals)}%`;
+
+  // Manejar NaN, Infinity y valores inválidos
+  if (!Number.isFinite(value)) {
+    return '0%';
+  }
+
+  // Si value ya es un porcentaje (0-100), no multiplicar por 100
+  // Si value es una fracción (0-1), multiplicar por 100
+  // Detectar: si value > 100, ya es porcentaje
+  const percentValue = value > 100 ? value : value * 100;
+
+  return `${formatNumber(percentValue, decimals)}%`;
 };
 
 export const daysUntil = (dateString: string | null | undefined): number | null => {

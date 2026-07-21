@@ -165,7 +165,6 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
       {activeModal?.kind === 'payment' && (
         <PartnerPaymentForm
           partnerId={partnerId}
-          partnerStatus={partnerStatus}
           onClose={() => setActiveModal(null)}
           onSaved={handleSaved}
         />

@@ -7,6 +7,7 @@ import { CommissionSummaryCards } from './CommissionSummaryCards';
 import { ActivitySummary } from './ActivitySummary';
 import { PayCommissionsButton } from './payments/PayCommissionsButton';
 import { CommissionSettlementHistory } from './payments/CommissionSettlementHistory';
+import { PendingPaymentVerifications } from './PendingPaymentVerifications';
 
 export const AdminCommissionDashboard = () => {
   const [sellers, setSellers] = useState<UserProfile[]>([]);
@@ -27,6 +28,7 @@ export const AdminCommissionDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [verificationRefreshKey, setVerificationRefreshKey] = useState(0);
 
   const loadSellers = async () => {
     if (!supabase) {
@@ -214,6 +216,19 @@ export const AdminCommissionDashboard = () => {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <CommissionSummaryCards summary={summary} />
             </div>
+          </div>
+
+          {/* Pending Payment Verifications */}
+          <div className="bg-cc-surface rounded-xl border border-white/5 p-6">
+            <PendingPaymentVerifications
+              refreshTrigger={verificationRefreshKey}
+              onVerificationApproved={() => {
+                setVerificationRefreshKey(prev => prev + 1);
+                setRefreshKey(prev => prev + 1);
+                loadAllSellersSummary();
+                loadSellerSummary(selectedSellerId);
+              }}
+            />
           </div>
 
           {/* Payment Section */}
