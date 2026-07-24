@@ -27,12 +27,14 @@ import { CommercialPartnerDetail } from '../components/commercialPartners/Commer
 import { B2BReports } from '../components/commercialPartners/reports/B2BReports';
 import { SellerCommissionDashboard } from '../components/commercialPartners/commissions/SellerCommissionDashboard';
 import { AdminCommissionDashboard } from '../components/commercialPartners/commissions/AdminCommissionDashboard';
+import { PieceSalesModule } from '../components/commercialPartners/pieceSales/PieceSalesModule';
+import { PieceSalesErrorBoundary } from '../components/commercialPartners/pieceSales/PieceSalesErrorBoundary';
 
 /* ── Filter types ─────────────────────────────────────────────── */
 type FilterKey = 'todos' | 'prospecto' | 'comodato' | 'mayoreo' | 'activos' | 'inactivos';
 type SortField = 'business_name' | 'created_at';
 type SortDir = 'asc' | 'desc';
-type PageTab = 'socios' | 'reportes' | 'comisiones';
+type PageTab = 'socios' | 'reportes' | 'comisiones' | 'venta_pieza';
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'todos',      label: 'Todos' },
@@ -245,6 +247,17 @@ export const CommercialPartners = () => {
         >
           <RefreshCw size={16} />
           Comisiones
+        </button>
+        <button
+          onClick={() => setPageTab('venta_pieza')}
+          className={`px-4 py-3 font-semibold text-sm transition-colors border-b-2 flex items-center gap-2 ${
+            pageTab === 'venta_pieza'
+              ? 'border-cc-primary text-cc-primary'
+              : 'border-transparent text-cc-text-muted hover:text-cc-text-main'
+          }`}
+        >
+          📦
+          Venta por pieza
         </button>
       </div>
 
@@ -508,6 +521,15 @@ export const CommercialPartners = () => {
             setSelectedPartner(partner);
           }
         }} />
+      ) : pageTab === 'venta_pieza' ? (
+        /* ─── Piece Sales Tab ────────────────────────────────── */
+        <PieceSalesErrorBoundary>
+          <PieceSalesModule 
+            refreshTrigger={Math.random()} 
+            isAdmin={profile?.role !== 'socios_comerciales'}
+            userId={user?.id || ''}
+          />
+        </PieceSalesErrorBoundary>
       ) : (
         /* ─── Commissions Tab ────────────────────────────────── */
         profile?.role === 'socios_comerciales' ? (

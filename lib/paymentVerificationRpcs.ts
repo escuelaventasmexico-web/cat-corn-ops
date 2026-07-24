@@ -168,16 +168,34 @@ export async function submitPaymentVerificationRequest(
     throw new Error('Supabase not configured');
   }
 
+  // Validación obligatoria de requestId
+  if (typeof requestId !== 'string' || requestId.trim() === '') {
+    console.error('Invalid requestId:', requestId);
+    throw new Error('requestId es obligatorio para enviar el cobro a revisión.');
+  }
+
+  console.log('Submitting payment verification', {
+    requestId,
+    proofPath,
+    proofFileName,
+    proofMimeType,
+    proofSizeBytes,
+  });
+
   try {
+    const rpcPayload = {
+      p_request_id: requestId,
+      p_proof_path: proofPath ?? null,
+      p_proof_file_name: proofFileName ?? null,
+      p_proof_mime_type: proofMimeType ?? null,
+      p_proof_size_bytes: proofSizeBytes ?? null,
+    };
+
+    console.log('RPC payload:', rpcPayload);
+
     const { data, error } = await supabase.rpc(
       'submit_partner_payment_verification_request',
-      {
-        p_request_id: requestId,
-        p_proof_path: proofPath || null,
-        p_proof_file_name: proofFileName || null,
-        p_proof_mime_type: proofMimeType || null,
-        p_proof_size_bytes: proofSizeBytes || null,
-      }
+      rpcPayload
     );
 
     if (error) {

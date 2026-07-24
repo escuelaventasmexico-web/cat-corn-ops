@@ -169,7 +169,13 @@ const ReportPaymentModal: React.FC<Props> = ({
 
       // For cash: submit immediately without proof
       if (paymentMethod === 'cash') {
-        await submitPaymentVerificationRequest(result.requestId);
+        await submitPaymentVerificationRequest(
+          result.requestId,
+          null,
+          null,
+          null,
+          null
+        );
         setStep('confirmation');
       } else {
         // For transfer: go to proof upload step
