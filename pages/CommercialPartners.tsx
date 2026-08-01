@@ -29,6 +29,7 @@ import { SellerCommissionDashboard } from '../components/commercialPartners/comm
 import { AdminCommissionDashboard } from '../components/commercialPartners/commissions/AdminCommissionDashboard';
 import { PieceSalesModule } from '../components/commercialPartners/pieceSales/PieceSalesModule';
 import { PieceSalesErrorBoundary } from '../components/commercialPartners/pieceSales/PieceSalesErrorBoundary';
+import { SellerCommercialPartnersView } from '../components/commercialPartners/mobile/SellerCommercialPartnersView';
 
 /* ── Filter types ─────────────────────────────────────────────── */
 type FilterKey = 'todos' | 'prospecto' | 'comodato' | 'mayoreo' | 'activos' | 'inactivos';
@@ -180,6 +181,21 @@ export const CommercialPartners = () => {
   };
 
   /* ── Render ─────────────────────────────────────────────────– */
+  // Check if user is a commercial seller - render mobile view
+  const isCommercialSeller = profile?.role === 'socios_comerciales';
+  if (isCommercialSeller) {
+    return (
+      <SellerCommercialPartnersView
+        userProfile={profile}
+        user={user}
+        onLogout={() => {
+          // Handle logout - should be implemented via auth context
+          window.location.href = '/';
+        }}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* ─── Main Header ────────────────────────────────────── */}
