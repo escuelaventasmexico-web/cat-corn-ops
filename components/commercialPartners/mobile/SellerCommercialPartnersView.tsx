@@ -11,6 +11,7 @@ import { CommercialPartnerDetail } from '../CommercialPartnerDetail';
 import { SellerCommissionDashboard } from '../commissions/SellerCommissionDashboard';
 import { PieceSalesModule } from '../pieceSales/PieceSalesModule';
 import { PieceSalesErrorBoundary } from '../pieceSales/PieceSalesErrorBoundary';
+import { safeNumber } from '../../../lib/pieceSalesHelpers';
 
 type MobilePageTab = 'inicio' | 'socios' | 'vender' | 'comisiones' | 'mas';
 
@@ -32,7 +33,7 @@ export const SellerCommercialPartnersView = ({
   const [showNewForm, setShowNewForm] = useState(false);
   const [selectedPartner, setSelectedPartner] = useState<CommercialPartner | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [commissionData] = useState({
+  const [commissionData, setCommissionData] = useState({
     pending: 0,
     available: 0,
   });
@@ -41,6 +42,51 @@ export const SellerCommercialPartnersView = ({
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
   };
+
+  /* ── Load seller commissions ──────────────────────────────── */
+  const loadSellerCommissions = useCallback(async () => {
+    if (!supabase || !user?.id) return;
+
+    try {
+      // Load pending commissions
+      const { data: pendingRows, error: pendingError } = await supabase
+        .from('v_seller_commission_movements')
+        .select('commission_amount')
+        .eq('seller_id', user.id)
+        .eq('status', 'pending');
+
+      // Load available commissions
+      const { data: availableRows, error: availableError } = await supabase
+        .from('v_seller_commission_movements')
+        .select('commission_amount')
+        .eq('seller_id', user.id)
+        .eq('status', 'available');
+
+      if (pendingError) {
+        console.error('Error loading seller pending commissions:', pendingError);
+      }
+      if (availableError) {
+        console.error('Error loading seller available commissions:', availableError);
+      }
+
+      const pendingTotal = (pendingRows ?? []).reduce(
+        (sum, row) => sum + safeNumber(row.commission_amount),
+        0
+      );
+      const availableTotal = (availableRows ?? []).reduce(
+        (sum, row) => sum + safeNumber(row.commission_amount),
+        0
+      );
+
+      setCommissionData({
+        pending: pendingTotal,
+        available: availableTotal,
+      });
+    } catch (err) {
+      console.error('Error loading seller commission metrics:', err);
+      setCommissionData({ pending: 0, available: 0 });
+    }
+  }, [user?.id]);
 
   /* ── Load partners ─────────────────────────────────────────── */
   const loadPartners = useCallback(async () => {
@@ -65,6 +111,17 @@ export const SellerCommercialPartnersView = ({
   useEffect(() => {
     loadPartners();
   }, [loadPartners]);
+
+  useEffect(() => {
+    loadSellerCommissions();
+  }, [loadSellerCommissions]);
+
+  useEffect(() => {
+    // Reload commissions when returning to home tab
+    if (activeTab === 'inicio') {
+      loadSellerCommissions();
+    }
+  }, [activeTab, loadSellerCommissions]);
 
   /* ── Callbacks ─────────────────────────────────────────────– */
   const handleCreated = (newPartner: CommercialPartner) => {

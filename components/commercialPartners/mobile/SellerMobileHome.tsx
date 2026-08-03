@@ -21,7 +21,8 @@ export const SellerMobileHome = ({
       action: () => onNavigate('comisiones'),
     },
     {
-      title: 'Pendiente por revisar',
+      title: 'Comisión pendiente',
+      subtitle: 'Se libera al confirmar los cobros',
       value: `$${(commissionPending ?? 0).toLocaleString('es-MX', { maximumFractionDigits: 0 })}`,
       icon: <TrendingUp size={24} className="text-yellow-500" />,
       action: () => onNavigate('comisiones'),
@@ -49,7 +50,10 @@ export const SellerMobileHome = ({
             </div>
             <div className="flex-1 text-left">
               <p className="text-xs text-cc-text-muted">{stat.title}</p>
-              <p className="text-lg font-bold text-cc-text-main">{stat.value}</p>
+              {stat.subtitle && (
+                <p className="text-xs text-cc-text-muted/70 mt-0.5">{stat.subtitle}</p>
+              )}
+              <p className="text-lg font-bold text-cc-text-main mt-1">{stat.value}</p>
             </div>
             <span className="text-cc-primary text-lg">→</span>
           </button>
