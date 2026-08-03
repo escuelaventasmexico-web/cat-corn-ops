@@ -57,7 +57,7 @@ export const PieceSalesModule = ({ refreshTrigger = 0, isAdmin = false, userId =
       const historyQuery = supabase
         .from('v_piece_sale_history')
         .select('*')
-        .order('sale_date', { ascending: false });
+        .order('created_at', { ascending: false });
       const stockQuery = supabase
         .from('v_seller_piece_stock')
         .select('*');
@@ -148,7 +148,7 @@ export const PieceSalesModule = ({ refreshTrigger = 0, isAdmin = false, userId =
       {/* ── HISTORY ────────────────────────────────────────── */}
       <div>
         <h2 className="text-lg font-bold text-cc-text-main mb-4">Historial de ventas</h2>
-        <PieceSalesHistoryTable history={history} onRefresh={loadData} />
+        <PieceSalesHistoryTable history={history} onRefresh={loadData} isAdmin={isAdmin} />
       </div>
 
       {/* ── STOCK (vendedores solo) ─────────────────────────────────────── */}

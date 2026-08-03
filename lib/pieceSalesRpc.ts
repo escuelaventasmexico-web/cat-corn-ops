@@ -112,3 +112,40 @@ export const recordSellerPieceStockMovement = async (
 
   return data;
 };
+export const correctPieceSaleItem = async (
+  saleId: string,
+  itemId: string,
+  newProductId: string,
+  newQuantity: number,
+  reason: string
+): Promise<any> => {
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
+
+  const { data, error } = await supabase.rpc(
+    'correct_piece_sale_item',
+    {
+      p_sale_id: saleId,
+      p_sale_item_id: itemId,
+      p_new_product_id: newProductId,
+      p_new_quantity: newQuantity,
+      p_reason: reason.trim(),
+    }
+  );
+
+  if (error) {
+    console.error('RPC error correcting piece sale item:', error);
+    throw new Error(error.message || 'Error al corregir artículo de venta por pieza');
+  }
+
+  // RETURNS TABLE devuelve un arreglo
+  const result = Array.isArray(data) ? data[0] : data;
+
+  console.log('correct_piece_sale_item response:', {
+    raw: data,
+    extracted: result,
+  });
+
+  return result;
+};

@@ -11,6 +11,7 @@ import {
   sanitizeFileName,
   validateFileSize,
   validateFileType,
+  safeNumber,
 } from '../../../lib/pieceSalesHelpers';
 import { createPieceSalePaymentRequest } from '../../../lib/pieceSalesRpc';
 import { submitPaymentVerificationRequest } from '../../../lib/paymentVerificationRpcs';
@@ -192,7 +193,7 @@ export const RejectionRetryModal = ({ sale, onClose, onSuccess }: RejectionRetry
               </div>
               <div className="flex items-center justify-between text-sm border-t border-white/10 pt-2">
                 <span className="text-cc-text-muted">Total:</span>
-                <span className="font-bold text-cc-cream">{formatCurrency(sale.total_amount)}</span>
+                <span className="font-bold text-cc-cream">{formatCurrency(safeNumber(sale.total_amount))}</span>
               </div>
             </div>
 

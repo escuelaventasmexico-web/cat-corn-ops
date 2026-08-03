@@ -43,22 +43,90 @@ export interface PieceSaleResponse {
   request_status: string;
 }
 
-export interface PieceSaleHistory {
+/* ── Piece Sale History Item (from v_piece_sale_history.items) ──── */
+export interface PieceSaleHistoryItem {
+  item_id: string;
+  product_id: string;
+  product_sku: string | null;
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  quantity: number | string;
+  unit_retail_price: number | string;
+  subtotal: number | string;
+  unit_commission: number | string;
+  commission_total: number | string;
+}
+
+/* ── Piece Sale Item Snapshot (from corrections) ──────────────────── */
+export interface PieceSaleItemSnapshot {
+  product_id: string;
+  product_sku: string | null;
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  product_grams: number | string | null;
+  product_key: string;
+  quantity: number | string;
+  unit_retail_price: number | string;
+  subtotal: number | string;
+  rule_id: string;
+  unit_commission: number | string;
+  commission_total: number | string;
+}
+
+/* ── Piece Sale Correction (from v_piece_sale_correction_history) ──── */
+export interface PieceSaleCorrection {
+  correction_id: string;
   sale_id: string;
   sale_folio: string;
-  sale_date: string;
+  sale_item_id: string;
+  seller_id: string;
+  seller_name: string | null;
+  corrected_by: string;
+  corrected_by_name: string | null;
+  correction_reason: string;
+  before_snapshot: PieceSaleItemSnapshot;
+  after_snapshot: PieceSaleItemSnapshot;
+  previous_sale_total: number | string;
+  new_sale_total: number | string;
+  previous_commission_total: number | string;
+  new_commission_total: number | string;
+  payment_request_reset: boolean;
+  payment_request_id: string | null;
+  corrected_at: string;
+}
+
+/* ── Piece Sale History Row (from v_piece_sale_history) ──────────── */
+export interface PieceSaleHistory {
+  sale_id: string;
+  folio: string;
   seller_id: string;
   seller_name: string;
-  total_amount: number | null;
-  total_commission: number | null;
-  units_sold: number | null;
+  sale_date: string;
   payment_method: string;
   payment_reference: string | null;
   notes: string | null;
-  status: 'draft' | 'pending_review' | 'payment_rejected' | 'confirmed' | 'cancelled';
-  request_id: string;
-  request_folio: string;
-  request_status: string;
+  total_amount: number | string | null;
+  total_commission: number | string | null;
+  status: string;
+  confirmed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  total_units: number | string | null;
+  items: PieceSaleHistoryItem[] | string | null;
+  /* Correction tracking columns */
+  corrections_count: number | string | null;
+  latest_correction_reason: string | null;
+  latest_correction_at: string | null;
+  latest_corrected_by_name: string | null;
+  has_corrections: boolean | null;
+  /* Legacy fields for backwards compatibility */
+  sale_folio?: string;
+  units_sold?: number | null;
+  request_id?: string;
+  request_folio?: string;
+  request_status?: string;
 }
 
 export interface SellerCommissionMonthlySummary {

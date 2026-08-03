@@ -143,3 +143,44 @@ export const safeCurrency = (value: unknown): string => {
     maximumFractionDigits: 2,
   }).format(num);
 };
+
+/* ── Normalize Piece Sale Items (handles JSON strings from Supabase) ── */
+export const normalizePieceSaleItems = (
+  value: unknown
+): any[] => {
+  if (Array.isArray(value)) {
+    return value.map(item => ({
+      ...item,
+      quantity: safeNumber(item.quantity),
+      subtotal: safeNumber(item.subtotal),
+      commission_total: safeNumber(item.commission_total),
+      unit_retail_price: safeNumber(item.unit_retail_price),
+      unit_commission: safeNumber(item.unit_commission),
+    }));
+  }
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed)
+        ? parsed.map(item => ({
+            ...item,
+            quantity: safeNumber(item.quantity),
+            subtotal: safeNumber(item.subtotal),
+            commission_total: safeNumber(item.commission_total),
+            unit_retail_price: safeNumber(item.unit_retail_price),
+            unit_commission: safeNumber(item.unit_commission),
+          }))
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+};
+
+/* ── Calculate units from items (fallback when total_units is 0) ── */
+export const calculateUnitsFromItems = (items: any[]): number => {
+  return items.reduce((sum, item) => sum + safeNumber(item.quantity), 0);
+};
