@@ -18,7 +18,7 @@ export const PieceSalesSummaryCards = ({ summaryData }: PieceSalesSummaryCardsPr
   const cards = [
     {
       title: 'Ventas del mes',
-      value: '—',
+      value: safeCurrency(summaryData.monthly_sales_amount),
       icon: TrendingUp,
       color: 'text-blue-400',
       bgColor: 'bg-blue-500/10',
@@ -39,7 +39,7 @@ export const PieceSalesSummaryCards = ({ summaryData }: PieceSalesSummaryCardsPr
     },
     {
       title: 'Cobros en revisión',
-      value: safeInteger(summaryData.pending_reviews),
+      value: safeInteger(summaryData.monthly_payments_under_review),
       icon: AlertCircle,
       color: 'text-amber-400',
       bgColor: 'bg-amber-500/10',

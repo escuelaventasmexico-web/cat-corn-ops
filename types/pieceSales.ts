@@ -130,9 +130,11 @@ export interface PieceSaleHistory {
 }
 
 export interface SellerCommissionMonthlySummary {
-  total_commission_pending: number | null;
-  total_commission_available: number | null;
-  pending_reviews: number | null;
+  monthly_sales_amount: number;
+  monthly_sales_count: number;
+  total_commission_pending: number;
+  total_commission_available: number;
+  monthly_payments_under_review: number;
 }
 
 export interface SellerPieceStock {

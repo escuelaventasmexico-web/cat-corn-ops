@@ -25,6 +25,83 @@ export const PieceSalesModule = ({ refreshTrigger = 0, isAdmin = false, userId =
   const [error, setError] = useState<string | null>(null);
   const [showNewSaleModal, setShowNewSaleModal] = useState(false);
 
+  const loadSellerPieceMetrics = async (sellerId: string): Promise<SellerCommissionMonthlySummary | null> => {
+    if (!supabase) return null;
+    
+    try {
+      // Get current month's start and end dates
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString();
+
+      // Load data in parallel from three views
+      const [salesRes, commissionRes, paymentsRes] = await Promise.all([
+        // Monthly sales: use v_piece_sale_history
+        supabase
+          .from('v_piece_sale_history')
+          .select('total_amount', { count: 'exact' })
+          .eq('seller_id', sellerId)
+          .gte('sale_date', monthStart)
+          .lte('sale_date', monthEnd)
+          .neq('status', 'cancelled'),
+        
+        // Commission movements: split pending and available
+        supabase
+          .from('v_seller_commission_movements')
+          .select('commission_amount, status')
+          .eq('seller_id', sellerId)
+          .eq('source_type', 'piece_sale'),
+        
+        // Pending payment verifications: use submitted_by (not seller_id!)
+        supabase
+          .from('v_pending_payment_verifications')
+          .select('amount', { count: 'exact' })
+          .eq('submitted_by', sellerId)
+          .eq('scheme', 'venta_pieza'),
+      ]);
+
+      // Check for errors
+      if (salesRes.error) {
+        console.error('Error loading monthly sales:', salesRes.error.message);
+      }
+      if (commissionRes.error) {
+        console.error('Error loading commissions:', commissionRes.error.message);
+      }
+      if (paymentsRes.error) {
+        console.error('Error loading payment verifications:', paymentsRes.error.message);
+      }
+
+      // Calculate monthly sales
+      const salesData = salesRes.data ?? [];
+      const monthlySalesAmount = salesData.reduce((sum: number, row: any) => 
+        sum + (Number(row.total_amount) || 0), 0);
+      const monthlySalesCount = salesRes.count ?? 0;
+
+      // Calculate commissions (pending vs available)
+      const commissionData = commissionRes.data ?? [];
+      const pendingCommission = commissionData
+        .filter((row: any) => row.status === 'pending')
+        .reduce((sum: number, row: any) => sum + (Number(row.commission_amount) || 0), 0);
+      const availableCommission = commissionData
+        .filter((row: any) => row.status === 'available')
+        .reduce((sum: number, row: any) => sum + (Number(row.commission_amount) || 0), 0);
+
+      // Count pending payments under review
+      const monthlyPaymentsUnderReview = paymentsRes.count ?? 0;
+
+      return {
+        monthly_sales_amount: monthlySalesAmount,
+        monthly_sales_count: monthlySalesCount,
+        total_commission_pending: pendingCommission,
+        total_commission_available: availableCommission,
+        monthly_payments_under_review: monthlyPaymentsUnderReview,
+      };
+    } catch (err: any) {
+      console.error('Error calculating piece sale metrics:', err);
+      return null;
+    }
+  };
+
   const loadData = useCallback(async () => {
     if (!supabase) {
       setError('Supabase no está configurado');
@@ -51,9 +128,6 @@ export const PieceSalesModule = ({ refreshTrigger = 0, isAdmin = false, userId =
 
       // Para admin: mostrar TODAS las ventas (sin filtro por seller_id)
       // Para vendedor: mostrar solo sus propias ventas
-      const summaryQuery = supabase
-        .from('v_seller_commission_monthly_summary')
-        .select('*');
       const historyQuery = supabase
         .from('v_piece_sale_history')
         .select('*')
@@ -64,24 +138,28 @@ export const PieceSalesModule = ({ refreshTrigger = 0, isAdmin = false, userId =
 
       // Si es vendedor, filtrar por su ID
       if (!isAdmin) {
-        summaryQuery.eq('seller_id', filterSellerId).limit(1);
         historyQuery.eq('seller_id', filterSellerId);
         stockQuery.eq('seller_id', filterSellerId);
       }
 
-      const [summaryRes, historyRes, stockRes] = await Promise.all([
-        summaryQuery,
+      // Load history and stock in parallel, calculate summary metrics
+      const [historyRes, stockRes] = await Promise.all([
         historyQuery,
         stockQuery,
       ]);
 
-      if (summaryRes.error) throw summaryRes.error;
       if (historyRes.error) throw historyRes.error;
       if (stockRes.error) throw stockRes.error;
 
-      setSummaryData(summaryRes.data?.[0] || null);
+      // Load summary metrics for non-admin users
+      let summaryData: SellerCommissionMonthlySummary | null = null;
+      if (!isAdmin) {
+        summaryData = await loadSellerPieceMetrics(filterSellerId);
+      }
+
       setHistory((historyRes.data ?? []) as PieceSaleHistory[]);
       setStock((stockRes.data ?? []) as SellerPieceStock[]);
+      setSummaryData(summaryData);
     } catch (err: any) {
       console.error('Error loading piece sales data:', err);
       setError(err?.message || 'Error al cargar datos de venta por pieza');
