@@ -90,11 +90,11 @@ export const PieceSaleDetailModal = ({
 
   return (
     <div
-      className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/75 z-40 flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div
-        className="bg-cc-bg rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+        className="relative z-50 bg-[#0b0b0b] rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-white/10"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}

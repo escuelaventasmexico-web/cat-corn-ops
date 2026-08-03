@@ -76,18 +76,39 @@ export const PieceSaleItemCorrectionModal = ({
   const loadProducts = async () => {
     if (!supabase) return;
 
-    const { data, error: err } = await supabase
-      .from('v_piece_sale_products')
-      .select('*')
-      .eq('active', true)
-      .order('product_name');
+    try {
+      const { data, error: err } = await supabase
+        .from('v_piece_sale_products')
+        .select('*')
+        .order('product_name');
 
-    if (err) {
-      console.error('Error loading products:', err);
-      setError('No se pudieron cargar los productos disponibles');
-    } else {
-      setProducts(data || []);
-      setFilteredProducts(data || []);
+      if (err) {
+        console.error('Error loading correction products:', {
+          message: err.message,
+          details: err.details,
+          hint: err.hint,
+          code: err.code,
+        });
+        setError(`No se pudieron cargar los productos: ${err.message}`);
+        setProducts([]);
+        setFilteredProducts([]);
+        return;
+      }
+
+      const normalizedProducts = (data ?? []).map(product => ({
+        ...product,
+        retail_price: Number(product.retail_price ?? 0),
+        unit_commission: Number(product.unit_commission ?? 0),
+      }));
+
+      setProducts(normalizedProducts);
+      setFilteredProducts(normalizedProducts);
+      setError(null);
+    } catch (err: any) {
+      console.error('Exception loading correction products:', err);
+      setError(`Error inesperado: ${err.message || 'Error desconocido'}`);
+      setProducts([]);
+      setFilteredProducts([]);
     }
   };
 
@@ -157,11 +178,11 @@ export const PieceSaleItemCorrectionModal = ({
   if (step === 'result' && correctionResult) {
     return (
       <div
-        className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+        className="fixed inset-0 bg-black/75 z-[90] flex items-center justify-center p-4"
         onClick={onClose}
       >
         <div
-          className="bg-cc-bg rounded-xl shadow-2xl max-w-md w-full"
+          className="relative z-[100] bg-[#0b0b0b] rounded-xl shadow-2xl max-w-md w-full border border-white/10"
           onClick={e => e.stopPropagation()}
         >
           {/* Header */}
@@ -192,7 +213,7 @@ export const PieceSaleItemCorrectionModal = ({
             </div>
 
             {/* Summary */}
-            <div className="bg-cc-surface rounded-lg p-4 space-y-3">
+            <div className="bg-[#151515] rounded-lg p-4 space-y-3">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-cc-text-secondary">Total de venta:</p>
@@ -243,11 +264,11 @@ export const PieceSaleItemCorrectionModal = ({
 
   return (
     <div
-      className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/75 z-[90] flex items-center justify-center p-4"
       onClick={onClose}
     >
       <div
-        className="bg-cc-bg rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+        className="relative z-[100] bg-[#0b0b0b] rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-white/10"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -268,7 +289,7 @@ export const PieceSaleItemCorrectionModal = ({
                 <p className="text-xs text-cc-text-muted uppercase tracking-wider">
                   Producto Capturado
                 </p>
-                <div className="bg-cc-surface rounded-lg p-4 border border-white/10">
+                <div className="bg-[#151515] rounded-lg p-4 border border-white/10">
                   <p className="font-semibold text-cc-text-main">{item.product_name}</p>
                   {(item.product_variant || item.product_size) && (
                     <p className="text-xs text-cc-text-secondary mt-1">
@@ -314,7 +335,7 @@ export const PieceSaleItemCorrectionModal = ({
                     }}
                     onFocus={() => setShowProductDropdown(true)}
                     placeholder="Buscar por nombre, variante, talla o SKU..."
-                    className="w-full px-4 py-2 rounded-lg bg-cc-surface border border-white/20 text-cc-text-main placeholder-cc-text-secondary focus:outline-none focus:border-cc-primary"
+                    className="w-full px-4 py-2 rounded-lg bg-white text-black placeholder-gray-500 border border-gray-300 focus:outline-none focus:border-cc-primary focus:ring-1 focus:ring-cc-primary"
                   />
                   <ChevronDown
                     size={18}
@@ -323,17 +344,17 @@ export const PieceSaleItemCorrectionModal = ({
 
                   {/* Dropdown */}
                   {showProductDropdown && filteredProducts.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded-lg bg-cc-surface border border-white/20 z-10">
+                    <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded-lg bg-white border border-gray-300 z-[105] shadow-lg">
                       {filteredProducts.map(product => (
                         <button
                           key={product.product_id}
                           onClick={() => handleSelectProduct(product)}
-                          className="w-full text-left px-4 py-2 hover:bg-cc-bg border-b border-white/5 last:border-b-0 transition"
+                          className="w-full text-left px-4 py-2 hover:bg-gray-100 border-b border-gray-200 last:border-b-0 transition"
                         >
-                          <p className="font-semibold text-cc-text-main text-sm">
+                          <p className="font-semibold text-gray-900 text-sm">
                             {product.product_name}
                           </p>
-                          <div className="flex justify-between text-xs text-cc-text-secondary mt-0.5">
+                          <div className="flex justify-between text-xs text-gray-600 mt-0.5">
                             <span>
                               {[product.product_variant, product.product_size]
                                 .filter(Boolean)
@@ -365,7 +386,7 @@ export const PieceSaleItemCorrectionModal = ({
                   min="1"
                   value={quantity}
                   onChange={e => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-full px-4 py-2 rounded-lg bg-cc-surface border border-white/20 text-cc-text-main focus:outline-none focus:border-cc-primary"
+                  className="w-full px-4 py-2 rounded-lg bg-white text-black border border-gray-300 focus:outline-none focus:border-cc-primary focus:ring-1 focus:ring-cc-primary"
                 />
               </div>
 
@@ -385,15 +406,15 @@ export const PieceSaleItemCorrectionModal = ({
                   placeholder="Describe por qué se necesita esta corrección..."
                   rows={3}
                   maxLength={500}
-                  className="w-full px-4 py-2 rounded-lg bg-cc-surface border border-white/20 text-cc-text-main placeholder-cc-text-secondary focus:outline-none focus:border-cc-primary resize-none"
+                  className="w-full px-4 py-2 rounded-lg bg-white text-black placeholder-gray-500 border border-gray-300 focus:outline-none focus:border-cc-primary focus:ring-1 focus:ring-cc-primary resize-none"
                 />
               </div>
 
               {/* Error */}
               {error && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex gap-2">
-                  <AlertCircle size={18} className="text-red-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-red-400 text-sm">{error}</p>
+                <div className="bg-red-950 border border-red-700 rounded-lg p-3 flex gap-2">
+                  <AlertCircle size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-red-100 text-sm">{error}</p>
                 </div>
               )}
             </div>
@@ -413,7 +434,7 @@ export const PieceSaleItemCorrectionModal = ({
               {/* Before and After */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* ANTES */}
-                <div className="bg-cc-surface rounded-lg p-4 border border-white/10">
+                <div className="bg-[#151515] rounded-lg p-4 border border-white/10">
                   <p className="text-xs text-cc-text-muted uppercase tracking-wider mb-3">
                     Antes
                   </p>
@@ -450,7 +471,7 @@ export const PieceSaleItemCorrectionModal = ({
                 </div>
 
                 {/* DESPUÉS */}
-                <div className="bg-cc-surface rounded-lg p-4 border border-white/10">
+                <div className="bg-[#151515] rounded-lg p-4 border border-white/10">
                   <p className="text-xs text-cc-text-muted uppercase tracking-wider mb-3">
                     Después
                   </p>
@@ -488,7 +509,7 @@ export const PieceSaleItemCorrectionModal = ({
               </div>
 
               {/* Impact Summary */}
-              <div className="bg-cc-surface rounded-lg p-4 border border-white/10 space-y-4">
+              <div className="bg-[#151515] rounded-lg p-4 border border-white/10 space-y-4">
                 <p className="text-sm font-semibold text-cc-text-main">Diferencias</p>
 
                 <div className="space-y-3 text-sm">
@@ -559,7 +580,7 @@ export const PieceSaleItemCorrectionModal = ({
               </div>
 
               {/* Reason Display */}
-              <div className="bg-cc-surface rounded-lg p-4 border border-white/10">
+              <div className="bg-[#151515] rounded-lg p-4 border border-white/10">
                 <p className="text-xs text-cc-text-muted uppercase tracking-wider mb-2">
                   Razón
                 </p>
@@ -568,9 +589,9 @@ export const PieceSaleItemCorrectionModal = ({
 
               {/* Error */}
               {error && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 flex gap-2">
-                  <AlertCircle size={18} className="text-red-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-red-400 text-sm">{error}</p>
+                <div className="bg-red-950 border border-red-700 rounded-lg p-3 flex gap-2">
+                  <AlertCircle size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-red-100 text-sm">{error}</p>
                 </div>
               )}
             </div>
