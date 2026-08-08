@@ -4,6 +4,7 @@ import { PieceSaleHistory } from '../../../types/pieceSales';
 import {
   formatCurrency,
   formatDateMx,
+  formatVerificationDateTime,
   getSaleStatusLabel,
   getSaleStatusColor,
   safeInteger,
@@ -110,9 +111,16 @@ export const PieceSalesHistoryTable = ({ history, onRefresh, isAdmin = false }: 
                       {sale.payment_method === 'cash' ? 'Efectivo' : 'Transferencia'}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-sm font-semibold ${getSaleStatusColor(sale.status)}`}>
-                        {getSaleStatusLabel(sale.status)}
-                      </span>
+                      <div className="space-y-1">
+                        <span className={`text-sm font-semibold ${getSaleStatusColor(sale.status)}`}>
+                          {getSaleStatusLabel(sale.status)}
+                        </span>
+                        {sale.verification_reviewed_at && (
+                          <div className="text-xs text-cc-text-muted">
+                            {sale.status === 'confirmed' ? 'Verificada:' : 'Revisado:'} {formatVerificationDateTime(sale.verification_reviewed_at)}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-center">
                       <div className="flex items-center justify-center gap-2">
@@ -182,9 +190,16 @@ export const PieceSalesHistoryTable = ({ history, onRefresh, isAdmin = false }: 
                       {sale.payment_method === 'cash' ? 'Efectivo' : 'Transferencia'}
                     </td>
                     <td className="px-6 py-3">
-                      <span className={`text-sm font-semibold ${getSaleStatusColor(sale.status)}`}>
-                        {getSaleStatusLabel(sale.status)}
-                      </span>
+                      <div className="space-y-1">
+                        <span className={`text-sm font-semibold ${getSaleStatusColor(sale.status)}`}>
+                          {getSaleStatusLabel(sale.status)}
+                        </span>
+                        {sale.verification_reviewed_at && (
+                          <div className="text-xs text-cc-text-muted">
+                            {sale.status === 'confirmed' ? 'Verificada:' : 'Revisado:'} {formatVerificationDateTime(sale.verification_reviewed_at)}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-3 text-center">
                       <div className="flex items-center justify-center gap-2">

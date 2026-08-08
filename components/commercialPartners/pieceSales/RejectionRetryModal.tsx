@@ -15,6 +15,7 @@ import {
 } from '../../../lib/pieceSalesHelpers';
 import { createPieceSalePaymentRequest } from '../../../lib/pieceSalesRpc';
 import { submitPaymentVerificationRequest } from '../../../lib/paymentVerificationRpcs';
+import { getBusinessDateString } from '../../../lib/dateUtils';
 
 interface RejectionRetryModalProps {
   sale: PieceSaleHistory;
@@ -81,7 +82,7 @@ export const RejectionRetryModal = ({ sale, onClose, onSuccess }: RejectionRetry
       // Create new payment request
       const payload: PieceSalePaymentRequest = {
         p_sale_id: sale.sale_id,
-        p_payment_date: new Date().toISOString(),
+        p_payment_date: new Date(getBusinessDateString()).toISOString(),
         p_payment_method: paymentMethod,
         p_payment_reference: reference || null,
       };

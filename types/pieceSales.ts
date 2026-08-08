@@ -121,6 +121,10 @@ export interface PieceSaleHistory {
   latest_correction_at: string | null;
   latest_corrected_by_name: string | null;
   has_corrections: boolean | null;
+  /* Payment verification tracking (enriched from partner_payment_verification_requests) */
+  verification_reviewed_at?: string | null;
+  verification_reviewed_by_name?: string | null;
+  verification_rejection_reason?: string | null;
   /* Legacy fields for backwards compatibility */
   sale_folio?: string;
   units_sold?: number | null;

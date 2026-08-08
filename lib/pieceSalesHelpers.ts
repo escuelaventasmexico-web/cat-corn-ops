@@ -119,6 +119,30 @@ export const formatDateMx = (dateString: string | null | undefined): string => {
     return '—';
   }
 };
+
+/**
+ * Format verification timestamp with date and time (es-MX locale)
+ * Example: "07 ago 2026 · 12:28"
+ */
+export const formatVerificationDateTime = (dateString: string | null | undefined): string => {
+  if (!dateString) return '—';
+  try {
+    const date = new Date(dateString);
+    const datePart = date.toLocaleDateString('es-MX', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+    const timePart = date.toLocaleTimeString('es-MX', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    return `${datePart} · ${timePart}`;
+  } catch {
+    return '—';
+  }
+};
 /* ── Safe Number Formatting (handles null/undefined from Supabase) ── */
 
 export const safeNumber = (value: unknown): number => {

@@ -189,6 +189,26 @@ const FinanceResumenTest = () => {
         const commercialCash = commercialData.error ? 0 : commercialData.cash;
         const commercialTransfer = commercialData.error ? 0 : commercialData.transfer;
 
+        // Calculate projection based on combined revenue and days elapsed
+        const combinedMonthlySales = (result.sales_mtd_mxn || 0) + commercialTotal;
+        const daysInMonth = new Date(navYear, navMonth + 1, 0).getDate();
+        
+        // For current month, use actual elapsed days; for past/future months, use total days
+        let daysElapsed = daysInMonth; // default for completed or future months
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth();
+        
+        if (navYear === currentYear && navMonth === currentMonth) {
+          // Current month: use actual days elapsed (day of month)
+          // Use local date, not UTC
+          daysElapsed = now.getDate();
+        }
+        
+        const projectedSales = combinedMonthlySales > 0 && daysElapsed > 0
+          ? (combinedMonthlySales / daysElapsed) * daysInMonth
+          : 0;
+
         // Update result with combined revenue
         const enrichedResult = {
           ...result,
@@ -196,10 +216,8 @@ const FinanceResumenTest = () => {
           sales_mtd_mxn: (result.sales_mtd_mxn || 0) + commercialTotal,
           sales_cash_mxn: (result.sales_cash_mxn || 0) + commercialCash,
           sales_transfer_mxn: (result.sales_transfer_mxn || 0) + commercialTransfer,
-          // Recalculate projection based on combined revenue
-          sales_projection_mxn: ((result.sales_mtd_mxn || 0) + commercialTotal) > 0 
-            ? (((result.sales_mtd_mxn || 0) + commercialTotal) / new Date(navYear, navMonth + 1, 0).getDate()) * new Date(navYear, navMonth + 1, 0).getDate()
-            : 0
+          // Use corrected projection formula
+          sales_projection_mxn: projectedSales
         };
 
         if (!commercialData.error) {

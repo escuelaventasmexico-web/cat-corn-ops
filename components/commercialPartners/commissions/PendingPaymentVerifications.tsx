@@ -45,6 +45,7 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
   const [rejecting, setRejecting] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
+  const [step, setStep] = useState<'review' | 'reject'>('review');
 
   // Render logging
   console.log('[RENDER PENDING_PAYMENT_VERIFICATIONS]', {
@@ -162,6 +163,7 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
       setShowReviewModal(false);
       setSelectedVerification(null);
       setRejectionReason('');
+      setStep('review');
 
       // Show success message
       alert('Cobro rechazado. El vendedor podrá corregir la venta y volver a enviarla.');
@@ -262,6 +264,12 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
                 onClick={() => {
                   setSelectedVerification(verification);
                   setShowReviewModal(true);
+                  setRejecting(false);
+                  setApproving(false);
+                  setRejectionReason('');
+                  setReviewNotes('');
+                  setError(null);
+                  setStep('review');
                 }}
                 className="px-4 py-2 bg-cc-primary hover:bg-cc-primary/90 text-white rounded-lg font-semibold text-sm whitespace-nowrap transition-colors"
               >
@@ -276,9 +284,6 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
       {showReviewModal && selectedVerification && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
           <div className="bg-[#171717] rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-white/10 shadow-2xl">
-            <div className="bg-red-500 text-white text-xs font-bold px-3 py-2">
-              DEBUG MODAL V1 - PendingPaymentVerifications (REAL COMPONENT)
-            </div>
             <div className="p-6 border-b border-white/10 sticky top-0 bg-[#171717]">
               <h2 className="text-2xl font-bold text-cc-cream">Revisar cobro</h2>
               <p className="text-sm text-cc-text-muted mt-1">Folio {selectedVerification.folio}</p>
@@ -363,7 +368,7 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
               </div>
 
               {/* Rejection Reason */}
-              {rejecting && (
+              {step === 'reject' && (
                 <div>
                   <label className="text-xs font-semibold text-cc-text-muted mb-2 block">
                     Motivo del rechazo *
@@ -379,7 +384,7 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
               )}
 
               {/* Confirmation Message */}
-              {!rejecting && (
+              {step === 'review' && (
                 <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
                   <p className="text-sm text-blue-200">
                     ¿Confirmas que Cat Corn ya recibió este dinero? Al continuar se registrará oficialmente el pago y se actualizarán el saldo y las comisiones.
@@ -396,6 +401,7 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
                   setSelectedVerification(null);
                   setRejectionReason('');
                   setReviewNotes('');
+                  setStep('review');
                 }}
                 className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-cc-cream rounded-lg font-semibold text-sm transition-colors"
                 disabled={approving || rejecting}
@@ -403,10 +409,13 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
                 Cancelar
               </button>
 
-              {!rejecting ? (
+              {step === 'review' ? (
                 <>
                   <button
-                    onClick={() => setRejecting(true)}
+                    onClick={() => {
+                      setStep('reject');
+                      setError(null);
+                    }}
                     className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-300 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
                     disabled={approving}
                   >
@@ -435,7 +444,11 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
               ) : (
                 <>
                   <button
-                    onClick={() => setRejecting(false)}
+                    onClick={() => {
+                      setStep('review');
+                      setRejectionReason('');
+                      setError(null);
+                    }}
                     className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-cc-cream rounded-lg font-semibold text-sm transition-colors"
                     disabled={rejecting}
                   >

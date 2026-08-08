@@ -6,6 +6,7 @@ import {
   submitPaymentVerificationRequest,
   uploadPaymentProof,
 } from '../../lib/paymentVerificationRpcs';
+import { getBusinessDateString } from '../../lib/dateUtils';
 
 interface Props {
   partnerId: string;
@@ -28,7 +29,7 @@ const ReportPaymentModal: React.FC<Props> = ({
 }) => {
   const [step, setStep] = useState<Step>('select-operation');
   const [operationId, setOperationId] = useState<string>('');
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [paymentDate, setPaymentDate] = useState(getBusinessDateString());
   const [amount, setAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'transfer'>('cash');
   const [reference, setReference] = useState('');

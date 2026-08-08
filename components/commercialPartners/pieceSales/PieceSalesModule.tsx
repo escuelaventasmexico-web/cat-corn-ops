@@ -142,14 +142,75 @@ export const PieceSalesModule = ({ refreshTrigger = 0, isAdmin = false, userId =
         stockQuery.eq('seller_id', filterSellerId);
       }
 
-      // Load history and stock in parallel, calculate summary metrics
-      const [historyRes, stockRes] = await Promise.all([
+      // Load history and stock in parallel
+      const [historyRes, stockRes, verificationsRes] = await Promise.all([
         historyQuery,
         stockQuery,
+        // Load payment verifications for all piece sales
+        supabase
+          .from('partner_payment_verification_requests')
+          .select('piece_sale_id, status, reviewed_at, reviewed_by, rejection_reason')
+          .eq('scheme', 'venta_pieza')
+          .not('piece_sale_id', 'is', null),
       ]);
 
       if (historyRes.error) throw historyRes.error;
       if (stockRes.error) throw stockRes.error;
+      if (verificationsRes.error) throw verificationsRes.error;
+
+      // Build verification map: piece_sale_id -> verification info
+      // For sales with multiple verifications, use the most recent relevant one
+      const verificationsMap = new Map<string, any>();
+      const verificationsData = verificationsRes.data ?? [];
+      
+      for (const verification of verificationsData) {
+        const saleId = verification.piece_sale_id;
+        const existing = verificationsMap.get(saleId);
+        
+        // Keep the most recent verification for this sale
+        // (could be approved or rejected depending on current status)
+        if (!existing || (new Date(verification.reviewed_at || 0) > new Date(existing.reviewed_at || 0))) {
+          verificationsMap.set(saleId, verification);
+        }
+      }
+
+      // Enrich history with verification info
+      const enrichedHistory = (historyRes.data ?? []).map((sale: any) => {
+        const verification = verificationsMap.get(sale.sale_id);
+        return {
+          ...sale,
+          verification_reviewed_at: verification?.reviewed_at ?? null,
+          verification_reviewed_by_name: verification?.reviewed_by ? null : null, // Will need profile lookup if needed
+          verification_rejection_reason: verification?.rejection_reason ?? null,
+        };
+      });
+
+      // Load profile info for reviewed_by (batch lookup)
+      const reviewedByIds = Array.from(new Set(
+        Array.from(verificationsMap.values())
+          .map((v: any) => v.reviewed_by)
+          .filter((id: any) => id != null)
+      ));
+
+      let profilesMap = new Map<string, string>();
+      if (reviewedByIds.length > 0) {
+        const profilesRes = await supabase
+          .from('user_profiles')
+          .select('id, full_name')
+          .in('id', reviewedByIds);
+        
+        if (profilesRes.data) {
+          profilesMap = new Map(profilesRes.data.map((p: any) => [p.id, p.full_name]));
+        }
+      }
+
+      // Final enrichment with reviewer names
+      const finalHistory = enrichedHistory.map((sale: any) => ({
+        ...sale,
+        verification_reviewed_by_name: sale.sale_id && verificationsMap.get(sale.sale_id)?.reviewed_by
+          ? profilesMap.get(verificationsMap.get(sale.sale_id).reviewed_by) ?? null
+          : null,
+      }));
 
       // Load summary metrics for non-admin users
       let summaryData: SellerCommissionMonthlySummary | null = null;
@@ -157,7 +218,7 @@ export const PieceSalesModule = ({ refreshTrigger = 0, isAdmin = false, userId =
         summaryData = await loadSellerPieceMetrics(filterSellerId);
       }
 
-      setHistory((historyRes.data ?? []) as PieceSaleHistory[]);
+      setHistory(finalHistory as PieceSaleHistory[]);
       setStock((stockRes.data ?? []) as SellerPieceStock[]);
       setSummaryData(summaryData);
     } catch (err: any) {
