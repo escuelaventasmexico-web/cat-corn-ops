@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
 import { DollarSign, ShoppingBag, AlertTriangle, TrendingUp, TrendingDown, Banknote, CreditCard, Landmark, Store, Receipt, Truck } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { getCommercialCollections } from '../services/commercialCollectionsService';
 
 interface TopProduct {
   id: string;
@@ -24,7 +25,7 @@ export const Dashboard = () => {
   const [topMonthProducts, setTopMonthProducts] = useState<TopProduct[]>([]);
   const [topMode, setTopMode] = useState<'day' | 'month'>('day');
   const [chartData, setChartData] = useState<any[]>([]);
-  const [breakdown, setBreakdown] = useState({ cajaTotal: 0, cajaCash: 0, cajaCard: 0, cajaMixed: 0, pedidosTotal: 0, pedidosCash: 0, pedidosCard: 0, pedidosTransfer: 0, deliveryTotal: 0, deliveryUber: 0, deliveryDidi: 0, deliveryRappi: 0 });
+  const [breakdown, setBreakdown] = useState<any>({ cajaTotal: 0, cajaCash: 0, cajaCard: 0, cajaMixed: 0, pedidosTotal: 0, pedidosCash: 0, pedidosCard: 0, pedidosTransfer: 0, deliveryTotal: 0, deliveryUber: 0, deliveryDidi: 0, deliveryRappi: 0, sociosComerciales: { total: 0, cash: 0, transfer: 0 } });
 
   useEffect(() => {
     loadDashboardData();
@@ -59,6 +60,31 @@ export const Dashboard = () => {
       
       const totalToday = salesToday?.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
       const ordersToday = salesToday?.length || 0;
+
+      // Load commercial collections for today (cobros reales de Socios Comerciales)
+      let sociosComerciales = { total: 0, cash: 0, transfer: 0 };
+      try {
+        const todayUTC = new Date();
+        todayUTC.setUTCHours(0, 0, 0, 0);
+        const tomorrowUTC = new Date(todayUTC);
+        tomorrowUTC.setUTCDate(tomorrowUTC.getUTCDate() + 1);
+
+        const collections = await getCommercialCollections(todayUTC, tomorrowUTC);
+        if (!collections.error) {
+          sociosComerciales = { total: collections.total, cash: collections.cash, transfer: collections.transfer };
+          // Log for validation
+          console.log('Commercial collections validation', {
+            total: collections.total,
+            bySource: collections.bySource,
+            cash: collections.cash,
+            transfer: collections.transfer
+          });
+        } else {
+          console.error('Commercial collections error:', collections.error);
+        }
+      } catch (err) {
+        console.error('Exception loading commercial collections:', err);
+      }
 
       // Split by origin
       const normPM = (m: string) => (m || '').toUpperCase().trim();
@@ -110,7 +136,7 @@ export const Dashboard = () => {
       ].filter(d => d.amount > 0);
 
       // Breakdown summary for the panel
-      const breakdownSummary = { cajaTotal, cajaCash, cajaCard, cajaMixed, pedidosTotal, pedidosCash, pedidosCard, pedidosTransfer, deliveryTotal, deliveryUber, deliveryDidi, deliveryRappi };
+      const breakdownSummary = { cajaTotal, cajaCash, cajaCard, cajaMixed, pedidosTotal, pedidosCash, pedidosCard, pedidosTransfer, deliveryTotal, deliveryUber, deliveryDidi, deliveryRappi, sociosComerciales: { total: sociosComerciales.total, cash: sociosComerciales.cash, transfer: sociosComerciales.transfer } };
 
       // 2. Sales Yesterday - for percentage calculation
       const { data: salesYesterday } = await supabase
@@ -276,7 +302,7 @@ export const Dashboard = () => {
       }
 
       setStats({
-        salesToday: totalToday,
+        salesToday: totalToday + sociosComerciales.total,
         ordersToday,
         lowStockCount: count || 0,
         percentageChange
@@ -335,7 +361,7 @@ export const Dashboard = () => {
         </div>
 
         {/* KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
             <StatCard 
                 title="Venta Caja" 
                 value={`$${breakdown.cajaTotal.toFixed(2)}`} 
@@ -353,6 +379,12 @@ export const Dashboard = () => {
                 value={`$${breakdown.deliveryTotal.toFixed(2)}`} 
                 icon={Truck} 
                 color="bg-orange-500"
+            />
+            <StatCard 
+                title="Venta Socios Comerciales" 
+                value={`$${breakdown.sociosComerciales.total.toFixed(2)}`} 
+                icon={Landmark} 
+                color="bg-indigo-500"
             />
             <StatCard 
                 title="Total del Día" 
@@ -479,6 +511,31 @@ export const Dashboard = () => {
                                     <span className="text-cc-cream font-bold">${breakdown.deliveryRappi.toFixed(2)}</span>
                                 </div>
                             )}
+                        </div>
+                    </div>
+                    )}
+
+                    {/* Socios Comerciales */}
+                    {breakdown.sociosComerciales.total > 0 && (
+                    <div className="bg-neutral-900 rounded-xl p-4 border border-indigo-500/20 col-span-2">
+                        <div className="flex items-center gap-2 mb-3">
+                            <Landmark size={16} className="text-indigo-400" />
+                            <span className="text-sm font-bold text-cc-cream">Socios Comerciales</span>
+                            <span className="ml-auto text-lg font-bold text-indigo-400">${breakdown.sociosComerciales.total.toFixed(2)}</span>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="flex items-center gap-2 text-cc-text-muted">
+                                    <Banknote size={14} className="text-green-400" /> Efectivo
+                                </span>
+                                <span className="text-cc-cream font-medium">${breakdown.sociosComerciales.cash.toFixed(2)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="flex items-center gap-2 text-cc-text-muted">
+                                    <Landmark size={14} className="text-indigo-400" /> Transferencia
+                                </span>
+                                <span className="text-cc-cream font-medium">${breakdown.sociosComerciales.transfer.toFixed(2)}</span>
+                            </div>
                         </div>
                     </div>
                     )}

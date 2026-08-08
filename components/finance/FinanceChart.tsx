@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../supabase';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { TrendingUp, AlertCircle } from 'lucide-react';
+import { getCommercialCollections } from '../../services/commercialCollectionsService';
 
 interface DailySeries {
   day: string;
@@ -30,12 +31,44 @@ export const FinanceChart = () => {
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
       const monthStartStr = monthStart.toISOString().split('T')[0];
 
+      // Load store sales via RPC
       const { data: seriesData, error: rpcError } = await supabase
         .rpc('finance_daily_series', { p_month_start: monthStartStr });
 
       if (rpcError) throw rpcError;
 
-      setData(seriesData || []);
+      // Load commercial collections for the entire month
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      const monthStartUTC = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), 1));
+      const monthEndUTC = new Date(Date.UTC(monthEnd.getUTCFullYear(), monthEnd.getUTCMonth(), 1));
+
+      const commercialData = await getCommercialCollections(monthStartUTC, monthEndUTC);
+
+      if (commercialData.error) {
+        console.error('Commercial collections error:', commercialData.error);
+        // Continue without commercial data if error occurs
+      }
+
+      // Build a map of daily commercial collections by day
+      const dailyCommercialMap = new Map<string, number>();
+      if (!commercialData.error && commercialData.breakdown.length > 0) {
+        for (const item of commercialData.breakdown) {
+          const dateStr = item.payment_date.split('T')[0];
+          const current = dailyCommercialMap.get(dateStr) || 0;
+          dailyCommercialMap.set(dateStr, current + item.amount);
+        }
+      }
+
+      // Merge commercial collections into series data
+      const enrichedData = (seriesData || []).map((record: any) => ({
+        ...record,
+        // Add commercial collections to sales_mxn
+        commercial_collections: dailyCommercialMap.get(record.day) || 0,
+        sales_mxn: (record.sales_mxn || 0) + (dailyCommercialMap.get(record.day) || 0)
+      }));
+
+      console.log('Finance chart data enriched with commercial collections', enrichedData);
+      setData(enrichedData);
     } catch (err: any) {
       console.error('Error loading chart data:', err);
       setError(err.message || 'Error al cargar datos del gráfico');

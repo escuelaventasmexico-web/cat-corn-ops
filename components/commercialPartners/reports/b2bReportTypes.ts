@@ -23,6 +23,11 @@ export interface B2BDashboardSummary {
   comodato_units_in_partner: number;
   wholesale_total_pieces: number;
   b2b_total_units: number;
+  // Venta por Pieza fields (loaded in component, not from SQL view)
+  pieceSale_generated_total?: number;
+  pieceSale_paid_total?: number;
+  pieceSale_pending_total?: number;
+  pieceSale_total_pieces?: number;
 }
 
 export interface B2BPartnerRanking {

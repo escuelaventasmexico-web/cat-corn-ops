@@ -46,6 +46,14 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
   const [rejectionReason, setRejectionReason] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
 
+  // Render logging
+  console.log('[RENDER PENDING_PAYMENT_VERIFICATIONS]', {
+    rejecting,
+    approving,
+    showReviewModal,
+    selectedFolio: selectedVerification?.folio,
+  });
+
   const loadPendingVerifications = async () => {
     if (!supabase) {
       setError('Supabase no está configurado');
@@ -122,30 +130,56 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
       return;
     }
 
+    console.log('[PEND_REJECT 1] handleReject started in PendingPaymentVerifications', {
+      requestId: selectedVerification.request_id,
+      rejectReason: rejectionReason.trim(),
+    });
+
     setRejecting(true);
     try {
+      console.log('[PEND_REJECT 2] Calling RPC reject_partner_payment_verification_request', {
+        requestId: selectedVerification.request_id,
+      });
+
       const { data, error: err } = await supabase!.rpc(
         'reject_partner_payment_verification_request',
         {
           p_request_id: selectedVerification.request_id,
-          p_rejection_reason: rejectionReason,
+          p_rejection_reason: rejectionReason.trim(),
         }
       );
 
+      console.log('[PEND_REJECT 3] RPC response', {
+        data,
+        error: err
+      });
+
       if (err) throw err;
 
-      console.log('Rejection successful:', data);
+      console.log('[PEND_REJECT 4] Rejection successful, closing modal');
 
-      // Reload pending verifications
-      await loadPendingVerifications();
-
+      // RPC succeeded - close modal immediately
       setShowReviewModal(false);
       setSelectedVerification(null);
       setRejectionReason('');
+
+      // Show success message
+      alert('Cobro rechazado. El vendedor podrá corregir la venta y volver a enviarla.');
+
+      // Refresh pending verifications in background (best-effort, don't wait)
+      console.log('[PEND_REJECT 5] Refreshing verifications list');
+      loadPendingVerifications().catch(refreshErr => {
+        console.error('[PEND_REJECT] Secondary refresh failed (non-blocking):', refreshErr);
+      });
+
+      // Notify parent to refresh commission data
+      console.log('[PEND_REJECT 6] Calling onVerificationApproved callback');
+      onVerificationApproved?.();
     } catch (err: any) {
-      console.error('Error rejecting verification:', err);
-      alert('Error al rechazar el reporte: ' + (err.message || 'Unknown error'));
+      console.error('[PEND_REJECT ERROR]', err);
+      alert('No se pudo rechazar el cobro. Intenta nuevamente.');
     } finally {
+      console.log('[PEND_REJECT 7] Finally - setting rejecting to false');
       setRejecting(false);
     }
   };
@@ -242,6 +276,9 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
       {showReviewModal && selectedVerification && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
           <div className="bg-[#171717] rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-white/10 shadow-2xl">
+            <div className="bg-red-500 text-white text-xs font-bold px-3 py-2">
+              DEBUG MODAL V1 - PendingPaymentVerifications (REAL COMPONENT)
+            </div>
             <div className="p-6 border-b border-white/10 sticky top-0 bg-[#171717]">
               <h2 className="text-2xl font-bold text-cc-cream">Revisar cobro</h2>
               <p className="text-sm text-cc-text-muted mt-1">Folio {selectedVerification.folio}</p>
@@ -406,7 +443,10 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
                   </button>
 
                   <button
-                    onClick={handleReject}
+                    onClick={() => {
+                      console.log('[BUTTON REJECT PEND] Clicked reject button in PendingPaymentVerifications');
+                      void handleReject();
+                    }}
                     className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-300 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2 disabled:opacity-50"
                     disabled={!rejectionReason.trim() || rejecting}
                   >

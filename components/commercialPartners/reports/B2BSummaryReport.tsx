@@ -11,6 +11,7 @@ import {
   formatNumber,
   formatPercent,
 } from './b2bReportHelpers';
+import { getPieceSaleSummary, SalesChannelSummary } from '../../../services/commercialCollectionsService';
 
 interface B2BSummaryReportProps {
   refreshTrigger?: number;
@@ -20,6 +21,7 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
   const [summary, setSummary] = useState<B2BDashboardSummary | null>(null);
   const [pipeline, setPipeline] = useState<B2BPipelineByStatus[]>([]);
   const [conversion, setConversion] = useState<B2BConversionSummary | null>(null);
+  const [pieceSale, setPieceSale] = useState<SalesChannelSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,6 +88,21 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
       setPipeline((pipelineRes.data as B2BPipelineByStatus[]) ?? []);
       setConversion(conversionData);
 
+      // Load Venta por Pieza summary for current month
+      const today = new Date();
+      const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+      const monthEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
+      const pieceSaleSummary = await getPieceSaleSummary(monthStart, monthEnd);
+      setPieceSale(pieceSaleSummary);
+
+      // Update summary with piece sale data if successful
+      if (!pieceSaleSummary.error && summaryData) {
+        summaryData.pieceSale_generated_total = pieceSaleSummary.generated;
+        summaryData.pieceSale_paid_total = pieceSaleSummary.paid;
+        summaryData.pieceSale_pending_total = pieceSaleSummary.pending;
+        summaryData.pieceSale_total_pieces = pieceSaleSummary.units;
+      }
+
       // Log detallado de conversión
       console.log('B2B_CONVERSION_RAW', conversionData);
       console.log('B2B_CONVERSION_COUNTS', {
@@ -96,6 +113,9 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
         rejectedCount: conversionData?.rejected,
         rawConversionRate: conversionData?.conversion_rate,
       });
+
+      // Log piece sale summary
+      console.log('B2B_PIECE_SALE_SUMMARY', pieceSaleSummary);
     } catch (err: any) {
       console.error('Error loading B2B summary:', err);
       setError(err?.message || 'Error al cargar resumen');
@@ -158,10 +178,10 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
           <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
             <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Total Generado</p>
             <p className="text-2xl font-bold text-cc-cream">
-              {formatCurrency(summary.b2b_total_generated)}
+              {formatCurrency((summary.b2b_total_generated ?? 0) + (summary.pieceSale_generated_total ?? 0))}
             </p>
             <p className="text-xs text-cc-text-muted mt-2">
-              {formatNumber(summary.b2b_total_units)} piezas
+              {formatNumber((summary.b2b_total_units ?? 0) + (summary.pieceSale_total_pieces ?? 0))} piezas
             </p>
           </div>
 
@@ -169,10 +189,10 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
           <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
             <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Total Cobrado</p>
             <p className="text-2xl font-bold text-cc-cream">
-              {formatCurrency(summary.b2b_total_paid)}
+              {formatCurrency((summary.b2b_total_paid ?? 0) + (summary.pieceSale_paid_total ?? 0))}
             </p>
             <p className="text-xs text-cc-text-muted mt-2">
-              {formatPercent((summary.b2b_total_paid ?? 0) / (summary.b2b_total_generated ?? 1))}
+              {formatPercent(((summary.b2b_total_paid ?? 0) + (summary.pieceSale_paid_total ?? 0)) / (((summary.b2b_total_generated ?? 0) + (summary.pieceSale_generated_total ?? 0)) || 1))}
             </p>
           </div>
 
@@ -180,7 +200,7 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
           <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
             <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Pendiente</p>
             <p className="text-2xl font-bold text-red-400">
-              {formatCurrency(summary.b2b_pending_balance)}
+              {formatCurrency((summary.b2b_pending_balance ?? 0) + (summary.pieceSale_pending_total ?? 0))}
             </p>
             <p className="text-xs text-red-300 mt-2">
               {formatNumber(summary.partners_with_pending_balance)} socios
@@ -212,6 +232,53 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
               </p>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ── COBRADO POR CANAL SECTION ─────────────────────────── */}
+      <div>
+        <h2 className="text-lg font-bold text-cc-text-main mb-4">Cobrado por Canal</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* Comodato Cobrado */}
+          <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
+            <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-3">Comodato</p>
+            <div className="space-y-1">
+              <p className="text-2xl font-bold text-cc-cream">
+                {formatCurrency(summary.comodato_paid_total ?? 0)}
+              </p>
+              <p className="text-xs text-cc-text-muted">
+                de {formatCurrency(summary.comodato_generated_total ?? 0)} generado
+              </p>
+            </div>
+          </div>
+
+          {/* Mayoreo Cobrado */}
+          <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
+            <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-3">Mayoreo</p>
+            <div className="space-y-1">
+              <p className="text-2xl font-bold text-cc-cream">
+                {formatCurrency(summary.wholesale_paid_total ?? 0)}
+              </p>
+              <p className="text-xs text-cc-text-muted">
+                de {formatCurrency(summary.wholesale_purchased_total ?? 0)} comprado
+              </p>
+            </div>
+          </div>
+
+          {/* Venta por Pieza Cobrado */}
+          {pieceSale && !pieceSale.error && (
+            <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
+              <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-3">Venta por Pieza</p>
+              <div className="space-y-1">
+                <p className="text-2xl font-bold text-cc-cream">
+                  {formatCurrency(pieceSale.paid ?? 0)}
+                </p>
+                <p className="text-xs text-cc-text-muted">
+                  de {formatCurrency(pieceSale.generated ?? 0)} vendido
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -294,6 +361,48 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
           </div>
         </div>
       </div>
+
+      {/* ── VENTA POR PIEZA SECTION ────────────────────────────── */}
+      {pieceSale && !pieceSale.error && (
+        <div>
+          <h2 className="text-lg font-bold text-cc-text-main mb-4">Venta por Pieza</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
+              <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Vendido</p>
+              <p className="text-2xl font-bold text-cc-cream">
+                {formatCurrency(pieceSale.generated)}
+              </p>
+              <p className="text-xs text-cc-text-muted mt-2">
+                {formatNumber(pieceSale.units)} piezas
+              </p>
+            </div>
+
+            <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
+              <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Cobrado</p>
+              <p className="text-2xl font-bold text-cc-cream">
+                {formatCurrency(pieceSale.paid)}
+              </p>
+              <p className="text-xs text-cc-text-muted mt-2">
+                {formatPercent((pieceSale.paid ?? 0) / (pieceSale.generated ?? 1))}
+              </p>
+            </div>
+
+            <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
+              <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Pendiente</p>
+              <p className="text-2xl font-bold text-red-400">
+                {formatCurrency(pieceSale.pending)}
+              </p>
+            </div>
+
+            <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
+              <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Vendedores</p>
+              <p className="text-2xl font-bold text-cc-cream">
+                {formatNumber(0)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── CONVERSION SECTION ─────────────────────────────────── */}
       {conversionData && (

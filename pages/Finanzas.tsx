@@ -15,6 +15,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { supabase } from '../supabase';
+import { getCommercialCollections } from '../services/commercialCollectionsService';
 import { FinanceChart } from '../components/finance/FinanceChart.tsx';
 import { ExpensesManager } from '../components/finance/ExpensesManager.tsx';
 import { FixedCostsManager } from '../components/finance/FixedCostsManager.tsx';
@@ -174,7 +175,43 @@ const FinanceResumenTest = () => {
           throw rpcError;
         }
 
-        setData(result);
+        // Load commercial collections for this month
+        const monthStartDate = new Date(navYear, navMonth, 1);
+        const monthEndDate = new Date(navYear, navMonth + 1, 1);
+        
+        const monthStartUTC = new Date(Date.UTC(monthStartDate.getUTCFullYear(), monthStartDate.getUTCMonth(), 1));
+        const monthEndUTC = new Date(Date.UTC(monthEndDate.getUTCFullYear(), monthEndDate.getUTCMonth(), 1));
+
+        const commercialData = await getCommercialCollections(monthStartUTC, monthEndUTC);
+
+        // Aggregate commercial collections
+        const commercialTotal = commercialData.error ? 0 : commercialData.total;
+        const commercialCash = commercialData.error ? 0 : commercialData.cash;
+        const commercialTransfer = commercialData.error ? 0 : commercialData.transfer;
+
+        // Update result with combined revenue
+        const enrichedResult = {
+          ...result,
+          commercial_collections: commercialTotal,
+          sales_mtd_mxn: (result.sales_mtd_mxn || 0) + commercialTotal,
+          sales_cash_mxn: (result.sales_cash_mxn || 0) + commercialCash,
+          sales_transfer_mxn: (result.sales_transfer_mxn || 0) + commercialTransfer,
+          // Recalculate projection based on combined revenue
+          sales_projection_mxn: ((result.sales_mtd_mxn || 0) + commercialTotal) > 0 
+            ? (((result.sales_mtd_mxn || 0) + commercialTotal) / new Date(navYear, navMonth + 1, 0).getDate()) * new Date(navYear, navMonth + 1, 0).getDate()
+            : 0
+        };
+
+        if (!commercialData.error) {
+          console.log('Finance month summary enriched with commercial collections', {
+            month: monthLabel,
+            commercial_collections: commercialTotal,
+            store_sales: result.sales_mtd_mxn,
+            combined_sales: enrichedResult.sales_mtd_mxn
+          });
+        }
+
+        setData(enrichedResult);
       } catch (err) {
         setError(err);
       } finally {

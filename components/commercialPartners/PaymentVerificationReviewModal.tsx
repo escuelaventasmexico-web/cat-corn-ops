@@ -48,14 +48,37 @@ const PaymentVerificationReviewModal: React.FC<Props> = ({
   };
 
   const handleApprove = async () => {
+    // Guard against double execution
+    if (approving) return;
+
     setApproving(true);
     setError(null);
 
+    console.log('[APPROVE 1] handler started', {
+      requestId: verification.request_id,
+    });
+
     try {
-      await approvePaymentVerificationRequest(verification.request_id, '');
-      onSuccess();
+      console.log('[APPROVE 2] calling RPC...');
+      const result = await approvePaymentVerificationRequest(verification.request_id, '');
+      console.log('[APPROVE 3] RPC success', result);
+
+      // RPC was successful - close modal immediately
+      console.log('[APPROVE 4] closing modal');
+      onClose();
+
+      // Notify parent (best-effort, non-blocking)
+      console.log('[APPROVE 5] calling onSuccess');
+      try {
+        onSuccess();
+      } catch (cbErr: any) {
+        console.error('[APPROVE] onSuccess callback error (non-blocking):', cbErr);
+      }
     } catch (err: any) {
+      console.error('[APPROVE ERROR]', err);
       setError(err.message || 'Error al aprobar cobro');
+    } finally {
+      console.log('[APPROVE 6] finally - setting approving to false');
       setApproving(false);
     }
   };
@@ -66,14 +89,44 @@ const PaymentVerificationReviewModal: React.FC<Props> = ({
       return;
     }
 
+    // Guard against double execution
+    if (rejecting) return;
+
     setRejecting(true);
     setError(null);
 
+    console.log('[REJECT 1] handler started', {
+      requestId: verification.request_id,
+      rejectReason: rejectReason.trim(),
+    });
+
     try {
-      await rejectPaymentVerificationRequest(verification.request_id, rejectReason);
-      onSuccess();
+      console.log('[REJECT 2] calling RPC...');
+      const result = await rejectPaymentVerificationRequest(
+        verification.request_id,
+        rejectReason.trim()
+      );
+      console.log('[REJECT 3] RPC success', result);
+
+      // RPC was successful - show success message
+      alert('Cobro rechazado. El vendedor podrá corregir la venta y volver a enviarla.');
+
+      // Close modal immediately
+      console.log('[REJECT 4] closing modal');
+      onClose();
+
+      // Notify parent (best-effort, non-blocking)
+      console.log('[REJECT 5] calling onSuccess');
+      try {
+        onSuccess();
+      } catch (cbErr: any) {
+        console.error('[REJECT] onSuccess callback error (non-blocking):', cbErr);
+      }
     } catch (err: any) {
+      console.error('[REJECT ERROR]', err);
       setError(err.message || 'Error al rechazar cobro');
+    } finally {
+      console.log('[REJECT 6] finally - setting rejecting to false');
       setRejecting(false);
     }
   };

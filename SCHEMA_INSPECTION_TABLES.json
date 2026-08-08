@@ -1,0 +1,367 @@
+{
+  "inspection_date": "2026-08-07",
+  "source_files": [
+    "migration_partner_payment_verification.sql",
+    "ACTION_PLAN_SCHEMA_FIXES.md",
+    "supabase/migrations/20260802_piece_sale_corrections.sql",
+    "types/pieceSales.ts"
+  ],
+  "tables": {
+    "public.commercial_partner_payments": {
+      "status": "EXISTE - Definida en ACTION_PLAN_SCHEMA_FIXES.md (línea 187)",
+      "campos_reales": {
+        "id": {
+          "tipo": "UUID",
+          "default": "gen_random_uuid()",
+          "descripcion": "Identificador único",
+          "clave_primaria": true
+        },
+        "partner_id": {
+          "tipo": "UUID",
+          "obligatorio": true,
+          "referencias": "commercial_partners(id)",
+          "on_delete": "CASCADE",
+          "descripcion": "Referencia al socio comercial"
+        },
+        "movement_id": {
+          "tipo": "UUID",
+          "nullable": true,
+          "referencias": "commercial_partner_movements(id)",
+          "on_delete": "CASCADE",
+          "descripcion": "Referencia al movimiento comodato (relación 1:N)"
+        },
+        "payment_date": {
+          "tipo": "TIMESTAMPTZ",
+          "obligatorio": true,
+          "descripcion": "Fecha del pago"
+        },
+        "amount": {
+          "tipo": "NUMERIC(12,2)",
+          "obligatorio": true,
+          "descripcion": "Monto del pago"
+        },
+        "payment_method": {
+          "tipo": "TEXT",
+          "obligatorio": true,
+          "check": "payment_method IN ('cash', 'transfer')",
+          "valores_validos": [
+            "cash",
+            "transfer"
+          ],
+          "descripcion": "Método de pago"
+        },
+        "reference": {
+          "tipo": "TEXT",
+          "nullable": true,
+          "descripcion": "Referencia del pago (ej: número de transferencia)"
+        },
+        "notes": {
+          "tipo": "TEXT",
+          "nullable": true,
+          "descripcion": "Notas adicionales"
+        },
+        "received_by": {
+          "tipo": "UUID",
+          "nullable": true,
+          "referencias": "user_profiles(id)",
+          "on_delete": "SET NULL",
+          "descripcion": "Usuario que registró el pago"
+        },
+        "status": {
+          "tipo": "TEXT",
+          "obligatorio": true,
+          "default": "'completed'",
+          "check": "status IN ('completed', 'paid')",
+          "valores_validos": [
+            "completed",
+            "paid"
+          ],
+          "descripcion": "Estado del pago confirmado"
+        },
+        "created_at": {
+          "tipo": "TIMESTAMPTZ",
+          "default": "now()",
+          "descripcion": "Fecha de creación del registro"
+        },
+        "updated_at": {
+          "tipo": "TIMESTAMPTZ",
+          "default": "now()",
+          "descripcion": "Fecha de última actualización"
+        }
+      },
+      "indices": [
+        "idx_cpp_partner_id",
+        "idx_cpp_movement_id",
+        "idx_cpp_payment_date"
+      ],
+      "estado_pago_confirmado": {
+        "valores": [
+          "completed",
+          "paid"
+        ],
+        "descripcion": "Ambos valores representan un pago confirmado/recibido"
+      },
+      "campo_fecha_pago": "payment_date",
+      "campos_metodo_pago": {
+        "payment_method": {
+          "tipos": ["cash", "transfer"]
+        }
+      },
+      "campos_referencia": {
+        "partner_id": "UUID (referencia al socio comercial)",
+        "movement_id": "UUID (referencia al movimiento comodato)"
+      }
+    },
+    "public.wholesale_payments": {
+      "status": "EXISTE - Definida en ACTION_PLAN_SCHEMA_FIXES.md (línea 225)",
+      "campos_reales": {
+        "id": {
+          "tipo": "UUID",
+          "default": "gen_random_uuid()",
+          "descripcion": "Identificador único",
+          "clave_primaria": true
+        },
+        "partner_id": {
+          "tipo": "UUID",
+          "obligatorio": true,
+          "referencias": "commercial_partners(id)",
+          "on_delete": "CASCADE",
+          "descripcion": "Referencia al socio comercial mayoreo"
+        },
+        "wholesale_order_id": {
+          "tipo": "UUID",
+          "obligatorio": true,
+          "referencias": "wholesale_orders(id)",
+          "on_delete": "CASCADE",
+          "descripcion": "Referencia a la orden mayoreo"
+        },
+        "payment_date": {
+          "tipo": "TIMESTAMPTZ",
+          "obligatorio": true,
+          "descripcion": "Fecha del pago"
+        },
+        "amount": {
+          "tipo": "NUMERIC(12,2)",
+          "obligatorio": true,
+          "descripcion": "Monto del pago"
+        },
+        "payment_method": {
+          "tipo": "TEXT",
+          "obligatorio": true,
+          "check": "payment_method IN ('cash', 'transfer')",
+          "valores_validos": [
+            "cash",
+            "transfer"
+          ],
+          "descripcion": "Método de pago"
+        },
+        "reference": {
+          "tipo": "TEXT",
+          "nullable": true,
+          "descripcion": "Referencia del pago"
+        },
+        "notes": {
+          "tipo": "TEXT",
+          "nullable": true,
+          "descripcion": "Notas adicionales"
+        },
+        "received_by": {
+          "tipo": "UUID",
+          "nullable": true,
+          "referencias": "user_profiles(id)",
+          "on_delete": "SET NULL",
+          "descripcion": "Usuario que registró el pago"
+        },
+        "status": {
+          "tipo": "TEXT",
+          "obligatorio": true,
+          "default": "'completed'",
+          "check": "status IN ('completed', 'paid')",
+          "valores_validos": [
+            "completed",
+            "paid"
+          ],
+          "descripcion": "Estado del pago confirmado"
+        },
+        "created_at": {
+          "tipo": "TIMESTAMPTZ",
+          "default": "now()",
+          "descripcion": "Fecha de creación del registro"
+        },
+        "updated_at": {
+          "tipo": "TIMESTAMPTZ",
+          "default": "now()",
+          "descripcion": "Fecha de última actualización"
+        }
+      },
+      "indices": [
+        "idx_wholesale_payments_partner_id",
+        "idx_wholesale_payments_order_id"
+      ],
+      "estado_pago_confirmado": {
+        "valores": [
+          "completed",
+          "paid"
+        ],
+        "descripcion": "Ambos valores representan un pago confirmado/recibido"
+      },
+      "campo_fecha_pago": "payment_date",
+      "campos_metodo_pago": {
+        "payment_method": {
+          "tipos": ["cash", "transfer"]
+        }
+      },
+      "campos_referencia": {
+        "partner_id": "UUID (referencia al socio comercial)",
+        "wholesale_order_id": "UUID (referencia a la orden mayoreo)"
+      }
+    },
+    "public.seller_piece_sales": {
+      "status": "EXISTE - Utilizada en supabase/migrations/20260802_piece_sale_corrections.sql y v_piece_sale_history",
+      "nota_importante": "NO EXISTE tabla separada 'seller_piece_payments'. El sistema de pagos para ventas por pieza usa partner_payment_verification_requests con scheme='venta_pieza'",
+      "campos_reales_inferidos_de_vistas": {
+        "id": {
+          "tipo": "UUID",
+          "descripcion": "Identificador de venta"
+        },
+        "folio": {
+          "tipo": "TEXT",
+          "descripcion": "Identificador de folio de venta",
+          "unique": true
+        },
+        "seller_id": {
+          "tipo": "UUID",
+          "referencias": "user_profiles(id)",
+          "descripcion": "Vendedor que reportó la venta"
+        },
+        "sale_date": {
+          "tipo": "TIMESTAMPTZ",
+          "descripcion": "Fecha de la venta"
+        },
+        "payment_method": {
+          "tipo": "TEXT",
+          "valores_validos": [
+            "cash",
+            "transfer"
+          ],
+          "descripcion": "Método de pago"
+        },
+        "payment_reference": {
+          "tipo": "TEXT",
+          "nullable": true,
+          "descripcion": "Referencia de pago (si es transferencia)"
+        },
+        "notes": {
+          "tipo": "TEXT",
+          "nullable": true,
+          "descripcion": "Notas sobre la venta"
+        },
+        "total_amount": {
+          "tipo": "NUMERIC",
+          "descripcion": "Monto total de la venta"
+        },
+        "total_commission": {
+          "tipo": "NUMERIC",
+          "descripcion": "Comisión total por la venta"
+        },
+        "status": {
+          "tipo": "TEXT",
+          "valores_validos": [
+            "draft",
+            "pending_review",
+            "payment_rejected",
+            "confirmed",
+            "cancelled"
+          ],
+          "descripcion": "Estado de la venta"
+        },
+        "confirmed_at": {
+          "tipo": "TIMESTAMPTZ",
+          "nullable": true,
+          "descripcion": "Fecha de confirmación"
+        },
+        "created_at": {
+          "tipo": "TIMESTAMPTZ",
+          "descripcion": "Fecha de creación del registro"
+        },
+        "updated_at": {
+          "tipo": "TIMESTAMPTZ",
+          "descripcion": "Fecha de última actualización"
+        }
+      },
+      "estado_pago_confirmado": {
+        "valores": [
+          "confirmed"
+        ],
+        "descripcion": "Estado que indica pago confirmado. El flujo de pagos es a través de partner_payment_verification_requests con scheme='venta_pieza'"
+      },
+      "campo_fecha_pago": "sale_date (fecha de la venta, no fecha de pago confirmado)",
+      "campos_metodo_pago": {
+        "payment_method": {
+          "tipos": ["cash", "transfer"]
+        }
+      },
+      "campos_referencia": {
+        "seller_id": "UUID (referencia al vendedor/user_profiles)"
+      },
+      "relaciones_pago": {
+        "partner_payment_verification_requests": {
+          "descripcion": "Los pagos de ventas por pieza se gestionan mediante partner_payment_verification_requests con scheme='venta_pieza'",
+          "scheme": "venta_pieza",
+          "campos_en_verification": {
+            "payment_date": "Fecha del pago (distinta a sale_date)",
+            "amount": "Monto a pagar",
+            "payment_method": "cash o transfer",
+            "payment_reference": "Referencia de pago",
+            "status": "draft → pending_review → approved/rejected"
+          }
+        }
+      }
+    }
+  },
+  "resumen_hallazgos": {
+    "tabla_1_commercial_partner_payments": {
+      "existe": true,
+      "campos_totales": 12,
+      "campos_pago": 4,
+      "estados_pago_confirmado": ["completed", "paid"]
+    },
+    "tabla_2_wholesale_payments": {
+      "existe": true,
+      "campos_totales": 12,
+      "campos_pago": 4,
+      "estados_pago_confirmado": ["completed", "paid"]
+    },
+    "tabla_3_seller_piece_payments": {
+      "existe": false,
+      "razon": "No existe tabla separada. El sistema usa seller_piece_sales + partner_payment_verification_requests",
+      "campos_totales_en_seller_piece_sales": 12,
+      "campos_pago": 4,
+      "estados_pago_confirmado": ["confirmed"],
+      "nota": "Los pagos reales se gestionan mediante partner_payment_verification_requests con scheme='venta_pieza'"
+    }
+  },
+  "patrones_encontrados": {
+    "campos_comunes": [
+      "id (UUID PK)",
+      "payment_date/sale_date (TIMESTAMPTZ)",
+      "amount (NUMERIC(12,2))",
+      "payment_method TEXT ('cash' | 'transfer')",
+      "reference/payment_reference (TEXT nullable)",
+      "notes (TEXT nullable)",
+      "status (TEXT con CHECK constraint)",
+      "created_at (TIMESTAMPTZ default now())",
+      "updated_at (TIMESTAMPTZ default now())"
+    ],
+    "patrones_referencias": [
+      "Siempre hay FK a user_profiles(id) para 'received_by' o 'seller_id'",
+      "Siempre hay FK a tabla de operación (movement_id, wholesale_order_id, sale_id)",
+      "All FKs tienen ON DELETE CASCADE o ON DELETE RESTRICT"
+    ],
+    "patrones_estados_pago": {
+      "commercial_partner_payments": ["completed", "paid"],
+      "wholesale_payments": ["completed", "paid"],
+      "seller_piece_sales": ["confirmed"]
+    }
+  }
+}
