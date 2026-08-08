@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, ChevronRight, ChevronLeft, Check } from 'lucide-react';
 import { supabase } from '../../../supabase';
 import { CommercialPartner } from '../types';
@@ -7,6 +7,9 @@ import WholesaleDataVerification from './WholesaleDataVerification';
 import WholesaleDocumentsUploader from './WholesaleDocumentsUploader';
 import WholesaleContractGenerator from './WholesaleContractGenerator';
 import WholesaleSignedUploader from './WholesaleSignedUploader';
+import DebtAuthorizationStatus from './debtAuthorization/DebtAuthorizationStatus';
+import DebtAuthorizationRequestModal from './debtAuthorization/DebtAuthorizationRequestModal';
+import { safeNumber } from './debtAuthorization/helpers';
 
 interface Props {
   partner: CommercialPartner;
@@ -47,6 +50,27 @@ const WholesaleActivationWizard: React.FC<Props> = ({ partner: initialPartner, o
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [comodatoPendingBalance, setComodatoPendingBalance] = useState(0);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authRefreshKey, setAuthRefreshKey] = useState(0);
+
+  // Load comodato pending balance on mount
+  useEffect(() => {
+    const loadBalance = async () => {
+      if (!supabase) return;
+      try {
+        const { data, error: rpcErr } = await supabase.rpc(
+          'get_partner_comodato_pending_balance',
+          { p_partner_id: initialPartner.id }
+        );
+        if (rpcErr) throw rpcErr;
+        setComodatoPendingBalance(safeNumber(data));
+      } catch (err: any) {
+        console.error('Error loading comodato balance:', err);
+      }
+    };
+    loadBalance();
+  }, [initialPartner.id]);
 
   const currentStepIndex = STEPS.findIndex(s => s.id === currentStep);
   const canGoNext = () => {
@@ -160,6 +184,20 @@ const WholesaleActivationWizard: React.FC<Props> = ({ partner: initialPartner, o
       case 'review':
         return (
           <div className="space-y-4">
+            {/* Authorization Status Section - Show if there's pending comodato debt */}
+            {comodatoPendingBalance > 0.005 && (
+              <div key={`auth-${authRefreshKey}`}>
+                <DebtAuthorizationStatus
+                  partnerId={currentPartner.id}
+                  pendingBalance={comodatoPendingBalance}
+                  onRequestClick={() => setShowAuthModal(true)}
+                  onAuthorizationLoaded={() => {
+                    // Authorization loaded, UI will update
+                  }}
+                />
+              </div>
+            )}
+
             <div className="bg-green-50 border border-green-300 rounded-lg p-4">
               <div className="flex items-start gap-3">
                 <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
@@ -306,6 +344,19 @@ const WholesaleActivationWizard: React.FC<Props> = ({ partner: initialPartner, o
                   
                   if (rpcError) {
                     console.error('Error RPC:', rpcError);
+                    // Check if error is about debt/authorization
+                    const errMsg = rpcError.message || '';
+                    if (errMsg.includes('liquidar su adeudo') || errMsg.includes('solicita autorización')) {
+                      // Reload balance and authorization status
+                      const { data: balanceData } = await supabase.rpc(
+                        'get_partner_comodato_pending_balance',
+                        { p_partner_id: currentPartner.id }
+                      );
+                      if (balanceData) {
+                        setComodatoPendingBalance(safeNumber(balanceData));
+                        setAuthRefreshKey(prev => prev + 1);
+                      }
+                    }
                     throw rpcError;
                   }
 
@@ -359,6 +410,18 @@ const WholesaleActivationWizard: React.FC<Props> = ({ partner: initialPartner, o
           </div>
         )}
       </div>
+
+      {/* Debt Authorization Request Modal */}
+      {showAuthModal && (
+        <DebtAuthorizationRequestModal
+          partnerId={currentPartner.id}
+          pendingBalance={comodatoPendingBalance}
+          onClose={() => setShowAuthModal(false)}
+          onSubmitted={() => {
+            setAuthRefreshKey(prev => prev + 1);
+          }}
+        />
+      )}
     </div>
   );
 };

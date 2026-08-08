@@ -4,9 +4,10 @@ import { TrendingUp, DollarSign, Clock, CheckCircle } from 'lucide-react';
 
 interface CommissionSummaryCardsProps {
   summary: SellerCommissionMonthlySummary | null;
+  onPendingClick?: () => void;
 }
 
-export const CommissionSummaryCards = ({ summary }: CommissionSummaryCardsProps) => {
+export const CommissionSummaryCards = ({ summary, onPendingClick }: CommissionSummaryCardsProps) => {
   if (!summary) return null;
 
   const available = parseNumericValue(summary.available_total);
@@ -33,18 +34,30 @@ export const CommissionSummaryCards = ({ summary }: CommissionSummaryCardsProps)
       </div>
 
       {/* Secondary Cards */}
-      <div className="bg-cc-surface border border-white/10 rounded-2xl p-6">
+      {/* Pending de Liberación - CLICKABLE */}
+      <button
+        onClick={onPendingClick}
+        disabled={pending === 0}
+        className="text-left bg-cc-surface border border-white/10 rounded-2xl p-6 hover:border-white/30 hover:bg-white/5 disabled:hover:border-white/10 disabled:hover:bg-cc-surface disabled:cursor-default transition-all group"
+      >
         <div className="flex items-start justify-between mb-3">
           <p className="text-cc-text-muted text-sm font-semibold">Pendiente de liberación</p>
-          <Clock className="w-5 h-5 text-cc-text-muted opacity-50" />
+          <Clock className="w-5 h-5 text-cc-text-muted opacity-50 group-hover:opacity-100 group-disabled:opacity-50 transition-opacity" />
         </div>
         <p className="text-2xl font-bold text-cc-cream mb-2">
           {formatCurrency(pending)}
         </p>
-        <p className="text-xs text-cc-text-muted">
-          Ventas registradas que todavía no han sido pagadas completamente.
-        </p>
-      </div>
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-cc-text-muted">
+            Ventas registradas que todavía no han sido pagadas completamente.
+          </p>
+          {pending > 0 && (
+            <p className="text-xs font-semibold text-cc-primary opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap ml-2">
+              Ver detalle →
+            </p>
+          )}
+        </div>
+      </button>
 
       <div className="bg-cc-surface border border-white/10 rounded-2xl p-6">
         <div className="flex items-start justify-between mb-3">

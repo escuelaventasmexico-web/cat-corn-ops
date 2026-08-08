@@ -26,6 +26,7 @@ import { CommercialPartnerPhotos } from './CommercialPartnerPhotos';
 import { CommercialPartnerForm } from './CommercialPartnerForm';
 import CommercialPartnerComodato from './comodato/CommercialPartnerComodato';
 import CommercialPartnerWholesale from './wholesale/CommercialPartnerWholesale';
+import AdminWholesaleAuthorizationPanel from './wholesale/AdminWholesaleAuthorizationPanel';
 import { CommercialB2BSummary } from './CommercialB2BSummary';
 
 type DetailTab = 'resumen' | 'ubicacion' | 'fotos' | 'comodato' | 'mayoreo';
@@ -286,6 +287,9 @@ export const CommercialPartnerDetail = ({
 
                 {/* Resumen comercial B2B */}
                 <CommercialB2BSummary partnerId={partner.id} />
+
+                {/* Autorización de deuda para mayoreo dual */}
+                <AdminWholesaleAuthorizationPanel partnerId={partner.id} />
 
                 {/* Operación */}
                 {(partner.opening_hours || partner.preferred_visit_days) && (

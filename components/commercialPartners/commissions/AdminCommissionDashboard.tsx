@@ -8,12 +8,14 @@ import { ActivitySummary } from './ActivitySummary';
 import { PayCommissionsButton } from './payments/PayCommissionsButton';
 import { CommissionSettlementHistory } from './payments/CommissionSettlementHistory';
 import { PendingPaymentVerifications } from './PendingPaymentVerifications';
+import { PendingCommissionsModal } from './PendingCommissionsModal';
 
 export const AdminCommissionDashboard = () => {
   const [sellers, setSellers] = useState<UserProfile[]>([]);
   const [selectedSellerId, setSelectedSellerId] = useState<string | null>(null);
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [summary, setSummary] = useState<SellerCommissionMonthlySummary | null>(null);
+  const [showPendingModal, setShowPendingModal] = useState(false);
   const [allSellers, setAllSellers] = useState<Array<{
     seller_id: string;
     full_name: string;
@@ -214,7 +216,10 @@ export const AdminCommissionDashboard = () => {
               {sellers.find(s => s.id === selectedSellerId)?.full_name}
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <CommissionSummaryCards summary={summary} />
+              <CommissionSummaryCards 
+                summary={summary} 
+                onPendingClick={() => setShowPendingModal(true)}
+              />
             </div>
           </div>
 
@@ -335,6 +340,19 @@ export const AdminCommissionDashboard = () => {
             </div>
           </div>
         )}
+
+      {/* Pending Commissions Modal */}
+      {selectedSellerId && (
+        <PendingCommissionsModal
+          isOpen={showPendingModal}
+          onClose={() => setShowPendingModal(false)}
+          sellerId={selectedSellerId}
+          sellerName={sellers.find(s => s.id === selectedSellerId)?.full_name || 'Vendedor'}
+          monthStart={getMonthStartDate(currentDate.getFullYear(), currentDate.getMonth()).toISOString().split('T')[0]}
+          monthEnd={new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toISOString().split('T')[0]}
+          pendingTotal={summary?.pending_total || 0}
+        />
+      )}
       </div>
     </div>
   );
