@@ -22,7 +22,7 @@ export interface CommissionMovement {
   business_name: string;
   responsible_name: string | null;
   earned_at: string;
-  source_type: 'comodato_sale' | 'wholesale_sale' | 'conversion_bonus' | 'adjustment';
+  source_type: 'comodato_sale' | 'wholesale_sale' | 'conversion_bonus' | 'adjustment' | 'pos_sale';
   source_id: string | null;
   source_item_id: string | null;
   source_folio: string | null;
@@ -79,7 +79,7 @@ export interface CommissionSettlementDetail {
   product_name: string | null;
   product_variant: string | null;
   product_size: string | null;
-  source_type: 'comodato_sale' | 'wholesale_sale' | 'conversion_bonus' | 'adjustment';
+  source_type: 'comodato_sale' | 'wholesale_sale' | 'conversion_bonus' | 'adjustment' | 'pos_sale';
   quantity: number | string;
   unit_commission: number | string;
   settlement_item_amount: number | string;
@@ -122,7 +122,7 @@ export interface UserProfile {
 }
 
 export type CommissionStatus = 'pending' | 'available' | 'paid' | 'cancelled';
-export type SourceType = 'comodato_sale' | 'wholesale_sale' | 'conversion_bonus' | 'adjustment';
+export type SourceType = 'comodato_sale' | 'wholesale_sale' | 'conversion_bonus' | 'adjustment' | 'pos_sale';
 
 export interface CommissionFilters {
   status: CommissionStatus | 'todos';

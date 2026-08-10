@@ -86,6 +86,8 @@ export const getSourceTypeLabel = (sourceType: SourceType): string => {
       return 'Bono de conversión';
     case 'adjustment':
       return 'Ajuste';
+    case 'pos_sale':
+      return 'Venta en Punto de Venta';
     default:
       return 'Otro';
   }
@@ -101,6 +103,8 @@ export const getSourceTypeColor = (sourceType: SourceType): string => {
       return '#f59e0b'; // amber
     case 'adjustment':
       return '#6b7280'; // gray
+    case 'pos_sale':
+      return '#06b6d4'; // cyan
     default:
       return '#6b7280';
   }

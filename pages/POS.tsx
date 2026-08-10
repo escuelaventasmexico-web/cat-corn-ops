@@ -773,6 +773,17 @@ export const POS = () => {
     const displayName = p.product_name || p.name;
     const sku = p.sku_code || '';
     const search = searchTerm.toLowerCase();
+    
+    // FILTER OUT DELIVERY PRODUCTS
+    // Check if EITHER flavor or category contains 'delivery' (case-insensitive)
+    const flavorLower = (p.flavor || '').toLowerCase();
+    const categoryLower = (p.category || '').toLowerCase();
+    
+    if (flavorLower.includes('delivery') || categoryLower.includes('delivery')) {
+      return false; // Hide this product
+    }
+    
+    // Apply search filter
     return displayName.toLowerCase().includes(search) || sku.toLowerCase().includes(search);
   });
 
@@ -874,12 +885,12 @@ export const POS = () => {
         <div className="flex-1 overflow-y-auto pr-2">
             {/* Dynamic Flavor Sections */}
             {Object.entries(productsByFlavor).map(([flavor, flavorProducts]) => (
-              <div key={flavor} className="mb-4">
+              <div key={flavor} className="mb-3">
                 <h2 className="text-sm font-bold text-cc-cream mb-2 flex items-center gap-2 uppercase tracking-wide">
                   <span>{getFlavorEmoji(flavor)}</span>
                   <span>{flavor}</span>
                 </h2>
-                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-2">
                   {flavorProducts.map(product => (
                     <button 
                       key={product.id}
@@ -901,8 +912,8 @@ export const POS = () => {
             ))}
 
             {/* Promociones disponibles */}
-            <div className="mt-6 mb-4">
-              <h2 className="text-sm font-bold text-cc-cream mb-3 flex items-center gap-2 uppercase tracking-wide">
+            <div className="mt-3 mb-2">
+              <h2 className="text-sm font-bold text-cc-cream mb-2 flex items-center gap-2 uppercase tracking-wide">
                 <span>🎉</span>
                 <span>Promociones del día</span>
                 {activePromoCode && (
@@ -911,7 +922,7 @@ export const POS = () => {
                   </span>
                 )}
               </h2>
-              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-2">
                 {PROMOTIONS.map(p => {
                   const isActive = activePromoCode === p.code;
                   const eligible = promoEligibleCounts[p.code] || 0;
