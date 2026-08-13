@@ -38,6 +38,7 @@ export interface CommissionMovement {
   available_at: string | null;
   paid_at: string | null;
   cancelled_at: string | null;
+  metadata?: Record<string, any> | string | null;
 }
 
 export interface CommissionSettlement {

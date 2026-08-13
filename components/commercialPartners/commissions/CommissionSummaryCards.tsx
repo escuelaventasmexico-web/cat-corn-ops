@@ -5,9 +5,10 @@ import { TrendingUp, DollarSign, Clock, CheckCircle } from 'lucide-react';
 interface CommissionSummaryCardsProps {
   summary: SellerCommissionMonthlySummary | null;
   onPendingClick?: () => void;
+  onAvailableClick?: () => void;
 }
 
-export const CommissionSummaryCards = ({ summary, onPendingClick }: CommissionSummaryCardsProps) => {
+export const CommissionSummaryCards = ({ summary, onPendingClick, onAvailableClick }: CommissionSummaryCardsProps) => {
   if (!summary) return null;
 
   const available = parseNumericValue(summary.available_total);
@@ -18,7 +19,11 @@ export const CommissionSummaryCards = ({ summary, onPendingClick }: CommissionSu
   return (
     <>
       {/* Primary Card: Available for Payment */}
-      <div className="bg-gradient-to-br from-cc-primary/20 to-cc-primary/5 border-2 border-cc-primary rounded-2xl p-6 col-span-2">
+      <button
+        onClick={onAvailableClick}
+        disabled={available === 0}
+        className="text-left bg-gradient-to-br from-cc-primary/20 to-cc-primary/5 border-2 border-cc-primary rounded-2xl p-6 col-span-2 hover:border-cc-primary/80 hover:from-cc-primary/30 hover:to-cc-primary/10 disabled:hover:border-cc-primary disabled:hover:from-cc-primary/20 disabled:hover:to-cc-primary/5 disabled:cursor-default transition-all group"
+      >
         <div className="flex items-start justify-between">
           <div>
             <p className="text-cc-text-muted text-sm font-semibold mb-2">Comisión disponible</p>
@@ -27,11 +32,16 @@ export const CommissionSummaryCards = ({ summary, onPendingClick }: CommissionSu
             </p>
             <p className="text-xs text-cc-text-muted max-w-sm">
               Ya cumplió las condiciones y está lista para pagarse.
+              {available > 0 && (
+                <span className="block mt-2 font-semibold text-cc-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                  Clic para ver desglose →
+                </span>
+              )}
             </p>
           </div>
-          <DollarSign className="w-12 h-12 text-cc-primary opacity-20" />
+          <DollarSign className="w-12 h-12 text-cc-primary opacity-20 group-hover:opacity-30 group-disabled:opacity-20 transition-opacity" />
         </div>
-      </div>
+      </button>
 
       {/* Secondary Cards */}
       {/* Pending de Liberación - CLICKABLE */}

@@ -9,6 +9,8 @@ import { PayCommissionsButton } from './payments/PayCommissionsButton';
 import { CommissionSettlementHistory } from './payments/CommissionSettlementHistory';
 import { PendingPaymentVerifications } from './PendingPaymentVerifications';
 import { PendingCommissionsModal } from './PendingCommissionsModal';
+import { AvailableCommissionsModal } from './AvailableCommissionsModal';
+import { ExtraDayCommissionModal } from './ExtraDayCommissionModal';
 
 export const AdminCommissionDashboard = () => {
   const [sellers, setSellers] = useState<UserProfile[]>([]);
@@ -16,6 +18,8 @@ export const AdminCommissionDashboard = () => {
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [summary, setSummary] = useState<SellerCommissionMonthlySummary | null>(null);
   const [showPendingModal, setShowPendingModal] = useState(false);
+  const [showAvailableModal, setShowAvailableModal] = useState(false);
+  const [showExtraDayModal, setShowExtraDayModal] = useState(false);
   const [allSellers, setAllSellers] = useState<Array<{
     seller_id: string;
     full_name: string;
@@ -219,6 +223,7 @@ export const AdminCommissionDashboard = () => {
               <CommissionSummaryCards 
                 summary={summary} 
                 onPendingClick={() => setShowPendingModal(true)}
+                onAvailableClick={() => setShowAvailableModal(true)}
               />
             </div>
           </div>
@@ -235,6 +240,18 @@ export const AdminCommissionDashboard = () => {
               }}
             />
           </div>
+
+          {/* Extra Days Section - Admin Only */}
+          {selectedSellerId && (
+            <div className="bg-cc-surface rounded-xl border border-white/5 p-6">
+              <button
+                onClick={() => setShowExtraDayModal(true)}
+                className="w-full px-6 py-3 bg-cc-primary/20 border border-cc-primary text-cc-primary rounded-lg font-semibold hover:bg-cc-primary/30 hover:border-cc-primary/80 transition-all"
+              >
+                Pagar días extra
+              </button>
+            </div>
+          )}
 
           {/* Payment Section */}
           <div className="bg-cc-surface rounded-xl border border-white/5 p-6">
@@ -351,6 +368,35 @@ export const AdminCommissionDashboard = () => {
           monthStart={getMonthStartDate(currentDate.getFullYear(), currentDate.getMonth()).toISOString().split('T')[0]}
           monthEnd={new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toISOString().split('T')[0]}
           pendingTotal={summary?.pending_total || 0}
+        />
+      )}
+
+      {/* Available Commissions Modal */}
+      {selectedSellerId && (
+        <AvailableCommissionsModal
+          isOpen={showAvailableModal}
+          onClose={() => setShowAvailableModal(false)}
+          sellerId={selectedSellerId}
+          sellerName={sellers.find(s => s.id === selectedSellerId)?.full_name || 'Vendedor'}
+          monthStart={getMonthStartDate(currentDate.getFullYear(), currentDate.getMonth()).toISOString().split('T')[0]}
+          monthEnd={new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toISOString().split('T')[0]}
+          availableTotal={summary?.available_total || 0}
+        />
+      )}
+
+      {/* Extra Day Commission Modal */}
+      {selectedSellerId && (
+        <ExtraDayCommissionModal
+          isOpen={showExtraDayModal}
+          onClose={() => setShowExtraDayModal(false)}
+          sellerId={selectedSellerId}
+          sellerName={sellers.find(s => s.id === selectedSellerId)?.full_name || 'Vendedor'}
+          currentDate={currentDate}
+          onSuccess={() => {
+            setRefreshKey(prev => prev + 1);
+            loadAllSellersSummary();
+            loadSellerSummary(selectedSellerId);
+          }}
         />
       )}
       </div>
