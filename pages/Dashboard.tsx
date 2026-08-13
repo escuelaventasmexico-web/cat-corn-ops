@@ -3,6 +3,7 @@ import { supabase } from '../supabase';
 import { DollarSign, ShoppingBag, AlertTriangle, TrendingUp, TrendingDown, Banknote, CreditCard, Landmark, Store, Receipt, Truck } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { getCommercialCollections } from '../services/commercialCollectionsService';
+import { getBusinessDateString } from '../lib/dateUtils';
 
 interface TopProduct {
   id: string;
@@ -17,6 +18,7 @@ export const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     salesToday: 0,
+    cajaTotal: 0,
     ordersToday: 0,
     lowStockCount: 0,
     percentageChange: '—'
@@ -58,22 +60,32 @@ export const Dashboard = () => {
         .lt('created_at', tomorrowStr)
         .eq('is_refunded', false);
       
+      // Separate POS direct sales from orders
+      const posSalesOnly = salesToday?.filter(s => s.promotion_code !== 'ORDER_CHECKOUT') || [];
+      const posTotalToday = posSalesOnly.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
+      const posCountToday = posSalesOnly.length || 0;
+      
+      // Total sales including orders (for other metrics)
       const totalToday = salesToday?.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
-      const ordersToday = salesToday?.length || 0;
 
       // Load commercial collections for today (cobros reales de Socios Comerciales)
       let sociosComerciales = { total: 0, cash: 0, transfer: 0 };
       try {
-        const todayUTC = new Date();
-        todayUTC.setUTCHours(0, 0, 0, 0);
-        const tomorrowUTC = new Date(todayUTC);
-        tomorrowUTC.setUTCDate(tomorrowUTC.getUTCDate() + 1);
+        // Use getBusinessDateString() to get business date in Mexico City timezone
+        // Then convert to UTC midnight for consistent querying
+        const businessDateStr = getBusinessDateString();
+        const [year, month, day] = businessDateStr.split('-').map(Number);
+        const todayUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+        const tomorrowUTC = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0));
 
         const collections = await getCommercialCollections(todayUTC, tomorrowUTC);
         if (!collections.error) {
           sociosComerciales = { total: collections.total, cash: collections.cash, transfer: collections.transfer };
           // Log for validation
           console.log('Commercial collections validation', {
+            businessDate: businessDateStr,
+            startUTC: todayUTC.toISOString(),
+            endUTC: tomorrowUTC.toISOString(),
             total: collections.total,
             bySource: collections.bySource,
             cash: collections.cash,
@@ -303,7 +315,8 @@ export const Dashboard = () => {
 
       setStats({
         salesToday: totalToday + sociosComerciales.total,
-        ordersToday,
+        cajaTotal: posTotalToday,
+        ordersToday: posCountToday,
         lowStockCount: count || 0,
         percentageChange
       });
@@ -400,7 +413,7 @@ export const Dashboard = () => {
                 color="bg-cc-accent"
                 subtitle={{
                   label: 'Ticket Promedio',
-                  value: `$${stats.ordersToday > 0 ? (stats.salesToday / stats.ordersToday).toFixed(2) : '0.00'}`
+                  value: `$${stats.ordersToday > 0 ? (stats.cajaTotal / stats.ordersToday).toFixed(2) : '0.00'}`
                 }}
             />
             <StatCard 

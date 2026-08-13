@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
-import { Receipt, X, CreditCard, Banknote, Landmark, Download, Calendar, Filter, RotateCcw, AlertTriangle, Truck } from 'lucide-react';
+import { Receipt, X, CreditCard, Banknote, Landmark, Download, Calendar, Filter, RotateCcw, AlertTriangle, Truck, Users, DollarSign } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { formatDateTimeMX } from '../lib/datetime';
+import { getCommercialCollections, CommercialCollectionItem } from '../services/commercialCollectionsService';
 
 interface SaleItemPreview {
   quantity: number;
@@ -60,8 +61,6 @@ export const SalesHistory = () => {
   const [grossTotal, setGrossTotal] = useState(0);
   const [refundedTotal, setRefundedTotal] = useState(0);
   const [netTotal, setNetTotal] = useState(0);
-  const [totalSalesCount, setTotalSalesCount] = useState(0);
-  const [refundedCount, setRefundedCount] = useState(0);
   const [posCashTotal, setPosCashTotal] = useState(0);
   const [posCardTotal, setPosCardTotal] = useState(0);
   const [orderCashTotal, setOrderCashTotal] = useState(0);
@@ -69,6 +68,25 @@ export const SalesHistory = () => {
   const [orderTransferTotal, setOrderTransferTotal] = useState(0);
   const [deliveryTotal, setDeliveryTotal] = useState(0);
   const [totalsByOrigin, setTotalsByOrigin] = useState<Record<string, any>>({});
+  
+  // Commercial collections (Socios Comerciales)
+  const [comercialCollections, setComercialCollections] = useState<{
+    total: number;
+    comodato: number;
+    mayoreo: number;
+    pieceSale: number;
+    cash: number;
+    transfer: number;
+    breakdown: CommercialCollectionItem[];
+  }>({
+    total: 0,
+    comodato: 0,
+    mayoreo: 0,
+    pieceSale: 0,
+    cash: 0,
+    transfer: 0,
+    breakdown: []
+  });
   
 
   // ── Refund state ──
@@ -162,8 +180,6 @@ export const SalesHistory = () => {
       setGrossTotal(Number(s.gross_total ?? 0));
       setRefundedTotal(Number(s.refunded_total ?? 0));
       setNetTotal(Number(s.net_total ?? 0));
-      setTotalSalesCount(Number(s.total_sales_count ?? 0));
-      setRefundedCount(Number(s.refunded_count ?? 0));
       setPosCashTotal(Number(s.pos_cash_total ?? 0));
       setPosCardTotal(Number(s.pos_card_total ?? 0));
       setOrderCashTotal(Number(s.order_cash_total ?? 0));
@@ -171,6 +187,48 @@ export const SalesHistory = () => {
       setOrderTransferTotal(Number(s.order_transfer_total ?? 0));
       setDeliveryTotal(Number(s.delivery_total ?? 0));
       setTotalsByOrigin(s.totals_by_origin ?? {});
+      
+      // Load commercial collections for the same date range
+      try {
+        // For commercial collections, we need UTC midnight dates (payment_date is stored as UTC)
+        // Build dates as UTC midnight to match business date semantics
+        let startDate: Date | null = null;
+        let endDate: Date | null = null;
+
+        if (fromDate) {
+          const [year, month, day] = fromDate.split('-').map(Number);
+          startDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+        }
+
+        if (toDate) {
+          const [year, month, day] = toDate.split('-').map(Number);
+          // End date should be end of day (23:59:59 UTC ≈ next day 00:00:00)
+          endDate = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0));
+        } else if (fromDate) {
+          // If only from date, use same day (end at next day 00:00:00)
+          const [year, month, day] = fromDate.split('-').map(Number);
+          endDate = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0));
+        }
+
+        if (startDate && endDate) {
+          const collections = await getCommercialCollections(startDate, endDate);
+          if (!collections.error) {
+            setComercialCollections({
+              total: collections.total,
+              comodato: collections.bySource?.comodato || 0,
+              mayoreo: collections.bySource?.mayoreo || 0,
+              pieceSale: collections.bySource?.pieceSale || 0,
+              cash: collections.cash,
+              transfer: collections.transfer,
+              breakdown: collections.breakdown || []
+            });
+          } else {
+            console.warn('Commercial collections error:', collections.error);
+          }
+        }
+      } catch (err) {
+        console.error('Exception loading commercial collections:', err);
+      }
     } catch (err: any) {
       console.error('Error loading sales summary:', err);
     } finally {
@@ -432,24 +490,81 @@ export const SalesHistory = () => {
       return;
     }
 
-    const headers = ['ID Venta', 'Fecha', 'Método de Pago', 'Total'];
-    const rows = sales.map(sale => [
-      sale.id,
-      formatDateTimeMX(sale.created_at),
-      getPaymentLabel(sale.payment_method),
-      `$${Number(sale.total || 0).toFixed(2)}`
-    ]);
+    // POS sales rows
+    const headers = ['Origen', 'Fecha', 'Hora', 'Folio', 'Descripción', 'Método de Pago', 'Monto', 'Estado'];
+    const posSalesRows = sales.map(sale => {
+      const origin = sale.sale_origin === 'order' ? 'Pedido' : 
+                     sale.sale_origin === 'delivery' ? `Delivery (${sale.delivery_platform || 'otra'})` : 
+                     'Caja Directa';
+      const [date, time] = formatDateTimeMX(sale.created_at).split(' ');
+      return [
+        origin,
+        date,
+        time || '',
+        sale.id.substring(0, 8).toUpperCase(),
+        buildProductSummary(sale.sale_items),
+        getPaymentLabel(sale.payment_method),
+        `$${Number(sale.total || 0).toFixed(2)}`,
+        sale.is_refunded ? 'Devuelto' : 'Completado'
+      ];
+    });
+
+    // Socios comerciales rows (if any data loaded)
+    const sociosRows = [];
+    if (comercialCollections.comodato > 0 || comercialCollections.mayoreo > 0 || comercialCollections.pieceSale > 0) {
+      const fromDateObj = fromDate ? new Date(fromDate) : new Date();
+      const dateStr = fromDateObj.toLocaleDateString('es-MX');
+      
+      if (comercialCollections.comodato > 0) {
+        sociosRows.push([
+          'Socios Comerciales - Comodato',
+          dateStr,
+          '',
+          'COMOD',
+          'Cobro Comodato',
+          comercialCollections.cash > 0 ? 'Efectivo' : 'Transferencia',
+          `$${comercialCollections.comodato.toFixed(2)}`,
+          'Completado'
+        ]);
+      }
+      if (comercialCollections.mayoreo > 0) {
+        sociosRows.push([
+          'Socios Comerciales - Mayoreo',
+          dateStr,
+          '',
+          'MAYO',
+          'Cobro Mayoreo',
+          comercialCollections.cash > 0 ? 'Efectivo' : 'Transferencia',
+          `$${comercialCollections.mayoreo.toFixed(2)}`,
+          'Completado'
+        ]);
+      }
+      if (comercialCollections.pieceSale > 0) {
+        sociosRows.push([
+          'Socios Comerciales - Venta Pieza',
+          dateStr,
+          '',
+          'PIEZA',
+          'Cobro Venta Pieza',
+          comercialCollections.cash > 0 ? 'Efectivo' : 'Transferencia',
+          `$${comercialCollections.pieceSale.toFixed(2)}`,
+          'Completado'
+        ]);
+      }
+    }
 
     const csvContent = [
       headers.join(','),
-      ...rows.map(row => row.join(','))
+      ...posSalesRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')),
+      ...(sociosRows.length > 0 ? ['', '# Socios Comerciales'] : []),
+      ...sociosRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `ventas_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `historial_ventas_${new Date().toISOString().split('T')[0]}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -473,6 +588,7 @@ export const SalesHistory = () => {
     { name: 'Pedidos Tarjeta',  value: orderCardTotal,      color: '#06B6D4' },
     { name: 'Pedidos Transf.',  value: orderTransferTotal,  color: '#8B5CF6' },
     { name: 'Delivery',         value: deliveryTotalRPC,    color: '#FF6900' },
+    { name: 'Socios Comerciales', value: comercialCollections.total, color: '#EC4899' },
   ].filter(item => item.value > 0);
 
   return (
@@ -549,9 +665,10 @@ export const SalesHistory = () => {
       </div>
 
       {/* Sales breakdown by origin */}
-      {sales.length > 0 && (
+      {(sales.length > 0 || comercialCollections.total > 0) && (
         <div className="bg-cc-surface p-6 rounded-xl border border-white/5">
-          <h3 className="text-lg font-bold text-cc-cream mb-4">Desglose por origen</h3>
+          <h3 className="text-lg font-bold text-cc-cream mb-1">Desglose Financiero - Todos los Orígenes</h3>
+          <p className="text-xs text-cc-text-muted mb-4">Resumen de ingresos separados por origen y método de pago</p>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Chart */}
             <div className="h-64">
@@ -656,14 +773,59 @@ export const SalesHistory = () => {
                 </div>
               )}
 
-              {/* Grand total (from RPC) */}
+              {/* Socios Comerciales (Commercial Collections) */}
+              {comercialCollections.total > 0 && (
+                <div className="bg-black/20 p-4 rounded-lg border border-pink-500/20">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-bold text-pink-400">🤝 Socios Comerciales</span>
+                    <span className="text-xs text-cc-text-muted">Cobros realizados</span>
+                  </div>
+                  {comercialCollections.comodato > 0 && (
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-cc-text-muted">Comodato</span>
+                      <span className="text-cc-cream">${comercialCollections.comodato.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {comercialCollections.mayoreo > 0 && (
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-cc-text-muted">Mayoreo</span>
+                      <span className="text-cc-cream">${comercialCollections.mayoreo.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {comercialCollections.pieceSale > 0 && (
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-cc-text-muted">Venta Pieza</span>
+                      <span className="text-cc-cream">${comercialCollections.pieceSale.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {comercialCollections.cash > 0 && (
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-cc-text-muted flex items-center gap-1"><Banknote size={13} className="text-pink-400" /> Efectivo</span>
+                      <span className="text-cc-cream">${comercialCollections.cash.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {comercialCollections.transfer > 0 && (
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-cc-text-muted flex items-center gap-1"><Landmark size={13} className="text-pink-400" /> Transferencia</span>
+                      <span className="text-cc-cream">${comercialCollections.transfer.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-sm mt-2 pt-2 border-t border-white/10">
+                    <span className="text-pink-300 font-bold">Total socios</span>
+                    <span className="text-pink-300 font-bold">${comercialCollections.total.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Grand total (from RPC + commercial collections) */}
               <div className="bg-cc-primary/10 p-4 rounded-lg border border-cc-primary/20">
                 <div className="text-sm text-cc-text-muted mb-1">Total General histórico</div>
-                <div className="text-3xl font-bold text-cc-primary">${netTotal.toFixed(2)}</div>
+                <div className="text-3xl font-bold text-cc-primary">${(netTotal + comercialCollections.total).toFixed(2)}</div>
                 <div className="text-sm text-cc-text-muted mt-2 space-y-1">
-                  <div>Bruto: <span className="font-semibold text-cc-cream">${grossTotal.toFixed(2)}</span></div>
-                  <div>Devoluciones: <span className="font-semibold text-red-400">-${refundedTotal.toFixed(2)}</span></div>
-                  <div>Ventas válidas: <span className="font-semibold">{totalSalesCount}</span> · Devoluciones: <span className="font-semibold text-red-400">{refundedCount}</span></div>
+                  <div>POS (Bruto): <span className="font-semibold text-cc-cream">${grossTotal.toFixed(2)}</span></div>
+                  <div>POS (Devoluciones): <span className="font-semibold text-red-400">-${refundedTotal.toFixed(2)}</span></div>
+                  <div>Socios Comerciales: <span className="font-semibold text-pink-300">${comercialCollections.total.toFixed(2)}</span></div>
+                  <div className="text-cc-primary font-bold mt-2">TOTAL: ${(netTotal + comercialCollections.total).toFixed(2)}</div>
                 </div>
               </div>
             </div>
@@ -682,81 +844,147 @@ export const SalesHistory = () => {
         </div>
       ) : (
         <div className="grid gap-4">
-          {sales.map((sale) => (
-            <div
-              key={sale.id}
-              onClick={() => !sale.is_refunded && loadSaleDetails(sale)}
-              className={`bg-cc-surface p-5 rounded-xl border transition-all ${
-                sale.is_refunded
-                  ? 'border-red-500/20 opacity-60 cursor-default'
-                  : 'border-white/5 hover:border-cc-primary/30 cursor-pointer hover:shadow-lg group'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-lg flex items-center justify-center transition-colors ${
-                    sale.is_refunded ? 'bg-red-500/10' : 'bg-cc-primary/10 group-hover:bg-cc-primary/20'
-                  }`}>
-                    <Receipt size={24} className={sale.is_refunded ? 'text-red-400' : 'text-cc-primary'} />
+          {(() => {
+            // Create combined list of sales and commercial collections
+            const posMovements = sales.map(sale => ({ type: 'pos' as const, data: sale }));
+            const sociosMovements = comercialCollections.breakdown.map(payment => ({ 
+              type: 'socios' as const, 
+              data: payment 
+            }));
+            
+            const combinedMovements = [...posMovements, ...sociosMovements].sort((a, b) => {
+              const dateA = a.type === 'pos' ? new Date(a.data.created_at).getTime() : new Date(a.data.payment_date).getTime();
+              const dateB = b.type === 'pos' ? new Date(b.data.created_at).getTime() : new Date(b.data.payment_date).getTime();
+              return dateB - dateA;
+            });
+            
+            return combinedMovements.map((movement) => {
+              if (movement.type === 'pos') {
+                const sale = movement.data;
+                return (
+                  <div
+                    key={sale.id}
+                    onClick={() => !sale.is_refunded && loadSaleDetails(sale)}
+                    className={`bg-cc-surface p-5 rounded-xl border transition-all ${
+                      sale.is_refunded
+                        ? 'border-red-500/20 opacity-60 cursor-default'
+                        : 'border-white/5 hover:border-cc-primary/30 cursor-pointer hover:shadow-lg group'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className={`w-12 h-12 rounded-lg flex items-center justify-center transition-colors ${
+                          sale.is_refunded ? 'bg-red-500/10' : 'bg-cc-primary/10 group-hover:bg-cc-primary/20'
+                        }`}>
+                          <Receipt size={24} className={sale.is_refunded ? 'text-red-400' : 'text-cc-primary'} />
+                        </div>
+                        <div>
+                          <div className="font-semibold text-cc-text-main mb-1 line-clamp-1 flex items-center gap-2">
+                            {buildProductSummary(sale.sale_items)}
+                            {sale.is_refunded && (
+                              <span className="text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                                DEVUELTO
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-xs text-cc-text-muted">
+                              #{sale.id.substring(0, 8).toUpperCase()}
+                            </span>
+                            <span className="text-cc-text-muted text-xs">•</span>
+                            <span className="text-xs text-cc-text-muted">
+                              {formatDateTimeMX(sale.created_at)}
+                            </span>
+                            <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-white/5">
+                              {(() => { const b = getPaymentBadge(sale.payment_method, sale.sale_origin); return <>{b.icon}<span className={b.color}>{b.label}</span></>; })()}
+                            </span>
+                            {sale.sale_origin === 'delivery' && (
+                              <span className="flex items-center gap-1 text-xs font-bold text-orange-300 bg-orange-500/15 border border-orange-500/25 rounded-full px-2 py-0.5">
+                                <Truck size={10} />
+                                {sale.delivery_platform === 'uber_eats' ? 'Uber Eats' : sale.delivery_platform === 'didi_food' ? 'DiDi Food' : 'Rappi'}
+                              </span>
+                            )}
+                            {sale.is_refunded && sale.refunded_at && (
+                              <span className="text-[10px] text-red-400/70">
+                                Devuelta {formatDateTimeMX(sale.refunded_at)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <div className={`text-2xl font-bold ${
+                            sale.is_refunded ? 'text-red-400 line-through decoration-red-400/60' : 'text-cc-primary'
+                          }`}>
+                            ${Number(sale.total).toFixed(2)}
+                          </div>
+                          <div className="text-xs text-cc-text-muted">
+                            {sale.is_refunded ? 'Devuelta' : 'Click para ver detalles'}
+                          </div>
+                        </div>
+                        {!sale.is_refunded && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setRefundTarget(sale); setRefundReason(''); setRefundError(null); }}
+                            className="p-2 rounded-lg bg-white/5 border border-white/10 text-cc-text-muted hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 transition-all"
+                            title="Devolver venta"
+                          >
+                            <RotateCcw size={15} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="font-semibold text-cc-text-main mb-1 line-clamp-1 flex items-center gap-2">
-                      {buildProductSummary(sale.sale_items)}
-                      {sale.is_refunded && (
-                        <span className="text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
-                          DEVUELTO
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-xs text-cc-text-muted">
-                        #{sale.id.substring(0, 8).toUpperCase()}
-                      </span>
-                      <span className="text-cc-text-muted text-xs">•</span>
-                      <span className="text-xs text-cc-text-muted">
-                        {formatDateTimeMX(sale.created_at)}
-                      </span>
-                      <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-white/5">
-                        {(() => { const b = getPaymentBadge(sale.payment_method, sale.sale_origin); return <>{b.icon}<span className={b.color}>{b.label}</span></>; })()}
-                      </span>
-                      {sale.sale_origin === 'delivery' && (
-                        <span className="flex items-center gap-1 text-xs font-bold text-orange-300 bg-orange-500/15 border border-orange-500/25 rounded-full px-2 py-0.5">
-                          <Truck size={10} />
-                          {sale.delivery_platform === 'uber_eats' ? 'Uber Eats' : sale.delivery_platform === 'didi_food' ? 'DiDi Food' : 'Rappi'}
-                        </span>
-                      )}
-                      {sale.is_refunded && sale.refunded_at && (
-                        <span className="text-[10px] text-red-400/70">
-                          Devuelta {formatDateTimeMX(sale.refunded_at)}
-                        </span>
-                      )}
+                );
+              } else {
+                // Render socios commercial movement
+                const payment = movement.data;
+                const sourceType = payment.source_type === 'comodato' ? 'COMODATO' : payment.source_type === 'mayoreo' ? 'MAYOREO' : 'VENTA PIEZA';
+                return (
+                  <div
+                    key={payment.id}
+                    className="bg-cc-surface p-5 rounded-xl border border-pink-500/20 hover:border-pink-500/40 transition-all"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-pink-500/10">
+                          <Users size={24} className="text-pink-400" />
+                        </div>
+                        <div>
+                          <div className="font-semibold text-cc-text-main mb-1 line-clamp-1 flex items-center gap-2">
+                            Socios Comerciales
+                            <span className="text-[10px] font-bold bg-pink-500/20 text-pink-300 border border-pink-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                              {sourceType}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs text-cc-text-muted">
+                              {formatDateTimeMX(payment.payment_date)}
+                            </span>
+                            <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-white/5">
+                              {payment.payment_method === 'cash' ? (
+                                <><DollarSign size={12} className="text-green-400" /><span className="text-green-400">EFECTIVO</span></>
+                              ) : (
+                                <><Banknote size={12} className="text-blue-400" /><span className="text-blue-400">TRANSFERENCIA</span></>
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-pink-400">
+                          ${Number(payment.amount).toFixed(2)}
+                        </div>
+                        <div className="text-xs text-cc-text-muted">
+                          Movimiento comercial
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <div className={`text-2xl font-bold ${
-                      sale.is_refunded ? 'text-red-400 line-through decoration-red-400/60' : 'text-cc-primary'
-                    }`}>
-                      ${Number(sale.total).toFixed(2)}
-                    </div>
-                    <div className="text-xs text-cc-text-muted">
-                      {sale.is_refunded ? 'Devuelta' : 'Click para ver detalles'}
-                    </div>
-                  </div>
-                  {!sale.is_refunded && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setRefundTarget(sale); setRefundReason(''); setRefundError(null); }}
-                      className="p-2 rounded-lg bg-white/5 border border-white/10 text-cc-text-muted hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 transition-all"
-                      title="Devolver venta"
-                    >
-                      <RotateCcw size={15} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
+                );
+              }
+            });
+          })()}
         </div>
       )}
 

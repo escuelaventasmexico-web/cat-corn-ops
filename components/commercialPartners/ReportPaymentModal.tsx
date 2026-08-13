@@ -6,7 +6,7 @@ import {
   submitPaymentVerificationRequest,
   uploadPaymentProof,
 } from '../../lib/paymentVerificationRpcs';
-import { getBusinessDateString } from '../../lib/dateUtils';
+import { getBusinessDateString, businessDateToUtcMidnight } from '../../lib/dateUtils';
 
 interface Props {
   partnerId: string;
@@ -144,15 +144,25 @@ const ReportPaymentModal: React.FC<Props> = ({
       return;
     }
 
+    // VALIDACIÓN: Fecha no puede ser posterior a fecha de negocio actual
+    const todayBusiness = getBusinessDateString();
+    if (paymentDate > todayBusiness) {
+      setError('La fecha del pago no puede ser posterior a la fecha de negocio actual.');
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
     try {
+      // Convertir fecha de negocio a UTC midnight ISO string
+      const paymentDateUtc = businessDateToUtcMidnight(paymentDate);
+
       // Create payment verification request (draft)
       const result = await createPaymentVerificationRequest(
         scheme,
         partnerId,
-        paymentDate,
+        paymentDateUtc,
         Number(amount),
         paymentMethod,
         scheme === 'comodato' ? operationId : undefined,

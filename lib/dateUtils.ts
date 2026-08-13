@@ -76,6 +76,51 @@ export function getBusinessDate(dateParam?: Date | string): Date {
 }
 
 /**
+ * Convert business date (YYYY-MM-DD) to UTC midnight ISO string
+ * 
+ * CRITICAL: This function NEVER uses browser timezone.
+ * Input date is treated as a CALENDAR DATE (business date),
+ * and output is ALWAYS UTC midnight: YYYY-MM-DDT00:00:00.000Z
+ * 
+ * This ensures consistency when sending dates to backend as TIMESTAMPTZ parameters.
+ * 
+ * Example:
+ *   businessDateToUtcMidnight('2026-08-11') → '2026-08-11T00:00:00.000Z'
+ *   businessDateToUtcMidnight('2026-08-12') → '2026-08-12T00:00:00.000Z'
+ * 
+ * @param dateString Business date in format YYYY-MM-DD
+ * @returns ISO string in UTC midnight format
+ * @throws Error if format is invalid
+ */
+export function businessDateToUtcMidnight(dateString: string): string {
+  // Validate format: YYYY-MM-DD
+  const match = dateString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    throw new Error(`Invalid date format. Expected YYYY-MM-DD, got: ${dateString}`);
+  }
+  
+  const [, year, month, day] = match;
+  
+  // Validate reasonable values
+  const yearNum = parseInt(year, 10);
+  const monthNum = parseInt(month, 10);
+  const dayNum = parseInt(day, 10);
+  
+  if (monthNum < 1 || monthNum > 12) {
+    throw new Error(`Invalid month: ${monthNum}`);
+  }
+  
+  if (dayNum < 1 || dayNum > 31) {
+    throw new Error(`Invalid day: ${dayNum}`);
+  }
+  
+  // Return as UTC midnight ISO string
+  // Using Date.UTC to ensure UTC timezone, not browser timezone
+  const utcDate = new Date(Date.UTC(yearNum, monthNum - 1, dayNum));
+  return utcDate.toISOString();
+}
+
+/**
  * Default export of getter for current business date string
  * 
  * This is the PRIMARY function to use when setting default payment_date
