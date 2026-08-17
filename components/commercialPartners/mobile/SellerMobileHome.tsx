@@ -1,9 +1,12 @@
 import { TrendingUp, Users, Package, DollarSign } from 'lucide-react';
+import { SellerMonthlyPartnerTarget } from './SellerMonthlyPartnerTarget';
 
 interface SellerMobileHomeProps {
   commissionPending?: number;
   commissionAvailable?: number;
   partnersCount?: number;
+  sellerId: string;
+  refreshKey?: number;
   onNavigate: (page: 'socios' | 'vender' | 'comisiones') => void;
 }
 
@@ -11,6 +14,8 @@ export const SellerMobileHome = ({
   commissionPending = 0,
   commissionAvailable = 0,
   partnersCount = 0,
+  sellerId,
+  refreshKey = 0,
   onNavigate,
 }: SellerMobileHomeProps) => {
   const quickStats = [
@@ -59,6 +64,12 @@ export const SellerMobileHome = ({
           </button>
         ))}
       </div>
+
+      {/* Monthly Partner Target Card */}
+      <SellerMonthlyPartnerTarget 
+        sellerId={sellerId} 
+        refreshKey={refreshKey}
+      />
 
       {/* Quick Actions */}
       <div className="px-4 space-y-3">

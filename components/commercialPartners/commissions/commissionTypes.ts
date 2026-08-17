@@ -102,6 +102,16 @@ export interface SellerCommissionTargetProgress {
   progress_percentage: number;
 }
 
+export interface SellerMonthlyPartnerProgress {
+  seller_id: string;
+  seller_name: string;
+  month_start: string;
+  target_active_partners: number | null;
+  achieved_active_partners: number;
+  remaining_active_partners: number | null;
+  progress_percentage: number | null;
+}
+
 export interface CommissionRule {
   id: string;
   schema_name: string;

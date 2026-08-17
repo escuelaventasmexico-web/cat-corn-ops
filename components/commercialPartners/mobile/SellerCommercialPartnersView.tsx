@@ -33,6 +33,7 @@ export const SellerCommercialPartnersView = ({
   const [showNewForm, setShowNewForm] = useState(false);
   const [selectedPartner, setSelectedPartner] = useState<CommercialPartner | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [homeRefreshKey, setHomeRefreshKey] = useState(0);
   const [commissionData, setCommissionData] = useState({
     pending: 0,
     available: 0,
@@ -101,12 +102,17 @@ export const SellerCommercialPartnersView = ({
 
       if (dbErr) throw dbErr;
       setPartners((data as CommercialPartner[]) ?? []);
+      
+      // Refresh home tarjeta
+      if (activeTab === 'inicio') {
+        setHomeRefreshKey(prev => prev + 1);
+      }
     } catch (e: any) {
       setError(e?.message || 'Error al cargar socios');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeTab]);
 
   useEffect(() => {
     loadPartners();
@@ -151,6 +157,8 @@ export const SellerCommercialPartnersView = ({
             commissionPending={commissionData.pending}
             commissionAvailable={commissionData.available}
             partnersCount={partners.length}
+            sellerId={user?.id}
+            refreshKey={homeRefreshKey}
             onNavigate={(page) => setActiveTab(page)}
           />
         );

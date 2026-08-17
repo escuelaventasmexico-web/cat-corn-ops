@@ -11,6 +11,7 @@ import { PendingPaymentVerifications } from './PendingPaymentVerifications';
 import { PendingCommissionsModal } from './PendingCommissionsModal';
 import { AvailableCommissionsModal } from './AvailableCommissionsModal';
 import { ExtraDayCommissionModal } from './ExtraDayCommissionModal';
+import { AdminPartnerTargetEditor } from './AdminPartnerTargetEditor';
 
 export const AdminCommissionDashboard = () => {
   const [sellers, setSellers] = useState<UserProfile[]>([]);
@@ -251,6 +252,20 @@ export const AdminCommissionDashboard = () => {
                 Pagar días extra
               </button>
             </div>
+          )}
+
+          {/* Partner Target Section - Admin Only */}
+          {selectedSellerId && (
+            <AdminPartnerTargetEditor
+              sellerId={selectedSellerId}
+              sellerName={sellers.find(s => s.id === selectedSellerId)?.full_name || ''}
+              monthStart={getMonthStartDate(currentDate.getFullYear(), currentDate.getMonth())
+                .toISOString()
+                .split('T')[0]}
+              onSaveSuccess={() => {
+                setRefreshKey(prev => prev + 1);
+              }}
+            />
           )}
 
           {/* Payment Section */}
