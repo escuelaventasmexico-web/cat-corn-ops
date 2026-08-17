@@ -25,6 +25,12 @@ export interface AuthContextType {
   isCommercialPartnersUser: boolean;
   canAccessModule: (moduleName: string) => boolean;
 
+  // Financial access (in-memory only)
+  financialAccessUnlockedUntil: number | null;
+  unlockFinancialAccess: () => void;
+  lockFinancialAccess: () => void;
+  isFinancialAccessUnlocked: () => boolean;
+
   // State
   loading: boolean;
   profileLoading: boolean;
@@ -61,6 +67,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [profileLoading, setProfileLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [blockedReason, setBlockedReason] = useState<'no_profile' | 'inactive' | null>(null);
+  const [financialAccessUnlockedUntil, setFinancialAccessUnlockedUntil] = useState<number | null>(null);
+
+  // Financial access control functions
+  const unlockFinancialAccess = () => {
+    const unlockedUntil = Date.now() + 15 * 60 * 1000; // 15 minutes from now
+    setFinancialAccessUnlockedUntil(unlockedUntil);
+    console.log('[FINANCIAL_ACCESS] Unlocked until:', new Date(unlockedUntil).toISOString());
+  };
+
+  const lockFinancialAccess = () => {
+    setFinancialAccessUnlockedUntil(null);
+    console.log('[FINANCIAL_ACCESS] Locked');
+  };
+
+  const isFinancialAccessUnlocked = (): boolean => {
+    if (!financialAccessUnlockedUntil) return false;
+    return Date.now() < financialAccessUnlockedUntil;
+  };
 
   // Load user profile from user_profiles table
   const loadUserProfile = async (userId: string): Promise<UserProfile | null> => {
@@ -199,6 +223,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setSession(newSession);
       setProfile(null);
       setBlockedReason(null);
+      setFinancialAccessUnlockedUntil(null);
 
       if (!newSession?.user) {
         setProfile(null);
@@ -249,6 +274,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setSession(null);
       setProfile(null);
       setBlockedReason(null);
+      setFinancialAccessUnlockedUntil(null);
     } catch (err) {
       console.error('Error logging out:', err);
     }
@@ -295,6 +321,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     isAdmin,
     isCommercialPartnersUser,
     canAccessModule,
+    financialAccessUnlockedUntil,
+    unlockFinancialAccess,
+    lockFinancialAccess,
+    isFinancialAccessUnlocked,
     loading,
     profileLoading,
     error,

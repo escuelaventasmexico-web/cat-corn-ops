@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
 import { ProtectedRoute, AccessDenied } from './components/ProtectedRoute';
+import { SensitiveModuleGuard } from './components/SensitiveModuleGuard';
 import { Dashboard } from './pages/Dashboard';
 import { POS } from './pages/POS';
 import { Inventory } from './pages/Inventory';
@@ -92,17 +93,23 @@ function AppRoutes() {
         } />
         <Route path="/sales-history" element={
           <ProtectedRoute requiredModules={['historial']}>
-            <SalesHistory />
+            <SensitiveModuleGuard>
+              <SalesHistory />
+            </SensitiveModuleGuard>
           </ProtectedRoute>
         } />
         <Route path="/finanzas/*" element={
           <ProtectedRoute requiredModules={['finanzas']}>
-            <Finanzas />
+            <SensitiveModuleGuard>
+              <Finanzas />
+            </SensitiveModuleGuard>
           </ProtectedRoute>
         } />
         <Route path="/corte-de-caja" element={
           <ProtectedRoute requiredModules={['corte_caja']}>
-            <CorteDeCaja />
+            <SensitiveModuleGuard>
+              <CorteDeCaja />
+            </SensitiveModuleGuard>
           </ProtectedRoute>
         } />
         <Route path="/pedidos" element={
