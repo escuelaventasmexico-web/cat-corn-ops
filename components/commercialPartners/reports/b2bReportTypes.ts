@@ -174,3 +174,165 @@ export interface B2BCollectionReport {
   largest_debtor_name: string | null;
   largest_debtor_amount: number | null;
 }
+
+/* ── B2B Balance Detail (Modal) ──────────────────────────────────── */
+
+export interface B2BComodatoStockItem {
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  total_delivered: number;
+  total_sold: number;
+  total_withdrawn: number;
+  total_spoiled: number;
+  total_adjusted: number;
+  current_quantity: number;
+  last_price_to_catcorn: number | null;
+  last_suggested_retail_price: number | null;
+  first_delivery_at: string | null;
+  last_delivery_at: string | null;
+}
+
+export interface B2BComodatoSettlement {
+  movement_id: string;
+  movement_date: string;
+  total_due: number;
+  linked_paid: number;
+  pending_amount: number;
+  payment_status: 'pending' | 'liquidated';
+  last_linked_payment_at: string | null;
+  products_sold: Array<{
+    product_name: string;
+    product_variant: string | null;
+    product_size: string | null;
+    quantity_sold: number;
+  }>;
+}
+
+export interface B2BComodatoDetail {
+  generated: number;
+  paid: number;
+  pending: number;
+  units_in_partner: number;
+  stock_units: number;
+  last_payment_at: string | null;
+  oldest_settlement_at: string | null;
+  oldest_stock_delivery_at: string | null;
+  unallocated_confirmed_payments: number;
+  stock: B2BComodatoStockItem[];
+  settlements: B2BComodatoSettlement[];
+}
+
+export interface B2BWholesaleOrder {
+  order_id: string;
+  order_folio: string;
+  order_date: string;
+  delivery_date: string | null;
+  payment_due_at: string | null;
+  order_status: string;
+  total_pieces: number;
+  total_amount: number;
+  total_paid: number;
+  pending_amount: number;
+  payment_status: 'pending' | 'liquidated';
+  liquidation_date: string | null;
+  products: Array<{
+    product_name: string;
+    product_variant: string | null;
+    product_size: string | null;
+    quantity: number;
+    unit_price: number;
+  }>;
+}
+
+export interface B2BWholesaleDetail {
+  purchased: number;
+  paid: number;
+  pending: number;
+  total_pieces: number;
+  purchase_count: number;
+  last_purchase_date: string | null;
+  oldest_delivery_date: string | null;
+  orders: B2BWholesaleOrder[];
+}
+
+export interface B2BBalancePartner {
+  partner_id: string;
+  folio: string;
+  business_name: string;
+  responsible_name: string | null;
+  phone: string | null;
+  whatsapp: string | null;
+  email: string | null;
+  business_type: string | null;
+  partner_status: string;
+  partner_model: string;
+  financial_status: 'pending' | 'liquidated';
+  total_generated: number;
+  total_paid: number;
+  pending_amount: number;
+  oldest_relevant_date: string | null;
+  comodato: B2BComodatoDetail | null;
+  wholesale: B2BWholesaleDetail | null;
+}
+
+export interface B2BPieceSaleItem {
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  quantity: number;
+  unit_retail_price: number;
+  subtotal: number;
+}
+
+export interface B2BPieceSaleDetail {
+  folio: string;
+  sale_date: string;
+  status: string;
+  payment_method: string | null;
+  total_amount: number;
+  paid_lifetime: number;
+  pending_lifetime: number;
+  last_payment_at: string | null;
+  items: B2BPieceSaleItem[];
+}
+
+export interface B2BPieceSellerDetail {
+  seller_id: string;
+  seller_name: string;
+  generated_in_period: number;
+  paid_in_period: number;
+  pending_in_period: number;
+  financial_status: 'pending' | 'liquidated';
+  sales_in_period: B2BPieceSaleDetail[];
+}
+
+export interface B2BBalanceSummary {
+  comodato_generated: number;
+  comodato_paid: number;
+  comodato_pending: number;
+  comodato_partners: number;
+  wholesale_generated: number;
+  wholesale_paid: number;
+  wholesale_pending: number;
+  wholesale_partners: number;
+  b2b_generated: number;
+  b2b_paid: number;
+  b2b_pending_balance: number;
+  b2b_partners_with_pending: number;
+  piece_sale_generated: number;
+  piece_sale_paid: number;
+  piece_sale_pending: number;
+  piece_sale_sellers_with_pending: number;
+  combined_pending_total: number;
+  piece_sale_period: {
+    start_date: string;
+    end_date: string;
+  };
+}
+
+export interface B2BBalanceDetailResponse {
+  summary: B2BBalanceSummary;
+  partners: B2BBalancePartner[];
+  piece_sales_by_seller: B2BPieceSellerDetail[];
+}

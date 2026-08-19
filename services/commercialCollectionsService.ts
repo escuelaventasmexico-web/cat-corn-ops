@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+import type { B2BBalanceDetailResponse } from '../components/commercialPartners/reports/b2bReportTypes';
 
 /**
  * Represents a single commercial collection item
@@ -401,4 +402,75 @@ export async function getPieceSaleSummary(
   }
 
   return result;
+}
+
+/**
+ * Get detailed B2B balance information by calling the RPC get_b2b_balance_detail
+ * This returns complete data for the balance detail modal
+ *
+ * @param startDate Start date for Venta por Pieza period (UTC)
+ * @param endDate End date for Venta por Pieza period (UTC)
+ * @returns B2BBalanceDetailResponse with summary, partners, and sellers
+ */
+export async function getB2BBalanceDetail(
+  startDate: Date,
+  endDate: Date
+): Promise<{ data: B2BBalanceDetailResponse | null; error: string | null }> {
+  if (!supabase) {
+    return {
+      data: null,
+      error: 'Supabase no configurado',
+    };
+  }
+
+  try {
+    const startISO = startDate.toISOString();
+    const endISO = endDate.toISOString();
+
+    console.log('Calling get_b2b_balance_detail with:', {
+      p_piece_start: startISO,
+      p_piece_end: endISO,
+    });
+
+    const { data, error } = await supabase.rpc('get_b2b_balance_detail', {
+      p_piece_start: startISO,
+      p_piece_end: endISO,
+    });
+
+    if (error) {
+      console.error('Error calling get_b2b_balance_detail:', error);
+      return {
+        data: null,
+        error: error.message || 'Error al cargar detalles de saldo',
+      };
+    }
+
+    if (!data) {
+      console.warn('RPC returned no data');
+      return {
+        data: null,
+        error: 'Sin datos disponibles',
+      };
+    }
+
+    // Type the response
+    const typedData: B2BBalanceDetailResponse = data as B2BBalanceDetailResponse;
+
+    console.log('B2B_BALANCE_DETAIL_RPC_RESPONSE', {
+      summary: typedData.summary,
+      partnersCount: typedData.partners?.length ?? 0,
+      sellersCount: typedData.piece_sales_by_seller?.length ?? 0,
+    });
+
+    return {
+      data: typedData,
+      error: null,
+    };
+  } catch (err: any) {
+    console.error('Unexpected error in getB2BBalanceDetail:', err);
+    return {
+      data: null,
+      error: err?.message || 'Error inesperado al cargar detalles de saldo',
+    };
+  }
 }

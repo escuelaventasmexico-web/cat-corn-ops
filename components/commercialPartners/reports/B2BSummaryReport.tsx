@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../../../supabase';
-import { Loader2, AlertCircle } from 'lucide-react';
+import { Loader2, AlertCircle, ChevronRight } from 'lucide-react';
 import {
   B2BDashboardSummary,
   B2BPipelineByStatus,
@@ -12,6 +12,7 @@ import {
   formatPercent,
 } from './b2bReportHelpers';
 import { getPieceSaleSummary, SalesChannelSummary } from '../../../services/commercialCollectionsService';
+import { B2BBalanceDetailModal } from './B2BBalanceDetailModal';
 
 interface B2BSummaryReportProps {
   refreshTrigger?: number;
@@ -23,6 +24,11 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
   const [conversion, setConversion] = useState<B2BConversionSummary | null>(null);
   const [pieceSale, setPieceSale] = useState<SalesChannelSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showBalanceDetail, setShowBalanceDetail] = useState(false);
+  const [pieceSaleDateRange, setPieceSaleDateRange] = useState<{
+    start: Date;
+    end: Date;
+  }>({ start: new Date(), end: new Date() });
   const [error, setError] = useState<string | null>(null);
 
   // Procesar y validar datos de conversión
@@ -92,6 +98,10 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
       const today = new Date();
       const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
       const monthEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
+      
+      // Store date range for modal
+      setPieceSaleDateRange({ start: monthStart, end: monthEnd });
+      
       const pieceSaleSummary = await getPieceSaleSummary(monthStart, monthEnd);
       setPieceSale(pieceSaleSummary);
 
@@ -197,15 +207,28 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
           </div>
 
           {/* Saldo Pendiente */}
-          <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
-            <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Pendiente</p>
-            <p className="text-2xl font-bold text-red-400">
-              {formatCurrency((summary.b2b_pending_balance ?? 0) + (summary.pieceSale_pending_total ?? 0))}
-            </p>
-            <p className="text-xs text-red-300 mt-2">
-              {formatNumber(summary.partners_with_pending_balance)} socios
-            </p>
-          </div>
+          <button
+            onClick={() => setShowBalanceDetail(true)}
+            className="bg-cc-surface rounded-2xl border border-white/5 p-6 hover:border-red-500/30 hover:bg-white/2 transition-all cursor-pointer group text-left"
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">
+                  Pendiente
+                </p>
+                <p className="text-2xl font-bold text-red-400">
+                  {formatCurrency(
+                    (summary.b2b_pending_balance ?? 0) +
+                      (summary.pieceSale_pending_total ?? 0)
+                  )}
+                </p>
+                <p className="text-xs text-red-300 mt-2">
+                  {formatNumber(summary.partners_with_pending_balance)} socios
+                </p>
+              </div>
+              <ChevronRight className="w-5 h-5 text-red-400 group-hover:translate-x-1 transition-transform opacity-0 group-hover:opacity-100" />
+            </div>
+          </button>
 
           {/* Socios Totales */}
           <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
@@ -489,6 +512,13 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
           </div>
         </div>
       )}
+
+      {/* Balance Detail Modal */}
+      <B2BBalanceDetailModal
+        isOpen={showBalanceDetail}
+        onClose={() => setShowBalanceDetail(false)}
+        pieceSaleDateRange={pieceSaleDateRange}
+      />
     </div>
   );
 };
