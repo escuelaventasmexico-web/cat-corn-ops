@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
-import { Truck, PackageCheck, RotateCcw, Trash2, CreditCard, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Truck, PackageCheck, RotateCcw, Trash2, CreditCard, AlertTriangle, Printer } from 'lucide-react';
+import { supabase } from '../../../supabase';
 import { MovementType } from './types';
 import PartnerBalanceSummary from './PartnerBalanceSummary';
 import PartnerCurrentStock from './PartnerCurrentStock';
 import PartnerMovementHistory from './PartnerMovementHistory';
 import PartnerMovementForm from './PartnerMovementForm';
 import PartnerPaymentForm from './PartnerPaymentForm';
+import { CommercialPartnerPrintModal } from '../CommercialPartnerPrintModal';
 
 interface Props {
   partnerId: string;
@@ -15,6 +17,7 @@ interface Props {
 type ActiveModal =
   | { kind: 'movement'; type: MovementType }
   | { kind: 'payment' }
+  | { kind: 'print' }
   | null;
 
 const ACTION_BUTTON_DEFS: Array<{
@@ -30,6 +33,12 @@ const ACTION_BUTTON_DEFS: Array<{
     modal: { kind: 'movement', type: 'delivery' },
     className: 'bg-blue-100 border-blue-300 text-blue-800 hover:bg-blue-200',
     requiresActivo: true,
+  },
+  {
+    label: 'Imprimir',
+    icon: <Printer className="w-4 h-4" />,
+    modal: { kind: 'print' },
+    className: 'bg-purple-100 border-purple-300 text-purple-800 hover:bg-purple-200',
   },
   {
     label: 'Liquidación',
@@ -63,6 +72,28 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [subTab, setSubTab] = useState<SubTab>('stock');
+  const [partnerName, setPartnerName] = useState<string>('');
+  const [partnerModel, setPartnerModel] = useState<string>('comodato');
+
+  // Load partner name and model
+  useEffect(() => {
+    (async () => {
+      if (!supabase) return;
+      try {
+        const { data } = await supabase
+          .from('commercial_partners')
+          .select('business_name, partner_model')
+          .eq('id', partnerId)
+          .single();
+        if (data) {
+          setPartnerName(data.business_name || '');
+          setPartnerModel(data.partner_model || 'comodato');
+        }
+      } catch (err) {
+        console.error('[Comodato] Error loading partner:', err);
+      }
+    })();
+  }, [partnerId]);
 
   // ── Permission rules ──────────────────────────────────────────────────────
   const canDeliver = partnerStatus === 'activo';
@@ -167,6 +198,15 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
           partnerId={partnerId}
           onClose={() => setActiveModal(null)}
           onSaved={handleSaved}
+        />
+      )}
+      {activeModal?.kind === 'print' && (
+        <CommercialPartnerPrintModal
+          isOpen={true}
+          onClose={() => setActiveModal(null)}
+          partnerId={partnerId}
+          partnerName={partnerName}
+          partnerModel={partnerModel}
         />
       )}
     </div>
