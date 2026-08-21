@@ -238,9 +238,12 @@ export async function getCurrentStockComodato(
 /**
  * Get the last order for a mayoreo partner.
  * 
- * Query: wholesale_orders (partner_id, status='completed')
- * Order by order_date DESC, limit 1
- * Joins: wholesale_order_items
+ * Query: wholesale_orders (partner_id, order_status='delivered')
+ * Order by order_date DESC, then created_at DESC, limit 1
+ * Joins: wholesale_order_items (with historical unit_price)
+ * 
+ * IMPORTANT: Uses wholesale_order_items.unit_price (historical),
+ * NOT wholesale_price_catalog (which applies only to new orders).
  */
 export async function getLastOrderMayoreo(
   partnerId: string,
@@ -248,12 +251,14 @@ export async function getLastOrderMayoreo(
 ): Promise<CommercialPartnerPrintData | null> {
   if (!supabase) return null;
   try {
+    // Fetch last delivered wholesale order with its items
     const { data, error } = await supabase
       .from('wholesale_orders')
       .select('*, wholesale_order_items(*)')
       .eq('partner_id', partnerId)
-      .eq('status', 'completed')
+      .eq('order_status', 'delivered')
       .order('order_date', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(1)
       .single();
 
@@ -278,14 +283,14 @@ export async function getLastOrderMayoreo(
           folio: data.folio,
           order_date: data.order_date,
           delivery_date: data.delivery_date,
-          status: data.status,
+          status: data.order_status,
         },
         items: (data.wholesale_order_items || []).map((item: any) => ({
           product_name: item.product_name,
           product_variant: item.product_variant,
           product_size: item.product_size,
           quantity: item.quantity,
-          unit_price: item.unit_price,
+          unit_price: item.unit_price, // ← Historical price from order, NOT from catalog
         })),
       },
     };
@@ -298,8 +303,8 @@ export async function getLastOrderMayoreo(
 /**
  * Get all orders for a mayoreo partner on a specific date.
  * 
- * Query: wholesale_orders (partner_id, date match)
- * Order by order_date DESC
+ * Query: wholesale_orders (partner_id, order_date match, order_status='delivered')
+ * Order by order_date DESC, created_at DESC
  */
 export async function getOrdersByDateMayoreo(
   partnerId: string,
@@ -309,14 +314,17 @@ export async function getOrdersByDateMayoreo(
   if (!supabase) return [];
   try {
     const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
+    const nextDateStr = new Date(date.getTime() + 86400000).toISOString().split('T')[0];
     
     const { data, error } = await supabase
       .from('wholesale_orders')
       .select('*, wholesale_order_items(*)')
       .eq('partner_id', partnerId)
+      .eq('order_status', 'delivered')
       .gte('order_date', dateStr)
-      .lt('order_date', new Date(date.getTime() + 86400000).toISOString().split('T')[0])
-      .order('order_date', { ascending: false });
+      .lt('order_date', nextDateStr)
+      .order('order_date', { ascending: false })
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('[Print] Error fetching mayoreo orders by date:', error);
@@ -339,7 +347,7 @@ export async function getOrdersByDateMayoreo(
           folio: order.folio,
           order_date: order.order_date,
           delivery_date: order.delivery_date,
-          status: order.status,
+          status: order.order_status,
         },
         items: (order.wholesale_order_items || []).map((item: any) => ({
           product_name: item.product_name,
