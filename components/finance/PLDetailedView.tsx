@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, FileText, TrendingUp, TrendingDown, DollarSign, AlertCircle, Calendar, Download } from 'lucide-react';
 import { supabase } from '../../supabase';
 import { exportPnLToExcel } from '../../lib/exportPnL';
+import { getCommercialCollections } from '../../services/commercialCollectionsService';
 
 interface PLDetailedViewProps {
   onClose: () => void;
@@ -42,6 +43,7 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<FinanceSummary | null>(null);
   const [error, setError] = useState<any>(null);
+  const [commercialTotal, setCommercialTotal] = useState<number>(0);
   
   // Month selector - default to current month
   const now = new Date();
@@ -61,12 +63,31 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
         // Convert YYYY-MM to YYYY-MM-01
         const monthStartISO = `${selectedMonth}-01`;
 
+        // Load PNL data (Caja + Pedidos from sales table - does NOT include commercial)
         const { data: result, error: rpcError } = await supabase.rpc('finance_month_summary', {
           p_month_start: monthStartISO
         });
 
         if (rpcError) {
           throw rpcError;
+        }
+
+        // Load commercial collections for this month
+        const [year, month] = monthStartISO.split('-').map(Number);
+        const monthStart = new Date(Date.UTC(year, month - 1, 1)); // First day at 00:00 UTC
+        const monthEnd = new Date(Date.UTC(year, month, 1)); // First day of NEXT month at 00:00 UTC
+        
+        const commercialData = await getCommercialCollections(monthStart, monthEnd);
+        
+        if (!commercialData.error) {
+          setCommercialTotal(commercialData.total);
+          console.log('[PLDetailedView] Commercial collections loaded:', {
+            total: commercialData.total,
+            bySource: commercialData.bySource,
+          });
+        } else {
+          console.warn('[PLDetailedView] Commercial data error:', commercialData.error);
+          setCommercialTotal(0);
         }
 
         setData(result);
@@ -81,7 +102,10 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
   }, [selectedMonth]);
 
   // Calculate P&L metrics with fallbacks
-  const sales = data?.pnl?.sales_mxn ?? 0;
+  // NOTE: RPC sales_mxn does NOT include commercial collections
+  // We add them here to get total sales
+  const baseSales = data?.pnl?.sales_mxn ?? 0;
+  const sales = baseSales + commercialTotal; // ← Include commercial collections
   const cogs = data?.pnl?.cogs_variable_purchases_mxn ?? 0;
   const grossProfit = data?.pnl?.gross_profit_mxn ?? (sales - cogs);
   const fixedExpenses = data?.pnl?.fixed_expenses_mxn ?? 0;

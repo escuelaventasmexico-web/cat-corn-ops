@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Calendar, Loader2, TrendingUp, TrendingDown, X, ChevronLeft, ChevronRight, Store, ShoppingBag, Banknote, CreditCard, Landmark } from 'lucide-react';
 import { supabase } from '../../supabase';
-import { getCommercialCollections } from '../../services/commercialCollectionsService';
+import { getCommercialCollections, type CommercialCollectionItem } from '../../services/commercialCollectionsService';
+import { CommercialCollectionsDetailModal } from './CommercialCollectionsDetailModal';
 
 interface CalendarDay {
   sale_date: string;
@@ -97,6 +98,10 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
   const [correctionMethod, setCorrectionMethod] = useState<'CASH' | 'CARD' | 'TRANSFER'>('CASH');
   const [correctionLoading, setCorrectionLoading] = useState(false);
   const [correctionError, setCorrectionError] = useState('');
+
+  // Commercial collections detail modal state
+  const [showCommercialDetail, setShowCommercialDetail] = useState(false);
+  const [commercialBreakdown, setCommercialBreakdown] = useState<CommercialCollectionItem[]>([]);
 
   // Parse current month for display
   const [year, month] = monthStartISO.split('-').map(Number);
@@ -211,6 +216,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       let commercialPieceSale = 0;
       let commercialCash = 0;
       let commercialTransfer = 0;
+      let breakdownForModal: CommercialCollectionItem[] = [];
 
       if (!commercialData.error && commercialData.breakdown) {
         commercialTotal = commercialData.total;
@@ -219,7 +225,11 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
         commercialPieceSale = commercialData.bySource.pieceSale;
         commercialCash = commercialData.cash;
         commercialTransfer = commercialData.transfer;
+        breakdownForModal = commercialData.breakdown;
       }
+
+      // Store breakdown for modal
+      setCommercialBreakdown(breakdownForModal);
 
       // 4) Delivery sales (if any — currently not tracked in sales, defaulting to 0)
       const deliveryTotal = 0;
@@ -287,26 +297,55 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
         // Load commercial collections (Comodato + Mayoreo + Venta por Pieza)
         // Extract month boundaries from monthStartISO (format: YYYY-MM-DD)
         const [year, month] = monthStartISO.split('-').map(Number);
-        const monthStart = new Date(Date.UTC(year, month - 1, 1)); // First day of month at 00:00 UTC
-        const monthEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59)); // Last day of month at 23:59:59 UTC
+        const monthStart = new Date(Date.UTC(year, month - 1, 1)); // First day of month at 00:00 UTC (inclusive)
+        const monthEnd = new Date(Date.UTC(year, month, 1)); // First day of NEXT month at 00:00 UTC (exclusive)
 
         const commercialData = await getCommercialCollections(monthStart, monthEnd);
 
         // Group commercial collections by date (payment_date format: "2026-08-07 00:00:00+00" or "2026-08-07T00:00:00Z")
         const commercialByDate: Record<string, number> = {};
-        if (!commercialData.error && commercialData.breakdown) {
+        
+        console.log('[MonthCalendar] Loading commercial collections:', {
+          month: monthStartISO,
+          monthStart: monthStart.toISOString(),
+          monthEnd: monthEnd.toISOString(),
+        });
+        
+        if (!commercialData.error && commercialData.breakdown && commercialData.breakdown.length > 0) {
           for (const item of commercialData.breakdown) {
             // Extract YYYY-MM-DD from payment_date (handle both formats)
             const dateStr = item.payment_date.slice(0, 10);
-            commercialByDate[dateStr] = (commercialByDate[dateStr] || 0) + item.amount;
+            const amount = Number(item.amount) || 0;
+            commercialByDate[dateStr] = (commercialByDate[dateStr] || 0) + amount;
           }
+          console.log('[MonthCalendar] Commercial collections loaded:', {
+            total: commercialData.total,
+            itemCount: commercialData.breakdown.length,
+            byDateMap: commercialByDate,
+          });
+        } else if (commercialData.error) {
+          console.warn('[MonthCalendar] Commercial data error:', commercialData.error);
         }
 
         // Merge: Add commercial collections to each calendar day
-        calendarDays = calendarDays.map((day) => ({
-          ...day,
-          total_sales: day.total_sales + (commercialByDate[day.sale_date] || 0),
-        }));
+        calendarDays = calendarDays.map((day) => {
+          const baseSales = Number(day.total_sales) || 0;
+          const commercialForDay = Number(commercialByDate[day.sale_date]) || 0;
+          return {
+            ...day,
+            total_sales: baseSales + commercialForDay,
+          };
+        });
+
+        // Validate merge for days 19 and 20 (test days)
+        const test19 = calendarDays.find(d => d.sale_date === '2026-08-19');
+        const test20 = calendarDays.find(d => d.sale_date === '2026-08-20');
+        console.log('[MonthCalendar] TEST DAYS (must be 675 and 815):', {
+          day19_total_sales: test19?.total_sales,
+          day20_total_sales: test20?.total_sales,
+          day19_commercial: commercialByDate['2026-08-19'],
+          day20_commercial: commercialByDate['2026-08-20'],
+        });
 
         setDays(calendarDays);
       } catch (e: any) {
@@ -576,14 +615,26 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                     </div>
 
                     {/* Ventas Socios Comerciales */}
-                    <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800">
+                    <button
+                      onClick={() => dayDetail.commercialTotal > 0 && setShowCommercialDetail(true)}
+                      disabled={dayDetail.commercialTotal === 0}
+                      className={`text-left bg-neutral-900 rounded-xl p-4 border border-neutral-800 w-full transition-all ${
+                        dayDetail.commercialTotal > 0
+                          ? 'hover:border-emerald-500/40 hover:bg-neutral-800/50 cursor-pointer'
+                          : 'cursor-default'
+                      }`}
+                    >
                       <div className="flex items-center gap-2 mb-3">
                         <Landmark size={16} className="text-emerald-400" />
                         <span className="text-sm font-bold text-cc-cream">Ventas Socios Comerciales</span>
                         <span className="ml-auto text-lg font-bold text-emerald-400">{fmt(dayDetail.commercialTotal)}</span>
+                        {dayDetail.commercialTotal > 0 && (
+                          <ChevronRight size={16} className="text-emerald-400/60" />
+                        )}
                       </div>
                       <div className="space-y-2">
                         <div className="flex items-center justify-between text-xs">
+
                           <span className="text-cc-text-muted">Comodato</span>
                           <span className="text-cc-cream font-medium">{fmt(dayDetail.commercialComodato)}</span>
                         </div>
@@ -601,7 +652,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                           {dayDetail.commercialTransfer > 0 && <span>Transferencia {fmt(dayDetail.commercialTransfer)}</span>}
                         </div>
                       </div>
-                    </div>
+                    </button>
                   </div>
 
                   {/* YoY comparison row */}
@@ -701,6 +752,17 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
           </div>
         </div>
       )}
+      {/* Commercial collections detail modal */}
+      <CommercialCollectionsDetailModal
+        isOpen={showCommercialDetail}
+        onClose={() => setShowCommercialDetail(false)}
+        selectedDate={selectedDay?.sale_date ?? ''}
+        total={dayDetail?.commercialTotal ?? 0}
+        comodatoTotal={dayDetail?.commercialComodato ?? 0}
+        mayoreoTotal={dayDetail?.commercialMayoreo ?? 0}
+        pieceSaleTotal={dayDetail?.commercialPieceSale ?? 0}
+        breakdown={commercialBreakdown}
+      />
       {/* Payment correction modal */}
       {correctingOrder && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
