@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ChevronDown, ChevronUp, CreditCard, Truck, AlertCircle } from 'lucide-react';
+import { ChevronDown, ChevronUp, CreditCard, Truck, AlertCircle, Edit2, Trash2, MoreVertical } from 'lucide-react';
 import { supabase } from '../../../supabase';
 import {
   PartnerMovement,
@@ -13,10 +13,15 @@ import {
   CARD_CLS,
   SECTION_TITLE_CLS,
 } from './types';
+import ComodatoMovementEditModal from './ComodatoMovementEditModal';
 
 interface Props {
   partnerId: string;
   refreshKey?: number;
+}
+
+interface ActionMenuState {
+  movementId: string | null;
 }
 
 // Calculate aggregated quantities from items
@@ -34,6 +39,11 @@ const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
+  const [deletingMovementId, setDeletingMovementId] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [actionMenu, setActionMenu] = useState<ActionMenuState>({ movementId: null });
 
   useEffect(() => {
     if (!supabase) return;
@@ -73,6 +83,85 @@ const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
       else next.add(id);
       return next;
     });
+  };
+
+  const handleEditMovement = (movementId: string) => {
+    setActionMenu({ movementId: null });
+    setEditingMovementId(movementId);
+  };
+
+  const handleDeleteMovement = (movementId: string) => {
+    setActionMenu({ movementId: null });
+    setDeleteError(null);
+    setDeletingMovementId(movementId);
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingMovementId || !supabase) return;
+
+    setDeleteLoading(true);
+    setDeleteError(null);
+
+    try {
+      const movement = movements.find(m => m.id === deletingMovementId);
+      if (!movement) throw new Error('Movimiento no encontrado');
+
+      // 1. Check if any items have been sold/withdrawn/spoiled
+      const items = movement.commercial_partner_movement_items || [];
+      const itemsWithActivity = items.filter(
+        it => (it.quantity_sold ?? 0) > 0 || (it.quantity_withdrawn ?? 0) > 0 || (it.quantity_spoiled ?? 0) > 0
+      );
+
+      if (itemsWithActivity.length > 0) {
+        setDeleteError(
+          'No se puede eliminar este movimiento porque tiene productos que ya han sido vendidos, retirados o dañados.'
+        );
+        return;
+      }
+
+      // 2. For settlement type movements, check payment_verification_requests
+      if (movement.movement_type === 'settlement') {
+        const { data: verificationsData, error: verificationsErr } = await supabase
+          .from('commercial_partner_payment_verification_requests')
+          .select('id')
+          .eq('movement_id', deletingMovementId)
+          .in('status', ['pending_review', 'approved'])
+          .limit(1);
+
+        if (verificationsErr) throw verificationsErr;
+        if (verificationsData && verificationsData.length > 0) {
+          setDeleteError(
+            'No se puede eliminar este movimiento porque tiene solicitudes de verificación de pago pendientes o aprobadas.'
+          );
+          return;
+        }
+      }
+
+      // 3. Delete movement items first
+      const { error: itemsErr } = await supabase
+        .from('commercial_partner_movement_items')
+        .delete()
+        .eq('movement_id', deletingMovementId);
+
+      if (itemsErr) throw itemsErr;
+
+      // 4. Delete movement
+      const { error: movementErr } = await supabase
+        .from('commercial_partner_movements')
+        .delete()
+        .eq('id', deletingMovementId);
+
+      if (movementErr) throw movementErr;
+
+      // Success: refresh list
+      setDeletingMovementId(null);
+      setMovements(prev => prev.filter(m => m.id !== deletingMovementId));
+    } catch (err: any) {
+      console.error('Error deleting movement:', err);
+      setDeleteError(err.message || 'No se pudo eliminar el movimiento.');
+    } finally {
+      setDeleteLoading(false);
+    }
   };
 
   if (loading) {
@@ -367,6 +456,46 @@ const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
                 {mv.total_amount_due > 0 && (
                   <p className="text-sm font-bold text-[#111111]">{fmtCurrency(mv.total_amount_due)}</p>
                 )}
+                <div className="relative">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActionMenu(prev => ({
+                        movementId: prev.movementId === mv.id ? null : mv.id
+                      }));
+                    }}
+                    className="flex items-center gap-1 px-1.5 py-1 hover:bg-[#e8d5a0] rounded text-xs"
+                    title="Acciones"
+                  >
+                    <MoreVertical size={14} />
+                  </button>
+                  
+                  {/* Dropdown menu */}
+                  {actionMenu.movementId === mv.id && mv.movement_type === 'delivery' && (
+                    <div className="absolute right-0 top-full mt-1 bg-[#2d1a00] border border-[#5a3a1a] rounded shadow-lg z-50 min-w-32">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditMovement(mv.id);
+                        }}
+                        className="block w-full text-left px-3 py-2 text-xs text-[#F6E7C1] hover:bg-[#1a0f00] flex items-center gap-2"
+                      >
+                        <Edit2 size={12} />
+                        Editar
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteMovement(mv.id);
+                        }}
+                        className="block w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-[#1a0f00] flex items-center gap-2 border-t border-[#5a3a1a]"
+                      >
+                        <Trash2 size={12} />
+                        Eliminar
+                      </button>
+                    </div>
+                  )}
+                </div>
                 {isOpen
                   ? <ChevronUp className="w-4 h-4 text-[#7a4a0a]" />
                   : <ChevronDown className="w-4 h-4 text-[#7a4a0a]" />
@@ -388,6 +517,83 @@ const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
           </div>
         );
       })}
+
+      {/* Edit Modal */}
+      {editingMovementId && (
+        <ComodatoMovementEditModal
+          movementId={editingMovementId}
+          partnerId={partnerId}
+          onClose={() => setEditingMovementId(null)}
+          onSaved={() => {
+            setEditingMovementId(null);
+            // Reload movements
+            if (supabase) {
+              (async () => {
+                const { data } = await supabase
+                  .from('commercial_partner_movements')
+                  .select('*, commercial_partner_movement_items(*)')
+                  .eq('partner_id', partnerId)
+                  .order('movement_date', { ascending: false })
+                  .limit(60);
+                if (data) setMovements(data);
+              })();
+            }
+          }}
+        />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deletingMovementId && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-[#D6A23A] border border-[#a87820] rounded-lg max-w-sm w-full p-6 shadow-xl">
+            <h3 className="text-lg font-bold text-[#111111] mb-4">
+              ¿Eliminar este movimiento?
+            </h3>
+            
+            {deleteError && (
+              <div className="mb-4 p-3 bg-red-100 border border-red-300 rounded text-sm text-red-800">
+                {deleteError}
+              </div>
+            )}
+
+            {!deleteError && (
+              <div className="mb-6 space-y-2 text-sm text-[#374151]">
+                <div>
+                  <p className="text-xs font-semibold text-[#6b7280]">Tipo</p>
+                  <p>{MOVEMENT_TYPE_LABELS[movements.find(m => m.id === deletingMovementId)?.movement_type || 'delivery'] || 'Desconocido'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-[#6b7280]">Fecha</p>
+                  <p>{fmtDate(movements.find(m => m.id === deletingMovementId)?.movement_date)}</p>
+                </div>
+                <p className="text-xs italic text-[#6b7280] mt-3">
+                  Esta acción eliminará el movimiento y sus productos asociados de forma permanente.
+                </p>
+              </div>
+            )}
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setDeletingMovementId(null);
+                  setDeleteError(null);
+                }}
+                disabled={deleteLoading}
+                className="px-4 py-2 bg-[#6b7280] hover:bg-[#4b5563] text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleteLoading || !!deleteError}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                {deleteLoading ? 'Eliminando...' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -24,6 +24,7 @@ export interface PartnerMovementItem {
   id: string;
   movement_id: string;
   product_id?: string | null;
+  product_code?: string | null;
   product_name: string;
   product_variant?: string | null;
   product_size?: string | null;
@@ -90,6 +91,18 @@ export interface PartnerCurrentStockItem {
   current_quantity?: number | null;
   last_price_to_catcorn?: number | null;
   last_suggested_retail_price?: number | null;
+}
+
+export interface ComodatoProduct {
+  id: string;
+  product_code: string;
+  product_name: string;
+  product_variant?: string | null;
+  product_size?: string | null;
+  price_to_catcorn: number;
+  suggested_retail_price: number;
+  active: boolean;
+  created_at: string;
 }
 
 export const PAYMENT_METHODS = [

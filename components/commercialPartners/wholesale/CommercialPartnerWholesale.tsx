@@ -90,7 +90,14 @@ const CommercialPartnerWholesale: React.FC<Props> = ({ partnerId, refreshKey = 0
       {/* Order History */}
       <div>
         <h3 className="text-lg font-semibold text-[#111111] mb-3">Historial de Compras</h3>
-        <WholesaleOrderHistory partnerId={partnerId} refreshKey={internalRefresh} />
+        <WholesaleOrderHistory 
+          partnerId={partnerId} 
+          refreshKey={internalRefresh}
+          onOrderDeleted={() => {
+            // Refresh summary and order history after successful deletion
+            setInternalRefresh(r => r + 1);
+          }}
+        />
       </div>
 
       {/* Payment History */}
