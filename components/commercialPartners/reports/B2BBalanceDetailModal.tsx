@@ -3,7 +3,6 @@ import { X, ChevronDown, ChevronUp, Loader2, AlertCircle } from 'lucide-react';
 import {
   B2BBalanceDetailResponse,
   B2BBalancePartner,
-  B2BPieceSellerDetail,
 } from './b2bReportTypes';
 import { formatCurrency, formatNumber } from './b2bReportHelpers';
 import { getB2BBalanceDetail } from '../../../services/commercialCollectionsService';
@@ -29,7 +28,6 @@ export const B2BBalanceDetailModal = ({
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('por-cobrar');
   const [expandedPartner, setExpandedPartner] = useState<string | null>(null);
-  const [expandedSeller, setExpandedSeller] = useState<string | null>(null);
 
   // Load data when modal opens
   useEffect(() => {
@@ -101,26 +99,6 @@ export const B2BBalanceDetailModal = ({
     return filtered;
   }, [data?.partners, activeTab]);
 
-  // Filter sellers based on active tab
-  const filteredSellers = useMemo(() => {
-    if (!data?.piece_sales_by_seller) return [];
-
-    switch (activeTab) {
-      case 'por-cobrar':
-        // Show sellers with money owed from piece sales
-        return data.piece_sales_by_seller.filter(
-          (s) => s.pending_in_period > 0
-        );
-      case 'pendiente-venta':
-        // Piece sales don't have "pending of sale" concept - return empty
-        return [];
-      case 'all':
-        return data.piece_sales_by_seller;
-      default:
-        return [];
-    }
-  }, [data?.piece_sales_by_seller, activeTab]);
-
   if (!isOpen) return null;
 
   return (
@@ -182,10 +160,10 @@ export const B2BBalanceDetailModal = ({
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
                   <div className="bg-cc-surface rounded-xl p-4 border border-white/5">
                     <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-1">
-                      💰 Total Por Cobrar
+                      Total por cobrar a socios
                     </p>
                     <p className="text-xl font-bold text-red-400">
-                      {formatCurrency(data.summary.combined_pending_total ?? 0)}
+                      {formatCurrency(data.summary.b2b_pending_balance ?? 0)}
                     </p>
                   </div>
 
@@ -314,42 +292,6 @@ export const B2BBalanceDetailModal = ({
                 )}
               </div>
 
-              {/* Venta por Pieza - Solo en POR COBRAR */}
-              {activeTab !== 'pendiente-venta' && (
-              <div className="space-y-4 border-t border-white/10 pt-6">
-                <h3 className="text-sm font-semibold text-cc-text-muted uppercase tracking-wide">
-                  Venta por Pieza
-                </h3>
-
-                {filteredSellers.length === 0 ? (
-                  <div className="text-center py-8 text-cc-text-muted">
-                    {activeTab === 'por-cobrar' &&
-                      'No hay saldos pendientes de vendedores.'}
-                    {activeTab === 'all' &&
-                      'No hay registros de venta por pieza.'}
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {filteredSellers
-                      .sort((a, b) => b.pending_in_period - a.pending_in_period)
-                      .map((seller) => (
-                        <SellerCard
-                          key={seller.seller_id}
-                          seller={seller}
-                          isExpanded={expandedSeller === seller.seller_id}
-                          onToggle={() =>
-                            setExpandedSeller(
-                              expandedSeller === seller.seller_id
-                                ? null
-                                : seller.seller_id
-                            )
-                          }
-                        />
-                      ))}
-                  </div>
-                )}
-              </div>
-              )}
             </div>
           ) : null}
         </div>
@@ -785,160 +727,6 @@ const WholesaleDetail = ({ wholesale }: WholesaleDetailProps) => {
               </div>
             ))}
           </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-/* ── Seller Card ────────────────────────────────────────────────── */
-
-interface SellerCardProps {
-  seller: B2BPieceSellerDetail;
-  isExpanded: boolean;
-  onToggle: () => void;
-}
-
-const SellerCard = ({ seller, isExpanded, onToggle }: SellerCardProps) => {
-  return (
-    <div className="bg-cc-surface border border-white/5 rounded-xl overflow-hidden">
-      {/* Header */}
-      <button
-        onClick={onToggle}
-        className="w-full p-4 hover:bg-white/5 transition-colors text-left flex items-center justify-between group"
-      >
-        <div className="flex-1 min-w-0">
-          <h4 className="font-semibold text-cc-cream truncate">
-            {seller.seller_name}
-          </h4>
-          <p className="text-xs text-cc-text-muted mt-1">
-            VENTA POR PIEZA
-          </p>
-        </div>
-        <div className="text-right ml-4">
-          <p
-            className={`text-lg font-bold ${
-              seller.financial_status === 'liquidated'
-                ? 'text-green-400'
-                : 'text-red-400'
-            }`}
-          >
-            {formatCurrency(seller.pending_in_period)}
-          </p>
-          <p className="text-xs text-cc-text-muted mt-1">
-            {seller.financial_status === 'liquidated'
-              ? '✓ Saldo liquidado'
-              : 'Pendiente'}
-          </p>
-        </div>
-        <div className="ml-4">
-          {isExpanded ? (
-            <ChevronUp className="w-5 h-5 text-cc-text-muted group-hover:text-cc-cream transition-colors" />
-          ) : (
-            <ChevronDown className="w-5 h-5 text-cc-text-muted group-hover:text-cc-cream transition-colors" />
-          )}
-        </div>
-      </button>
-
-      {/* Expanded content */}
-      {isExpanded && (
-        <div className="border-t border-white/5 p-4 space-y-4">
-          {/* Resumen período */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-black/20 rounded-lg p-3">
-              <p className="text-xs text-cc-text-muted mb-1">Vendido</p>
-              <p className="font-semibold text-cc-cream">
-                {formatCurrency(seller.generated_in_period ?? 0)}
-              </p>
-            </div>
-            <div className="bg-black/20 rounded-lg p-3">
-              <p className="text-xs text-cc-text-muted mb-1">Pagado</p>
-              <p className="font-semibold text-cc-cream">
-                {formatCurrency(seller.paid_in_period ?? 0)}
-              </p>
-            </div>
-            <div className="bg-black/20 rounded-lg p-3">
-              <p className="text-xs text-cc-text-muted mb-1">Pendiente</p>
-              <p className="font-semibold text-red-400">
-                {formatCurrency(seller.pending_in_period ?? 0)}
-              </p>
-            </div>
-          </div>
-
-          {/* Ventas individuales */}
-          {seller.sales_in_period && seller.sales_in_period.length > 0 && (
-            <div className="space-y-2 border-t border-white/5 pt-4">
-              <p className="text-xs font-semibold text-cc-text-muted uppercase tracking-wide">
-                Ventas en el período
-              </p>
-              <div className="space-y-2">
-                {seller.sales_in_period.map((sale, idx) => (
-                  <div
-                    key={idx}
-                    className="bg-black/20 rounded-lg p-3 text-sm space-y-2"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-semibold text-cc-cream">
-                          {sale.folio}
-                        </p>
-                        <p className="text-xs text-cc-text-muted">
-                          {formatDate(sale.sale_date)}
-                        </p>
-                      </div>
-                      {sale.pending_lifetime <= 0 && (
-                        <span className="text-xs px-2 py-1 bg-green-500/20 text-green-300 rounded">
-                          ✓ Liquidada
-                        </span>
-                      )}
-                    </div>
-
-                    {sale.items && sale.items.length > 0 && (
-                      <div className="text-xs text-cc-text-muted space-y-1 border-t border-white/10 pt-2">
-                        {sale.items.map((item, iidx) => (
-                          <p key={iidx}>
-                            {item.product_name}
-                            {item.product_variant &&
-                              ` · ${item.product_variant}`}{' '}
-                            ×{' '}
-                            {formatNumber(item.quantity)} ={' '}
-                            {formatCurrency(item.subtotal)}
-                          </p>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-3 gap-2 text-xs pt-2 border-t border-white/10">
-                      <div>
-                        <p className="text-cc-text-muted">Total</p>
-                        <p className="text-cc-cream font-semibold">
-                          {formatCurrency(sale.total_amount ?? 0)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-cc-text-muted">Pagado</p>
-                        <p className="text-cc-cream font-semibold">
-                          {formatCurrency(sale.paid_lifetime ?? 0)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-cc-text-muted">Pendiente</p>
-                        <p
-                          className={`font-semibold ${
-                            sale.pending_lifetime > 0
-                              ? 'text-red-400'
-                              : 'text-green-400'
-                          }`}
-                        >
-                          {formatCurrency(sale.pending_lifetime ?? 0)}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>

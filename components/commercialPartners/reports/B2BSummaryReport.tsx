@@ -214,13 +214,10 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">
-                  Pendiente
+                  Pendiente socios
                 </p>
                 <p className="text-2xl font-bold text-red-400">
-                  {formatCurrency(
-                    (summary.b2b_pending_balance ?? 0) +
-                      (summary.pieceSale_pending_total ?? 0)
-                  )}
+                  {formatCurrency(summary.b2b_pending_balance ?? 0)}
                 </p>
                 <p className="text-xs text-red-300 mt-2">
                   {formatNumber(summary.partners_with_pending_balance)} socios
