@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
 import { Receipt, X, CreditCard, Banknote, Landmark, Download, Calendar, Filter, RotateCcw, AlertTriangle, Truck, Users, DollarSign } from 'lucide-react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { formatDateTimeMX } from '../lib/datetime';
 import { getCommercialCollections, CommercialCollectionItem } from '../services/commercialCollectionsService';
 
@@ -669,31 +669,43 @@ export const SalesHistory = () => {
         <div className="bg-cc-surface p-6 rounded-xl border border-white/5">
           <h3 className="text-lg font-bold text-cc-cream mb-1">Desglose Financiero - Todos los Orígenes</h3>
           <p className="text-xs text-cc-text-muted mb-4">Resumen de ingresos separados por origen y método de pago</p>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr] gap-6">
             {/* Chart */}
-            <div className="h-64">
+            <div className="w-full h-[460px]">
               {paymentChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={paymentChartData}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {paymentChartData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
+                  <BarChart
+                    data={paymentChartData}
+                    margin={{ top: 20, right: 20, left: 60, bottom: 80 }}
+                    barSize={45}
+                    barCategoryGap="22%"
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#444" vertical={false} />
+                    <XAxis
+                      dataKey="name"
+                      angle={-30}
+                      textAnchor="end"
+                      height={70}
+                      tick={{ fill: '#CCCCCC', fontSize: 11 }}
+                    />
+                    <YAxis
+                      width={60}
+                      tick={{ fill: '#CCCCCC', fontSize: 11 }}
+                      tickFormatter={(value: number) => `$${(value / 1000).toFixed(0)}k`}
+                    />
                     <Tooltip
                       formatter={(value: number) => `$${value.toFixed(2)}`}
                       contentStyle={{ backgroundColor: '#2A2A2A', border: '1px solid #444', color: '#F5F5F5' }}
                     />
-                  </PieChart>
+                    <Bar
+                      dataKey="value"
+                      radius={[8, 8, 0, 0]}
+                    >
+                      {paymentChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Bar>
+                  </BarChart>
                 </ResponsiveContainer>
               ) : (
                 <div className="flex items-center justify-center h-full text-cc-text-muted">
