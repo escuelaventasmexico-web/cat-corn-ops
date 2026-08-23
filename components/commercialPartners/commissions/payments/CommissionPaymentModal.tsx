@@ -1,6 +1,6 @@
 /* ── Commission Payment Modal ────────────────────────────────────────── */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, ChevronRight, ChevronLeft } from 'lucide-react';
 import { CommissionSettlementSummary } from './CommissionSettlementSummary';
 import {
@@ -48,24 +48,93 @@ export const CommissionPaymentModal: React.FC<CommissionPaymentModalProps> = ({
   const [successMessage, setSuccessMessage] = useState('');
   const [settlementId, setSettlementId] = useState('');
   const [folio, setFolio] = useState('');
+  const [paymentAmount, setPaymentAmount] = useState(String(totalAmount));
+  const [amountError, setAmountError] = useState('');
+  const [settlementTotalAmount, setSettlementTotalAmount] = useState(0);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    setStep(1);
+    setError('');
+    setSuccessMessage('');
+    setSettlementId('');
+    setFolio('');
+    setPaymentAmount(String(totalAmount));
+    setAmountError('');
+    setSettlementTotalAmount(0);
+  }, [isOpen, totalAmount]);
+
+  const validatePaymentAmount = (value: string): string | null => {
+    const normalizedValue = value.trim();
+
+    if (normalizedValue === '') {
+      return 'Ingresa el monto a pagar';
+    }
+
+    const amount = Number(normalizedValue);
+
+    if (Number.isNaN(amount)) {
+      return 'Ingresa un número válido';
+    }
+
+    if (!Number.isFinite(amount)) {
+      return 'El monto debe ser un número finito';
+    }
+
+    if (!/^(?:\d+\.?\d*|\.\d+)$/.test(normalizedValue)) {
+      return 'Ingresa un número válido';
+    }
+
+    if (amount <= 0) {
+      return 'El monto debe ser mayor que cero';
+    }
+
+    if (amount > totalAmount) {
+      return 'El monto no puede superar el saldo disponible';
+    }
+
+    const decimalPart = normalizedValue.split('.')[1];
+    if (decimalPart && decimalPart.length > 2) {
+      return 'El monto puede tener máximo dos decimales';
+    }
+
+    return null;
+  };
+
+  const handlePaymentAmountChange = (value: string) => {
+    setPaymentAmount(value);
+    setAmountError('');
+  };
 
   const handlePrepare = async () => {
-    setLoading(true);
     setError('');
+    const validationError = validatePaymentAmount(paymentAmount);
+
+    if (validationError) {
+      setAmountError(validationError);
+      return;
+    }
+
+    const amount = Number(paymentAmount.trim());
+    setAmountError('');
+    setLoading(true);
 
     try {
-      console.log('CREATING SETTLEMENT', { sellerId, periodStart, periodEnd });
+      console.log('CREATING SETTLEMENT', { sellerId, periodStart, periodEnd, amount });
 
       const settlement = await createCommissionSettlement(
         sellerId,
         periodStart,
-        periodEnd
+        periodEnd,
+        amount
       );
 
       console.log('SETTLEMENT CREATED', settlement);
 
       setSettlementId(settlement.settlement_id);
       setFolio(settlement.folio);
+      setSettlementTotalAmount(settlement.total_amount);
       setStep(2);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Error al preparar liquidación';
@@ -201,7 +270,10 @@ export const CommissionPaymentModal: React.FC<CommissionPaymentModalProps> = ({
                 end: periodEnd,
                 label: periodLabel,
               }}
-              totalAmount={totalAmount}
+              availableAmount={totalAmount}
+              paymentAmount={paymentAmount}
+              onPaymentAmountChange={handlePaymentAmountChange}
+              amountError={amountError}
               movementCount={movementCount}
             />
           )}
@@ -209,7 +281,7 @@ export const CommissionPaymentModal: React.FC<CommissionPaymentModalProps> = ({
           {/* Step 2: Payment Method */}
           {step === 2 && (
             <CommissionPaymentMethod
-              totalAmount={totalAmount}
+              totalAmount={settlementTotalAmount}
               onSubmit={handlePayment}
               onCancel={() => setStep(1)}
               loading={loading}

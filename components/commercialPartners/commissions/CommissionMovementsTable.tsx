@@ -4,6 +4,8 @@ import {
   formatDate,
   getStatusLabel,
   getStatusColor,
+  getPaymentStatusLabel,
+  getPaymentStatusColor,
   getSourceTypeLabel,
   parseNumericValue,
   exportToCSV,
@@ -29,7 +31,12 @@ export const CommissionMovementsTable = ({
       quantity: row.quantity,
       unit_commission: row.unit_commission,
       commission_amount: row.commission_amount,
+      paid_amount: row.paid_amount,
+      remaining_amount: row.remaining_amount,
+      reserved_amount: row.reserved_amount,
+      allocatable_amount: row.allocatable_amount,
       status: row.status,
+      payment_status: row.payment_status,
     }))
   );
 
@@ -64,8 +71,13 @@ export const CommissionMovementsTable = ({
       { key: 'product_variant', label: 'Variante' },
       { key: 'quantity', label: 'Cantidad' },
       { key: 'unit_commission', label: 'Comisión/unidad' },
-      { key: 'commission_amount', label: 'Comisión total' },
-      { key: 'status', label: 'Estado' },
+      { key: 'commission_amount', label: 'Comisión generada' },
+      { key: 'paid_amount', label: 'Monto pagado' },
+      { key: 'remaining_amount', label: 'Saldo pendiente' },
+      { key: 'reserved_amount', label: 'Monto reservado' },
+      { key: 'allocatable_amount', label: 'Monto disponible para liquidar' },
+      { key: 'status', label: 'Estado de comisión' },
+      { key: 'payment_status', label: 'Estado de pago' },
     ];
 
     const data = filteredMovements.map(m => ({
@@ -78,7 +90,12 @@ export const CommissionMovementsTable = ({
       quantity: m.quantity,
       unit_commission: formatCurrency(parseNumericValue(m.unit_commission)),
       commission_amount: formatCurrency(parseNumericValue(m.commission_amount)),
+      paid_amount: formatCurrency(parseNumericValue(m.paid_amount)),
+      remaining_amount: formatCurrency(parseNumericValue(m.remaining_amount)),
+      reserved_amount: formatCurrency(parseNumericValue(m.reserved_amount)),
+      allocatable_amount: formatCurrency(parseNumericValue(m.allocatable_amount)),
       status: getStatusLabel(m.status),
+      payment_status: getPaymentStatusLabel(m.payment_status),
     }));
 
     exportToCSV('comisiones-movimientos', data, columns);
@@ -185,16 +202,20 @@ export const CommissionMovementsTable = ({
                     Cantidad
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-cc-text-muted">
-                    Comisión
+                    Montos
                   </th>
                   <th className="px-4 py-3 text-center text-xs font-semibold text-cc-text-muted">
-                    Estado
+                    Estados
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                 {filteredMovements.map(movement => {
                   const commissionAmount = parseNumericValue(movement.commission_amount);
+                  const paidAmount = parseNumericValue(movement.paid_amount);
+                  const remainingAmount = parseNumericValue(movement.remaining_amount);
+                  const reservedAmount = parseNumericValue(movement.reserved_amount);
+                  const allocatableAmount = parseNumericValue(movement.allocatable_amount);
                   const unitCommission = parseNumericValue(movement.unit_commission);
                   const quantity = parseNumericValue(movement.quantity);
 
@@ -225,7 +246,19 @@ export const CommissionMovementsTable = ({
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="text-cc-cream font-semibold">
-                          {formatCurrency(commissionAmount)}
+                          Generada: {formatCurrency(commissionAmount)}
+                        </div>
+                        <div className="text-xs text-cc-text-muted">
+                          Pagada: {formatCurrency(paidAmount)}
+                        </div>
+                        <div className="text-xs text-cc-text-muted">
+                          Saldo: {formatCurrency(remainingAmount)}
+                        </div>
+                        <div className="text-xs text-cc-text-muted">
+                          Reservada: {formatCurrency(reservedAmount)}
+                        </div>
+                        <div className="text-xs text-cc-text-muted">
+                          Disponible: {formatCurrency(allocatableAmount)}
                         </div>
                         <div className="text-xs text-cc-text-muted">
                           {quantity} × {formatCurrency(unitCommission)} c/u
@@ -240,6 +273,15 @@ export const CommissionMovementsTable = ({
                           }}
                         >
                           {getStatusLabel(movement.status)}
+                        </span>
+                        <span
+                          className="mt-1 block rounded-full px-2 py-1 text-xs font-semibold"
+                          style={{
+                            backgroundColor: getPaymentStatusColor(movement.payment_status) + '20',
+                            color: getPaymentStatusColor(movement.payment_status),
+                          }}
+                        >
+                          {getPaymentStatusLabel(movement.payment_status)}
                         </span>
                       </td>
                     </tr>

@@ -74,6 +74,7 @@ export const AvailableCommissionsModal = ({
         .select('*')
         .eq('seller_id', sellerId)
         .eq('status', 'available')
+        .gt('allocatable_amount', 0)
         .gte('earned_at', monthStart)
         .lte('earned_at', monthEnd)
         .order('earned_at', { ascending: false });
@@ -99,7 +100,7 @@ export const AvailableCommissionsModal = ({
           }
         }
         
-        breakdown[sourceKey] = (breakdown[sourceKey] || 0) + parseNumericValue(m.commission_amount);
+        breakdown[sourceKey] = (breakdown[sourceKey] || 0) + parseNumericValue(m.allocatable_amount);
       });
       setSourceBreakdown(breakdown);
     } catch (err: any) {
@@ -113,7 +114,7 @@ export const AvailableCommissionsModal = ({
   if (!isOpen) return null;
 
   const calculateTotal = (): number => {
-    return movements.reduce((sum, m) => sum + parseNumericValue(m.commission_amount), 0);
+    return movements.reduce((sum, m) => sum + parseNumericValue(m.allocatable_amount), 0);
   };
 
   const currentTotal = calculateTotal();
@@ -256,7 +257,14 @@ export const AvailableCommissionsModal = ({
                     </div>
                     <div className="text-right ml-4 flex-shrink-0">
                       <p className="text-lg font-bold text-cc-primary">
-                        {formatCurrency(parseNumericValue(movement.commission_amount))}
+                        {formatCurrency(parseNumericValue(movement.allocatable_amount))}
+                      </p>
+                      <p className="text-xs text-cc-text-muted">Disponible para liquidar</p>
+                      <p className="mt-1 text-xs text-cc-text-muted">
+                        Generada {formatCurrency(parseNumericValue(movement.commission_amount))}
+                        {' · '}Pagada {formatCurrency(parseNumericValue(movement.paid_amount))}
+                        {' · '}Reservada {formatCurrency(parseNumericValue(movement.reserved_amount))}
+                        {' · '}Saldo {formatCurrency(parseNumericValue(movement.remaining_amount))}
                       </p>
                       {movement.unit_commission && (
                         <p className="text-xs text-cc-text-muted">

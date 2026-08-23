@@ -11,6 +11,7 @@ interface Expense {
   has_invoice: boolean;
   payment_method: 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
   notes: string | null;
+  commission_settlement_id?: string | null;
 }
 
 const TYPE_LABELS: Record<string, string> = {

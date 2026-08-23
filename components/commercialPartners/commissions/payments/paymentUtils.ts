@@ -25,7 +25,8 @@ export const sanitizeFileName = (name: string): string => {
 export const createCommissionSettlement = async (
   sellerId: string,
   periodStart: string,
-  periodEnd: string
+  periodEnd: string,
+  amount: number
 ) => {
   if (!supabase) throw new Error('Supabase not configured');
 
@@ -33,6 +34,7 @@ export const createCommissionSettlement = async (
     p_seller_id: sellerId,
     p_period_start: periodStart,
     p_period_end: periodEnd,
+    p_amount: amount,
   });
 
   if (error) {

@@ -15,7 +15,10 @@ interface CommissionSettlementSummaryProps {
     end: string;
     label: string;
   };
-  totalAmount: number;
+  availableAmount: number;
+  paymentAmount: string;
+  onPaymentAmountChange: (value: string) => void;
+  amountError: string;
   movementCount: number;
   folio?: string;
 }
@@ -23,7 +26,10 @@ interface CommissionSettlementSummaryProps {
 export const CommissionSettlementSummary: React.FC<CommissionSettlementSummaryProps> = ({
   seller,
   period,
-  totalAmount,
+  availableAmount,
+  paymentAmount,
+  onPaymentAmountChange,
+  amountError,
   movementCount,
   folio,
 }) => {
@@ -56,7 +62,25 @@ export const CommissionSettlementSummary: React.FC<CommissionSettlementSummaryPr
           <DollarSign size={16} className="text-yellow-500" />
           <p className="text-xs text-neutral-500 uppercase tracking-wider">Monto a pagar</p>
         </div>
-        <p className="text-2xl font-bold text-yellow-400">{formatCurrency(totalAmount)}</p>
+        <input
+          type="number"
+          min="0.01"
+          max={availableAmount}
+          step="0.01"
+          value={paymentAmount}
+          onChange={event => onPaymentAmountChange(event.target.value)}
+          aria-invalid={Boolean(amountError)}
+          aria-describedby={amountError ? 'commission-payment-amount-error' : undefined}
+          className="w-full rounded-lg border border-yellow-500/40 bg-neutral-950 px-3 py-2 text-2xl font-bold text-yellow-400 focus:border-yellow-400 focus:outline-none"
+        />
+        <p className="mt-2 text-xs text-neutral-500">
+          Saldo disponible: {formatCurrency(availableAmount)}
+        </p>
+        {amountError && (
+          <p id="commission-payment-amount-error" className="mt-2 text-xs font-medium text-red-300">
+            {amountError}
+          </p>
+        )}
       </div>
 
       {/* Movement Count */}

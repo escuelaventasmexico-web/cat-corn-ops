@@ -14,6 +14,7 @@ interface Expense {
   payment_method: 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
   notes: string | null;
   fixed_cost_id: string | null;
+  commission_settlement_id?: string | null;
 }
 
 interface ExpenseFormModalProps {

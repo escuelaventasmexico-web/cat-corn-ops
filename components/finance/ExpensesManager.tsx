@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../supabase';
-import { CreditCard, X, Plus, Edit2, Trash2, AlertCircle, FileDown, Calendar } from 'lucide-react';
+import { CreditCard, X, Plus, Edit2, Trash2, AlertCircle, FileDown, Calendar, Lock } from 'lucide-react';
 import { ExpenseFormModal } from './ExpenseFormModal.tsx';
 import { exportExpensesToExcel } from '../../lib/exportExpenses';
 
@@ -15,6 +15,7 @@ interface Expense {
   payment_method: 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
   notes: string | null;
   fixed_cost_id: string | null;
+  commission_settlement_id?: string | null;
   created_at: string;
 }
 
@@ -309,18 +310,32 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
                       </td>
                       <td className="py-3 px-4">
                         <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => handleEdit(expense)}
-                            className="p-1 hover:bg-blue-500/20 rounded text-blue-400"
-                          >
-                            <Edit2 size={16} />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(expense.id)}
-                            className="p-1 hover:bg-red-500/20 rounded text-red-400"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                          {expense.commission_settlement_id ? (
+                            <span
+                              className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-300"
+                              title="Gasto automático protegido por su liquidación de comisiones"
+                            >
+                              <Lock size={13} />
+                              Automático
+                            </span>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => handleEdit(expense)}
+                                className="p-1 hover:bg-blue-500/20 rounded text-blue-400"
+                                aria-label="Editar gasto"
+                              >
+                                <Edit2 size={16} />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(expense.id)}
+                                className="p-1 hover:bg-red-500/20 rounded text-red-400"
+                                aria-label="Eliminar gasto"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>

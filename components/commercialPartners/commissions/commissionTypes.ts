@@ -1,5 +1,9 @@
 /* ── Commission Module Types ─────────────────────────────────────── */
 
+export type CommissionStatus = 'pending' | 'available' | 'paid' | 'cancelled';
+export type CommissionPaymentStatus = CommissionStatus | 'partially_paid';
+export type SourceType = 'comodato_sale' | 'wholesale_sale' | 'conversion_bonus' | 'adjustment' | 'pos_sale';
+
 export interface SellerCommissionMonthlySummary {
   seller_id: string;
   month_start: string;
@@ -33,8 +37,13 @@ export interface CommissionMovement {
   quantity: number | string;
   unit_commission: number | string;
   commission_amount: number | string;
+  paid_amount: number | string;
+  remaining_amount: number | string;
+  reserved_amount: number | string;
+  allocatable_amount: number | string;
   release_condition: string;
-  status: 'pending' | 'available' | 'paid' | 'cancelled';
+  status: CommissionStatus;
+  payment_status: CommissionPaymentStatus;
   available_at: string | null;
   paid_at: string | null;
   cancelled_at: string | null;
@@ -131,9 +140,6 @@ export interface UserProfile {
   role: string;
   is_active: boolean;
 }
-
-export type CommissionStatus = 'pending' | 'available' | 'paid' | 'cancelled';
-export type SourceType = 'comodato_sale' | 'wholesale_sale' | 'conversion_bonus' | 'adjustment' | 'pos_sale';
 
 export interface CommissionFilters {
   status: CommissionStatus | 'todos';

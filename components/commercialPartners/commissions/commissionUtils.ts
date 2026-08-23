@@ -1,6 +1,6 @@
 /* ── Commission Utilities ────────────────────────────────────────── */
 
-import { CommissionStatus, SourceType } from './commissionTypes';
+import { CommissionPaymentStatus, CommissionStatus, SourceType } from './commissionTypes';
 
 export const formatCurrency = (value: number | null | undefined): string => {
   if (value === null || value === undefined) return '$0.00';
@@ -67,6 +67,40 @@ export const getStatusLabel = (status: CommissionStatus): string => {
       return 'Pendiente';
     case 'available':
       return 'Disponible';
+    case 'paid':
+      return 'Pagada';
+    case 'cancelled':
+      return 'Cancelada';
+    default:
+      return 'Desconocido';
+  }
+};
+
+export const getPaymentStatusColor = (status: CommissionPaymentStatus): string => {
+  switch (status) {
+    case 'pending':
+      return '#f59e0b';
+    case 'available':
+      return '#10b981';
+    case 'partially_paid':
+      return '#a855f7';
+    case 'paid':
+      return '#3b82f6';
+    case 'cancelled':
+      return '#6b7280';
+    default:
+      return '#6b7280';
+  }
+};
+
+export const getPaymentStatusLabel = (status: CommissionPaymentStatus): string => {
+  switch (status) {
+    case 'pending':
+      return 'Pendiente';
+    case 'available':
+      return 'Sin pagar';
+    case 'partially_paid':
+      return 'Pago parcial';
     case 'paid':
       return 'Pagada';
     case 'cancelled':
