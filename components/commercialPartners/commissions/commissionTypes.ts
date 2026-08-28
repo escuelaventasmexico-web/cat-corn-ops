@@ -2,7 +2,13 @@
 
 export type CommissionStatus = 'pending' | 'available' | 'paid' | 'cancelled';
 export type CommissionPaymentStatus = CommissionStatus | 'partially_paid';
-export type SourceType = 'comodato_sale' | 'wholesale_sale' | 'conversion_bonus' | 'adjustment' | 'pos_sale';
+export type SourceType =
+  | 'comodato_sale'
+  | 'wholesale_sale'
+  | 'piece_sale'
+  | 'conversion_bonus'
+  | 'adjustment'
+  | 'pos_sale';
 
 export interface SellerCommissionMonthlySummary {
   seller_id: string;
@@ -16,17 +22,18 @@ export interface SellerCommissionMonthlySummary {
   wholesale_units: number;
   conversion_count: number;
   partners_count: number;
+  events_count: number | string;
 }
 
 export interface CommissionMovement {
   commission_event_id: string;
   seller_id: string;
-  partner_id: string;
-  partner_folio: string;
-  business_name: string;
+  partner_id: string | null;
+  partner_folio: string | null;
+  business_name: string | null;
   responsible_name: string | null;
   earned_at: string;
-  source_type: 'comodato_sale' | 'wholesale_sale' | 'conversion_bonus' | 'adjustment' | 'pos_sale';
+  source_type: SourceType;
   source_id: string | null;
   source_item_id: string | null;
   source_folio: string | null;
@@ -34,8 +41,8 @@ export interface CommissionMovement {
   product_name: string | null;
   product_variant: string | null;
   product_size: string | null;
-  quantity: number | string;
-  unit_commission: number | string;
+  quantity: number | string | null;
+  unit_commission: number | string | null;
   commission_amount: number | string;
   paid_amount: number | string;
   remaining_amount: number | string;
@@ -47,7 +54,7 @@ export interface CommissionMovement {
   available_at: string | null;
   paid_at: string | null;
   cancelled_at: string | null;
-  metadata?: Record<string, any> | string | null;
+  metadata?: Record<string, unknown> | string | null;
 }
 
 export interface CommissionSettlement {
@@ -89,7 +96,7 @@ export interface CommissionSettlementDetail {
   product_name: string | null;
   product_variant: string | null;
   product_size: string | null;
-  source_type: 'comodato_sale' | 'wholesale_sale' | 'conversion_bonus' | 'adjustment' | 'pos_sale';
+  source_type: SourceType;
   quantity: number | string;
   unit_commission: number | string;
   settlement_item_amount: number | string;

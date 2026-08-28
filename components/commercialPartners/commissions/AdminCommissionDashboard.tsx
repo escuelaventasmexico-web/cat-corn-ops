@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../../supabase';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { SellerCommissionMonthlySummary, UserProfile } from './commissionTypes';
-import { formatCurrency, parseNumericValue, getMonthName, getMonthStartDate } from './commissionUtils';
+import {
+  formatCurrency,
+  parseNumericValue,
+  getMonthName,
+  getMonthStartDate,
+  getMonthStartDateString,
+} from './commissionUtils';
 import { CommissionSummaryCards } from './CommissionSummaryCards';
 import { ActivitySummary } from './ActivitySummary';
 import { PayCommissionsButton } from './payments/PayCommissionsButton';
@@ -69,9 +75,10 @@ export const AdminCommissionDashboard = () => {
     if (!supabase) return;
 
     try {
-      const monthStart = getMonthStartDate(currentDate.getFullYear(), currentDate.getMonth())
-        .toISOString()
-        .split('T')[0];
+      const monthStart = getMonthStartDateString(
+        currentDate.getFullYear(),
+        currentDate.getMonth()
+      );
 
       const { data, error: err } = await supabase
         .from('v_seller_commission_monthly_summary')
@@ -91,9 +98,10 @@ export const AdminCommissionDashboard = () => {
     if (!supabase) return;
 
     try {
-      const monthStart = getMonthStartDate(currentDate.getFullYear(), currentDate.getMonth())
-        .toISOString()
-        .split('T')[0];
+      const monthStart = getMonthStartDateString(
+        currentDate.getFullYear(),
+        currentDate.getMonth()
+      );
 
       const { data, error: err } = await supabase
         .from('v_seller_commission_monthly_summary')
@@ -149,6 +157,14 @@ export const AdminCommissionDashboard = () => {
   }
 
   const monthName = getMonthName(currentDate);
+  const statementMonthStart = getMonthStartDateString(
+    currentDate.getFullYear(),
+    currentDate.getMonth()
+  );
+  const statementMonthEndExclusive = getMonthStartDateString(
+    currentDate.getFullYear(),
+    currentDate.getMonth() + 1
+  );
 
   const handlePrevMonth = () => {
     const prev = new Date(currentDate);
@@ -387,15 +403,15 @@ export const AdminCommissionDashboard = () => {
       )}
 
       {/* Available Commissions Modal */}
-      {selectedSellerId && (
+      {selectedSellerId && summary && (
         <AvailableCommissionsModal
           isOpen={showAvailableModal}
           onClose={() => setShowAvailableModal(false)}
           sellerId={selectedSellerId}
           sellerName={sellers.find(s => s.id === selectedSellerId)?.full_name || 'Vendedor'}
-          monthStart={getMonthStartDate(currentDate.getFullYear(), currentDate.getMonth()).toISOString().split('T')[0]}
-          monthEnd={new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toISOString().split('T')[0]}
-          availableTotal={summary?.available_total || 0}
+          monthStart={statementMonthStart}
+          monthEndExclusive={statementMonthEndExclusive}
+          monthlySummary={summary}
         />
       )}
 

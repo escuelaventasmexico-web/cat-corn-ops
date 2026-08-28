@@ -116,6 +116,8 @@ export const getSourceTypeLabel = (sourceType: SourceType): string => {
       return 'Comodato';
     case 'wholesale_sale':
       return 'Mayoreo';
+    case 'piece_sale':
+      return 'Venta por pieza';
     case 'conversion_bonus':
       return 'Bono de conversión';
     case 'adjustment':
@@ -133,6 +135,8 @@ export const getSourceTypeColor = (sourceType: SourceType): string => {
       return '#a855f7'; // purple
     case 'wholesale_sale':
       return '#3b82f6'; // blue
+    case 'piece_sale':
+      return '#ec4899'; // pink
     case 'conversion_bonus':
       return '#f59e0b'; // amber
     case 'adjustment':
@@ -185,6 +189,10 @@ export const getMotivationalMessage = (
 export const getMonthStartDate = (year: number, month: number): Date => {
   return new Date(year, month, 1);
 };
+
+export const getMonthStartDateString = (year: number, month: number): string => (
+  new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10)
+);
 
 export const getMonthEndDate = (year: number, month: number): Date => {
   return new Date(year, month + 1, 0);
