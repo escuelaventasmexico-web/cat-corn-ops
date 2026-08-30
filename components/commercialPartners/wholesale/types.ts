@@ -8,6 +8,7 @@ export type DocumentType = 'ine_front' | 'ine_back' | 'business_photo' | 'contra
 
 export interface WholesaleProduct {
   id: string;
+  product_id?: string | null;
   product_code: string;
   product_name: string;
   product_variant: string;
