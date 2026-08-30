@@ -433,14 +433,15 @@ export interface SalesChannelSummary {
   paid: number;
   pending: number;
   units: number;
+  sellers: number;
   error?: string;
 }
 
 /**
  * Get Venta por Pieza (Piece Sales) summary for a date range
- * Calculates VENDIDO from seller_piece_sales.total_amount
+ * Calculates VENDIDO from confirmed piece sales only
  * Calculates COBRADO from seller_piece_payments.status='completed'
- * Calculates PENDIENTE as (vendido - cobrado)
+ * Calculates PENDIENTE from actionable sales in draft or pending_review
  *
  * @param startDate Start date (inclusive) in UTC calendar
  * @param endDate End date (inclusive) in UTC calendar
@@ -455,6 +456,7 @@ export async function getPieceSaleSummary(
     paid: 0,
     pending: 0,
     units: 0,
+    sellers: 0,
   };
 
   if (!supabase) {
@@ -466,14 +468,14 @@ export async function getPieceSaleSummary(
     const startISO = startDate.toISOString();
     const endISO = endDate.toISOString();
 
-    // ===================================================================
-    // 1. VENDIDO: seller_piece_sales.total_amount (all sales in period)
-    // ===================================================================
+    // Confirmed sales drive sold amount, units, and distinct sellers.
+    // Draft and pending_review sales drive the actionable pending amount.
     const { data: pieceSales, error: salesErr } = await supabase
-      .from('seller_piece_sales')
-      .select('id, total_amount')
+      .from('v_piece_sale_history')
+      .select('sale_id, seller_id, total_amount, total_units, status')
       .gte('sale_date', startISO)
-      .lte('sale_date', endISO);
+      .lt('sale_date', endISO)
+      .in('status', ['confirmed', 'draft', 'pending_review']);
 
     if (salesErr) {
       console.error('Error loading piece sales:', salesErr);
@@ -481,10 +483,18 @@ export async function getPieceSaleSummary(
       return result;
     }
 
-    let vendidoTotal = 0;
-    if (pieceSales) {
-      for (const sale of pieceSales) {
-        vendidoTotal += Number(sale.total_amount) || 0;
+    let confirmedTotal = 0;
+    let pendingTotal = 0;
+    let confirmedUnits = 0;
+    const confirmedSellerIds = new Set<string>();
+
+    for (const sale of pieceSales ?? []) {
+      if (sale.status === 'confirmed') {
+        confirmedTotal += Number(sale.total_amount) || 0;
+        confirmedUnits += Number(sale.total_units) || 0;
+        if (sale.seller_id) confirmedSellerIds.add(sale.seller_id);
+      } else {
+        pendingTotal += Number(sale.total_amount) || 0;
       }
     }
 
@@ -496,7 +506,7 @@ export async function getPieceSaleSummary(
       .select('id, amount')
       .eq('status', 'completed')
       .gte('payment_date', startISO)
-      .lte('payment_date', endISO);
+      .lt('payment_date', endISO);
 
     if (paymentsErr) {
       console.error('Error loading piece sale payments:', paymentsErr);
@@ -511,35 +521,11 @@ export async function getPieceSaleSummary(
       }
     }
 
-    // ===================================================================
-    // 3. PIEZAS: seller_piece_sale_items.quantity (total units in period)
-    // ===================================================================
-    const { data: pieceCounts, error: countErr } = await supabase
-      .from('seller_piece_sale_items')
-      .select('quantity')
-      .gte('created_at', startISO)
-      .lte('created_at', endISO);
-
-    if (countErr) {
-      console.error('Error loading piece counts:', countErr);
-      result.error = 'No se pudieron cargar las cantidades de piezas';
-      return result;
-    }
-
-    let piecesTotal = 0;
-    if (pieceCounts) {
-      for (const item of pieceCounts) {
-        piecesTotal += Number(item.quantity) || 0;
-      }
-    }
-
-    // ===================================================================
-    // Calculate results
-    // ===================================================================
-    result.generated = Math.round(vendidoTotal * 100) / 100;
+    result.generated = Math.round(confirmedTotal * 100) / 100;
     result.paid = Math.round(cobradoTotal * 100) / 100;
-    result.pending = Math.round((vendidoTotal - cobradoTotal) * 100) / 100;
-    result.units = piecesTotal;
+    result.pending = Math.round(pendingTotal * 100) / 100;
+    result.units = confirmedUnits;
+    result.sellers = confirmedSellerIds.size;
   } catch (err: any) {
     console.error('Unexpected error in getPieceSaleSummary:', err);
     result.error = 'No se pudieron cargar los datos de venta por pieza';

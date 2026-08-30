@@ -32,18 +32,18 @@ export const PieceSalesModule = ({ refreshTrigger = 0, isAdmin = false, userId =
       // Get current month's start and end dates
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString();
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
 
       // Load data in parallel from three views
       const [salesRes, commissionRes, paymentsRes] = await Promise.all([
         // Monthly sales: use v_piece_sale_history
         supabase
           .from('v_piece_sale_history')
-          .select('total_amount', { count: 'exact' })
+          .select('total_amount, total_units', { count: 'exact' })
           .eq('seller_id', sellerId)
+          .eq('status', 'confirmed')
           .gte('sale_date', monthStart)
-          .lte('sale_date', monthEnd)
-          .neq('status', 'cancelled'),
+          .lt('sale_date', monthEnd),
         
         // Commission movements: split pending and available
         supabase
@@ -76,6 +76,8 @@ export const PieceSalesModule = ({ refreshTrigger = 0, isAdmin = false, userId =
       const monthlySalesAmount = salesData.reduce((sum: number, row: any) => 
         sum + (Number(row.total_amount) || 0), 0);
       const monthlySalesCount = salesRes.count ?? 0;
+      const monthlyUnitsSold = salesData.reduce((sum: number, row: any) =>
+        sum + (Number(row.total_units) || 0), 0);
 
       // Calculate commissions (pending vs available)
       const commissionData = commissionRes.data ?? [];
@@ -92,6 +94,7 @@ export const PieceSalesModule = ({ refreshTrigger = 0, isAdmin = false, userId =
       return {
         monthly_sales_amount: monthlySalesAmount,
         monthly_sales_count: monthlySalesCount,
+        monthly_units_sold: monthlyUnitsSold,
         total_commission_pending: pendingCommission,
         total_commission_available: availableCommission,
         monthly_payments_under_review: monthlyPaymentsUnderReview,

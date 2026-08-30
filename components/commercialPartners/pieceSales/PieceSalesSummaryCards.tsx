@@ -19,6 +19,7 @@ export const PieceSalesSummaryCards = ({ summaryData }: PieceSalesSummaryCardsPr
     {
       title: 'Ventas del mes',
       value: safeCurrency(summaryData.monthly_sales_amount),
+      detail: `${safeInteger(summaryData.monthly_units_sold)} piezas en ${safeInteger(summaryData.monthly_sales_count)} ventas`,
       icon: TrendingUp,
       color: 'text-blue-400',
       bgColor: 'bg-blue-500/10',
@@ -26,6 +27,7 @@ export const PieceSalesSummaryCards = ({ summaryData }: PieceSalesSummaryCardsPr
     {
       title: 'Comisión pendiente',
       value: safeCurrency(summaryData.total_commission_pending),
+      detail: undefined,
       icon: Clock,
       color: 'text-orange-400',
       bgColor: 'bg-orange-500/10',
@@ -33,6 +35,7 @@ export const PieceSalesSummaryCards = ({ summaryData }: PieceSalesSummaryCardsPr
     {
       title: 'Comisión disponible',
       value: safeCurrency(summaryData.total_commission_available),
+      detail: undefined,
       icon: TrendingDown,
       color: 'text-green-400',
       bgColor: 'bg-green-500/10',
@@ -40,6 +43,7 @@ export const PieceSalesSummaryCards = ({ summaryData }: PieceSalesSummaryCardsPr
     {
       title: 'Cobros en revisión',
       value: safeInteger(summaryData.monthly_payments_under_review),
+      detail: undefined,
       icon: AlertCircle,
       color: 'text-amber-400',
       bgColor: 'bg-amber-500/10',
@@ -62,6 +66,9 @@ export const PieceSalesSummaryCards = ({ summaryData }: PieceSalesSummaryCardsPr
               <Icon className={`w-5 h-5 ${card.color}`} />
             </div>
             <p className="text-2xl font-bold text-cc-cream">{card.value}</p>
+            {card.detail && (
+              <p className="text-xs text-cc-text-muted mt-2">{card.detail}</p>
+            )}
           </div>
         );
       })}
