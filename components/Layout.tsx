@@ -7,7 +7,6 @@ import {
   ChefHat, 
   Trash2, 
   LogOut,
-  Cat,
   Receipt,
   DollarSign,
   Truck,
@@ -55,11 +54,12 @@ export const Layout = () => {
     return (
       <div className="flex h-screen bg-cc-bg text-cc-text-main overflow-hidden">
         <aside className="w-20 lg:w-56 bg-cc-surface border-r border-white/5 flex flex-col transition-all duration-300">
-          <div className="h-20 flex items-center justify-center border-b border-white/5">
-            <div className="flex items-center gap-2 text-cc-primary">
-              <Cat size={32} />
-              <span className="hidden lg:block font-bold text-xl tracking-wider text-cc-cream">CAT CORN</span>
-            </div>
+          <div className="h-24 flex items-center justify-start overflow-hidden border-b border-white/5 px-2 lg:px-5">
+            <img
+              src="/assets/cat-corn-logo.png"
+              alt="Cat Corn Gourmet Popcorn"
+              className="h-auto w-16 max-w-full object-contain lg:h-[80px] lg:w-auto"
+            />
           </div>
           <div className="flex-1 flex items-center justify-center">
             <Loader size={24} className="animate-spin text-cc-primary" />
@@ -83,11 +83,12 @@ export const Layout = () => {
     <div className="flex h-screen bg-cc-bg text-cc-text-main overflow-hidden">
       {/* Sidebar */}
       <aside className="w-20 lg:w-56 bg-cc-surface border-r border-white/5 flex flex-col transition-all duration-300">
-        <div className="h-20 flex items-center justify-center border-b border-white/5">
-            <div className="flex items-center gap-2 text-cc-primary">
-                <Cat size={32} />
-                <span className="hidden lg:block font-bold text-xl tracking-wider text-cc-cream">CAT CORN</span>
-            </div>
+        <div className="h-24 flex items-center justify-start overflow-hidden border-b border-white/5 px-2 lg:px-5">
+          <img
+            src="/assets/cat-corn-logo.png"
+            alt="Cat Corn Gourmet Popcorn"
+            className="h-auto w-16 max-w-full object-contain lg:h-[80px] lg:w-auto"
+          />
         </div>
 
         <nav className="flex-1 py-6 space-y-2 px-2">

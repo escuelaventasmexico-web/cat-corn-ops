@@ -69,20 +69,6 @@ export interface B2BPendingBalance {
   collection_status: string;
 }
 
-export interface B2BTopProduct {
-  product_name: string;
-  variant_name: string | null;
-  size: string | null;
-  total_units: number | null;
-  total_amount: number | null;
-  comodato_units: number | null;
-  comodato_amount: number | null;
-  wholesale_units: number | null;
-  wholesale_amount: number | null;
-  partner_count: number | null;
-  rank: number | null;
-}
-
 export interface B2BUpcomingVisit {
   id: string;
   folio: string | null;
@@ -335,4 +321,148 @@ export interface B2BBalanceDetailResponse {
   summary: B2BBalanceSummary;
   partners: B2BBalancePartner[];
   piece_sales_by_seller: B2BPieceSellerDetail[];
+}
+
+/* ── B2B product analytics ───────────────────────────────────────── */
+
+export interface B2BProductAnalyticsTopProduct {
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  units_sold: number;
+  generated_revenue: number;
+}
+
+export interface B2BProductAnalyticsTopSpoilagePartner {
+  partner_id: string;
+  partner_name: string;
+  spoiled_units: number;
+  resolved_units: number;
+  spoilage_rate: number;
+  estimated_waste_cost: number | null;
+  cost_responsibility: string;
+}
+
+export interface B2BProductAnalyticsSummary {
+  units_sold: number;
+  generated_revenue: number;
+  distinct_partners: number;
+  comodato_units: number;
+  comodato_revenue: number;
+  wholesale_units: number;
+  wholesale_revenue: number;
+  spoilage_units: number;
+  estimated_waste_cost: number | null;
+  open_inventory_units: number;
+  weighted_average_liquidation_days: number | null;
+  weighted_median_liquidation_days: number | null;
+  top_product: B2BProductAnalyticsTopProduct | null;
+  top_spoilage_partner: B2BProductAnalyticsTopSpoilagePartner | null;
+}
+
+export interface B2BProductPerformance {
+  product_key: string;
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  units_sold: number;
+  generated_revenue: number;
+  distinct_partners: number;
+  comodato_units: number;
+  comodato_revenue: number;
+  wholesale_units: number;
+  wholesale_revenue: number;
+  weighted_average_liquidation_days: number | null;
+  weighted_median_liquidation_days: number | null;
+  spoiled_units: number;
+  estimated_waste_cost: number | null;
+  cost_mapping_status: 'mapped' | 'unmapped' | 'ambiguous' | 'missing_unit_cost' | 'not_applicable';
+}
+
+export interface B2BPartnerSpoilage {
+  partner_id: string;
+  partner_name: string;
+  spoiled_units: number;
+  estimated_waste_cost: number | null;
+  sold_units: number;
+  withdrawn_units: number;
+  resolved_units: number;
+  spoilage_rate: number;
+  cost_responsibility: string;
+  unavailable_cost_rows: number;
+}
+
+export interface B2BProductLiquidationTime {
+  product_key: string;
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  sold_units_with_fifo: number;
+  weighted_average_days: number | null;
+  weighted_median_days: number | null;
+}
+
+export interface B2BSlowInventoryItem {
+  partner_id: string;
+  partner_name: string;
+  product_key: string;
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  units_in_possession: number;
+  oldest_delivery_date: string;
+  age_days: number;
+  age_bucket: '0-15' | '16-30' | '31-45' | '46+';
+  current_unit_cost: number | null;
+  estimated_inventory_cost: number | null;
+  cost_mapping_status: 'mapped' | 'unmapped' | 'ambiguous' | 'missing_unit_cost';
+}
+
+export interface B2BDataQualityIssue {
+  source_type?: string;
+  source_id?: string;
+  source_item_id?: string;
+  partner_id?: string;
+  partner_name?: string;
+  product_name?: string;
+  product_variant?: string | null;
+  product_size?: string | null;
+  product_code?: string | null;
+  product_id?: string | null;
+  candidate_count?: number;
+  expected_amount?: number;
+  actual_amount?: number;
+  difference?: number;
+  [key: string]: string | number | boolean | null | undefined;
+}
+
+export interface B2BDataQualitySection {
+  count: number;
+  rows: B2BDataQualityIssue[];
+}
+
+export interface B2BProductAnalyticsDataQuality {
+  unmapped_products: B2BDataQualitySection;
+  ambiguous_products: B2BDataQualitySection;
+  rows_without_product_id: B2BDataQualitySection;
+  rows_without_product_code: B2BDataQualitySection;
+  fifo_impossible_groups: B2BDataQualitySection;
+  negative_inventory_groups: B2BDataQualitySection;
+  amount_reconciliation_errors: B2BDataQualitySection;
+  orders_without_items: B2BDataQualitySection;
+  rows_without_unit_cost: B2BDataQualitySection;
+}
+
+export interface B2BProductAnalyticsResponse {
+  period: {
+    start_at: string;
+    end_at_exclusive: string;
+    timezone: 'America/Mexico_City';
+  };
+  summary: B2BProductAnalyticsSummary;
+  products: B2BProductPerformance[];
+  spoilage_by_partner: B2BPartnerSpoilage[];
+  liquidation_time_by_product: B2BProductLiquidationTime[];
+  slow_inventory: B2BSlowInventoryItem[];
+  data_quality: B2BProductAnalyticsDataQuality;
 }

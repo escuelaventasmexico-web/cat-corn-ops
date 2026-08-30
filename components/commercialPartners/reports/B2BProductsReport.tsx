@@ -1,299 +1,337 @@
-import { useEffect, useState } from 'react';
-import { supabase } from '../../../supabase';
-import { Loader2, AlertCircle, Download } from 'lucide-react';
-import { B2BTopProduct } from './b2bReportTypes';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  formatCurrency,
-  formatNumber,
-  exportToCSV,
-} from './b2bReportHelpers';
+  AlertCircle,
+  BarChart3,
+  Clock3,
+  Download,
+  Loader2,
+  Package,
+  RefreshCw,
+  ShieldAlert,
+  TrendingUp,
+} from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { getB2BProductAnalytics } from '../../../services/b2bProductAnalyticsService';
+import type {
+  B2BPartnerSpoilage,
+  B2BProductAnalyticsResponse,
+  B2BProductPerformance,
+} from './b2bReportTypes';
+import { formatCurrency, formatDate, formatNumber } from './b2bReportHelpers';
+import { exportB2BProductAnalytics } from './exportB2BProductAnalytics';
 
 interface B2BProductsReportProps {
   refreshTrigger?: number;
 }
 
-export const B2BProductsReport = ({ refreshTrigger = 0 }: B2BProductsReportProps) => {
-  const [products, setProducts] = useState<B2BTopProduct[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+type PeriodPreset = 'current' | 'previous' | 'last30' | 'custom';
+type ProductSort = 'units' | 'revenue' | 'liquidation' | 'spoilage' | 'spoilageCost';
+type SpoilageSort = 'units' | 'cost' | 'rate';
 
-  const loadData = async () => {
-    if (!supabase) {
-      setError('Supabase no está configurado');
+interface DateRange {
+  start: string;
+  endExclusive: string;
+}
+
+const CHART_COLORS = ['#F4C542', '#F47BAA', '#06B6D4', '#A855F7', '#10B981', '#FB923C', '#60A5FA'];
+const QUALITY_LABELS: Record<string, string> = {
+  unmapped_products: 'Productos sin correspondencia',
+  ambiguous_products: 'Productos con correspondencia ambigua',
+  rows_without_product_id: 'Filas sin product_id',
+  rows_without_product_code: 'Filas sin product_code',
+  fifo_impossible_groups: 'Grupos incompatibles con FIFO',
+  negative_inventory_groups: 'Grupos con inventario negativo',
+  amount_reconciliation_errors: 'Diferencias de importe',
+  orders_without_items: 'Órdenes entregadas sin artículos',
+  rows_without_unit_cost: 'Filas sin costo unitario vigente',
+};
+
+const getMexicoToday = (): string =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+
+const parseDate = (value: string): Date => new Date(`${value}T00:00:00Z`);
+const dateOnly = (value: Date): string => value.toISOString().slice(0, 10);
+
+const addDays = (value: string, amount: number): string => {
+  const date = parseDate(value);
+  date.setUTCDate(date.getUTCDate() + amount);
+  return dateOnly(date);
+};
+
+const monthRange = (monthOffset: number): DateRange => {
+  const today = parseDate(getMexicoToday());
+  const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + monthOffset, 1));
+  const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+  return { start: dateOnly(start), endExclusive: dateOnly(end) };
+};
+
+const presetRange = (preset: Exclude<PeriodPreset, 'custom'>): DateRange => {
+  if (preset === 'current') return monthRange(0);
+  if (preset === 'previous') return monthRange(-1);
+  const today = getMexicoToday();
+  return { start: addDays(today, -29), endExclusive: addDays(today, 1) };
+};
+
+const productLabel = (product: {
+  product_name: string;
+  product_variant: string | null;
+  product_size?: string | null;
+}): string =>
+  [product.product_name, product.product_variant, product.product_size]
+    .filter(Boolean)
+    .join(' · ');
+
+const nullableCurrency = (value: number | null): string =>
+  value === null ? 'No disponible' : formatCurrency(value);
+
+const nullableDays = (value: number | null): string =>
+  value === null ? 'No disponible' : `${formatNumber(value, 1)} días`;
+
+const ProductTooltip = ({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: B2BProductPerformance }>;
+}) => {
+  const product = payload?.[0]?.payload;
+  if (!active || !product) return null;
+  return (
+    <div className="rounded-lg border border-white/15 bg-[#171717] p-3 text-xs shadow-xl">
+      <p className="mb-2 font-bold text-cc-cream">{productLabel(product)}</p>
+      <p className="text-cc-text-muted">Unidades: <span className="text-cc-text-main">{formatNumber(product.units_sold)}</span></p>
+      <p className="text-cc-text-muted">Ingreso: <span className="text-cc-primary">{formatCurrency(product.generated_revenue)}</span></p>
+      <p className="text-cc-text-muted">Comodato: <span className="text-cc-text-main">{formatNumber(product.comodato_units)}</span></p>
+      <p className="text-cc-text-muted">Mayoreo: <span className="text-cc-text-main">{formatNumber(product.wholesale_units)}</span></p>
+    </div>
+  );
+};
+
+const SpoilageTooltip = ({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: B2BPartnerSpoilage }>;
+}) => {
+  const partner = payload?.[0]?.payload;
+  if (!active || !partner) return null;
+  return (
+    <div className="rounded-lg border border-white/15 bg-[#171717] p-3 text-xs shadow-xl">
+      <p className="mb-2 font-bold text-cc-cream">{partner.partner_name}</p>
+      <p className="text-cc-text-muted">Piezas: <span className="text-cc-text-main">{formatNumber(partner.spoiled_units)}</span></p>
+      <p className="text-cc-text-muted">Costo estimado vigente: <span className="text-cc-primary">{nullableCurrency(partner.estimated_waste_cost)}</span></p>
+      <p className="text-cc-text-muted">Tasa: <span className="text-cc-text-main">{formatNumber(partner.spoilage_rate * 100, 1)}%</span></p>
+    </div>
+  );
+};
+
+export const B2BProductsReport = ({ refreshTrigger = 0 }: B2BProductsReportProps) => {
+  const [preset, setPreset] = useState<PeriodPreset>('current');
+  const [range, setRange] = useState<DateRange>(() => presetRange('current'));
+  const [report, setReport] = useState<B2BProductAnalyticsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [productSort, setProductSort] = useState<ProductSort>('units');
+  const [spoilageSort, setSpoilageSort] = useState<SpoilageSort>('units');
+
+  const loadData = useCallback(async () => {
+    if (!range.start || !range.endExclusive || range.start >= range.endExclusive) {
+      setError('El inicio debe ser anterior al fin exclusivo del periodo.');
       setLoading(false);
       return;
     }
-
     try {
       setLoading(true);
       setError(null);
-
-      const { data, error: dbErr } = await supabase
-        .from('v_b2b_top_products')
-        .select('*');
-
-      if (dbErr) throw dbErr;
-      setProducts((data as B2BTopProduct[]) ?? []);
-    } catch (err: any) {
-      console.error('Error loading products:', err);
-      setError(err?.message || 'Error al cargar productos');
+      setReport(await getB2BProductAnalytics(range.start, range.endExclusive));
+    } catch (caught: unknown) {
+      console.error('Error loading B2B product analytics:', caught);
+      setError(caught instanceof Error ? caught.message : 'Error al cargar el análisis de productos B2B');
     } finally {
       setLoading(false);
     }
-  };
+  }, [range]);
 
   useEffect(() => {
-    loadData();
-  }, [refreshTrigger]);
+    void loadData();
+  }, [loadData, refreshTrigger]);
 
-  const topByTotal = [...products].sort((a, b) => 
-    (Number(b.total_amount) || 0) - (Number(a.total_amount) || 0)
-  ).slice(0, 1)[0];
-
-  const topByWholesale = [...products].sort((a, b) => 
-    (Number(b.wholesale_amount) || 0) - (Number(a.wholesale_amount) || 0)
-  ).slice(0, 1)[0];
-
-  const topByComodato = [...products].sort((a, b) => 
-    (Number(b.comodato_amount) || 0) - (Number(a.comodato_amount) || 0)
-  ).slice(0, 1)[0];
-
-  const totalUnits = products.reduce((sum, p) => sum + (Number(p.total_units) || 0), 0);
-  const totalAmount = products.reduce((sum, p) => sum + (Number(p.total_amount) || 0), 0);
-
-  const handleExport = () => {
-    const data = products.map((p, idx) => ({
-      rank: idx + 1,
-      producto: p.product_name,
-      variante: p.variant_name || '—',
-      tamaño: p.size || '—',
-      unidades_totales: p.total_units || 0,
-      monto_total: p.total_amount || 0,
-      unidades_comodato: p.comodato_units || 0,
-      unidades_mayoreo: p.wholesale_units || 0,
-      monto_comodato: p.comodato_amount || 0,
-      monto_mayoreo: p.wholesale_amount || 0,
-      socios: p.partner_count || 0,
-    }));
-
-    exportToCSV('productos_b2b', data, [
-      { key: 'rank', label: 'Rank' },
-      { key: 'producto', label: 'Producto' },
-      { key: 'variante', label: 'Variante' },
-      { key: 'tamaño', label: 'Tamaño' },
-      { key: 'unidades_totales', label: 'Unidades Totales' },
-      { key: 'monto_total', label: 'Monto Total' },
-      { key: 'unidades_comodato', label: 'Unidades Comodato' },
-      { key: 'unidades_mayoreo', label: 'Unidades Mayoreo' },
-      { key: 'monto_comodato', label: 'Monto Comodato' },
-      { key: 'monto_mayoreo', label: 'Monto Mayoreo' },
-      { key: 'socios', label: 'Socios' },
-    ]);
+  const selectPreset = (next: PeriodPreset) => {
+    setPreset(next);
+    if (next !== 'custom') setRange(presetRange(next));
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 text-cc-primary animate-spin" />
-      </div>
-    );
-  }
+  const sortedProducts = useMemo(() => {
+    if (!report) return [];
+    const value = (product: B2BProductPerformance): number => {
+      if (productSort === 'revenue') return product.generated_revenue;
+      if (productSort === 'liquidation') return product.weighted_average_liquidation_days ?? -1;
+      if (productSort === 'spoilage') return product.spoiled_units;
+      if (productSort === 'spoilageCost') return product.estimated_waste_cost ?? -1;
+      return product.units_sold;
+    };
+    return [...report.products].sort((a, b) => value(b) - value(a));
+  }, [productSort, report]);
 
-  if (error) {
-    return (
-      <div className="p-6 bg-red-500/10 border border-red-500/30 rounded-2xl flex items-center gap-3">
-        <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
-        <div>
-          <h3 className="font-semibold text-red-300">Error al cargar datos</h3>
-          <p className="text-sm text-red-200">{error}</p>
-        </div>
-      </div>
-    );
-  }
+  const sortedSpoilage = useMemo(() => {
+    if (!report) return [];
+    const value = (partner: B2BPartnerSpoilage): number => {
+      if (spoilageSort === 'cost') return partner.estimated_waste_cost ?? -1;
+      if (spoilageSort === 'rate') return partner.spoilage_rate;
+      return partner.spoiled_units;
+    };
+    return [...report.spoilage_by_partner].sort((a, b) => value(b) - value(a));
+  }, [report, spoilageSort]);
+
+  const exportReport = async () => {
+    if (!report) return;
+    try {
+      setExporting(true);
+      await exportB2BProductAnalytics(report);
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : 'No fue posible exportar el reporte');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
-    <div className="space-y-8">
-      {/* ── Top Stats Cards ────────────────────────────────────── */}
-      <div>
-        <h2 className="text-lg font-bold text-cc-text-main mb-4">Productos Destacados</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
-            <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-3">
-              Total Piezas B2B
-            </p>
-            <p className="text-3xl font-bold text-cc-cream">
-              {formatNumber(totalUnits)}
-            </p>
-            <p className="text-xs text-cc-text-muted mt-2">
-              entre {formatNumber(products.length)} productos
-            </p>
+    <div className="space-y-6">
+      <section className="rounded-2xl border border-white/10 bg-cc-surface p-4 sm:p-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-cc-cream">Análisis de productos B2B</h2>
+            <p className="mt-1 text-sm text-cc-text-muted">Ventas reconocidas de comodato y mayoreo; cobranza excluida del reconocimiento.</p>
           </div>
-
-          <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
-            <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-3">
-              Total Monto Productos
-            </p>
-            <p className="text-3xl font-bold text-cc-cream">
-              {formatCurrency(totalAmount)}
-            </p>
+          <div className="flex flex-wrap items-end gap-2">
+            {([
+              ['current', 'Mes actual'],
+              ['previous', 'Mes anterior'],
+              ['last30', 'Últimos 30 días'],
+              ['custom', 'Rango personalizado'],
+            ] as Array<[PeriodPreset, string]>).map(([id, label]) => (
+              <button key={id} onClick={() => selectPreset(id)} className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${preset === id ? 'bg-cc-primary text-cc-bg' : 'bg-white/10 text-cc-text-main hover:bg-white/15'}`}>
+                {label}
+              </button>
+            ))}
+            {preset === 'custom' && (
+              <>
+                <label className="text-xs text-cc-text-muted">Inicio<input type="date" value={range.start} onChange={event => setRange(current => ({ ...current, start: event.target.value }))} className="ml-2 rounded-lg border border-white/10 bg-cc-bg px-2 py-2 text-cc-text-main" /></label>
+                <label className="text-xs text-cc-text-muted">Fin exclusivo<input type="date" value={range.endExclusive} onChange={event => setRange(current => ({ ...current, endExclusive: event.target.value }))} className="ml-2 rounded-lg border border-white/10 bg-cc-bg px-2 py-2 text-cc-text-main" /></label>
+              </>
+            )}
+            <button onClick={() => void loadData()} disabled={loading} className="rounded-lg border border-white/10 bg-white/10 p-2 text-cc-text-main hover:bg-white/15 disabled:opacity-50" title="Actualizar"><RefreshCw size={17} className={loading ? 'animate-spin' : ''} /></button>
+            <button onClick={() => void exportReport()} disabled={!report || exporting} className="flex items-center gap-2 rounded-lg border border-cc-primary/30 bg-cc-primary/15 px-3 py-2 text-xs font-semibold text-cc-primary hover:bg-cc-primary/25 disabled:opacity-50">
+              {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Exportar XLSX
+            </button>
           </div>
-
-          {topByTotal && (
-            <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
-              <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-3">
-                Más Vendido
-              </p>
-              <p className="text-sm font-semibold text-cc-cream mb-2">
-                {topByTotal.product_name}
-              </p>
-              <p className="text-lg font-bold text-cc-primary">
-                {formatCurrency(topByTotal.total_amount)}
-              </p>
-              <p className="text-xs text-cc-text-muted mt-2">
-                {formatNumber(topByTotal.total_units)} piezas
-              </p>
-            </div>
-          )}
-
-          {topByWholesale && (
-            <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
-              <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-3">
-                Fuerte en Mayoreo
-              </p>
-              <p className="text-sm font-semibold text-cc-cream mb-2">
-                {topByWholesale.product_name}
-              </p>
-              <p className="text-lg font-bold text-blue-400">
-                {formatCurrency(topByWholesale.wholesale_amount)}
-              </p>
-              <p className="text-xs text-cc-text-muted mt-2">
-                {formatNumber(topByWholesale.wholesale_units)} piezas
-              </p>
-            </div>
-          )}
-
-          {topByComodato && (
-            <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
-              <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-3">
-                Fuerte en Comodato
-              </p>
-              <p className="text-sm font-semibold text-cc-cream mb-2">
-                {topByComodato.product_name}
-              </p>
-              <p className="text-lg font-bold text-purple-400">
-                {formatCurrency(topByComodato.comodato_amount)}
-              </p>
-              <p className="text-xs text-cc-text-muted mt-2">
-                {formatNumber(topByComodato.comodato_units)} piezas
-              </p>
-            </div>
-          )}
         </div>
-      </div>
+      </section>
 
-      {/* ── Export Button ──────────────────────────────────────── */}
-      {products.length > 0 && (
-        <div className="flex justify-end">
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cc-primary/20 hover:bg-cc-primary/30 text-cc-primary font-semibold text-sm transition-colors border border-cc-primary/30"
-          >
-            <Download size={16} />
-            Exportar CSV
-          </button>
-        </div>
-      )}
+      {error && <div className="flex items-center gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200"><AlertCircle size={19} />{error}</div>}
+      {loading && !report && <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-cc-primary" /></div>}
 
-      {/* ── Products Table ────────────────────────────────────── */}
-      {products.length === 0 ? (
-        <div className="text-center py-12 text-cc-text-muted">
-          No hay datos de productos todavía.
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-white/5">
-                <th className="text-left py-3 px-4 text-cc-text-muted font-semibold text-xs uppercase w-12">
-                  Rank
-                </th>
-                <th className="text-left py-3 px-4 text-cc-text-muted font-semibold text-xs uppercase">
-                  Producto
-                </th>
-                <th className="text-left py-3 px-4 text-cc-text-muted font-semibold text-xs uppercase">
-                  Variante
-                </th>
-                <th className="text-left py-3 px-4 text-cc-text-muted font-semibold text-xs uppercase">
-                  Tamaño
-                </th>
-                <th className="text-right py-3 px-4 text-cc-text-muted font-semibold text-xs uppercase">
-                  Unidades
-                </th>
-                <th className="text-right py-3 px-4 text-cc-text-muted font-semibold text-xs uppercase">
-                  Monto Total
-                </th>
-                <th className="text-right py-3 px-4 text-cc-text-muted font-semibold text-xs uppercase">
-                  Comodato unid.
-                </th>
-                <th className="text-right py-3 px-4 text-cc-text-muted font-semibold text-xs uppercase">
-                  Mayoreo unid.
-                </th>
-                <th className="text-right py-3 px-4 text-cc-text-muted font-semibold text-xs uppercase">
-                  Comodato $
-                </th>
-                <th className="text-right py-3 px-4 text-cc-text-muted font-semibold text-xs uppercase">
-                  Mayoreo $
-                </th>
-                <th className="text-right py-3 px-4 text-cc-text-muted font-semibold text-xs uppercase">
-                  Socios
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {products.map((product, idx) => (
-                <tr
-                  key={idx}
-                  className="border-b border-white/5 hover:bg-white/5 transition-colors"
-                >
-                  <td className="py-3 px-4 text-cc-cream font-bold text-center">
-                    {idx + 1}
-                  </td>
-                  <td className="py-3 px-4 text-cc-cream font-medium">
-                    {product.product_name}
-                  </td>
-                  <td className="py-3 px-4 text-cc-text-main text-xs">
-                    {product.variant_name || '—'}
-                  </td>
-                  <td className="py-3 px-4 text-cc-text-main text-xs">
-                    {product.size || '—'}
-                  </td>
-                  <td className="py-3 px-4 text-right font-bold text-cc-cream">
-                    {formatNumber(product.total_units)}
-                  </td>
-                  <td className="py-3 px-4 text-right font-bold text-cc-cream">
-                    {formatCurrency(product.total_amount)}
-                  </td>
-                  <td className="py-3 px-4 text-right text-purple-300">
-                    {formatNumber(product.comodato_units)}
-                  </td>
-                  <td className="py-3 px-4 text-right text-blue-300">
-                    {formatNumber(product.wholesale_units)}
-                  </td>
-                  <td className="py-3 px-4 text-right text-purple-300">
-                    {formatCurrency(product.comodato_amount)}
-                  </td>
-                  <td className="py-3 px-4 text-right text-blue-300">
-                    {formatCurrency(product.wholesale_amount)}
-                  </td>
-                  <td className="py-3 px-4 text-right text-cc-text-main">
-                    {formatNumber(product.partner_count)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {report && (
+        <>
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <MetricCard icon={<Package size={20} />} label="Unidades vendidas" value={formatNumber(report.summary.units_sold)} detail={`${formatNumber(report.summary.comodato_units)} comodato · ${formatNumber(report.summary.wholesale_units)} mayoreo`} />
+            <MetricCard icon={<TrendingUp size={20} />} label="Ingreso generado" value={formatCurrency(report.summary.generated_revenue)} detail={`${formatCurrency(report.summary.comodato_revenue)} comodato · ${formatCurrency(report.summary.wholesale_revenue)} mayoreo`} />
+            <MetricCard icon={<BarChart3 size={20} />} label="Producto más vendido" value={report.summary.top_product ? productLabel(report.summary.top_product) : 'Sin datos'} detail={report.summary.top_product ? `${formatNumber(report.summary.top_product.units_sold)} piezas · ${formatCurrency(report.summary.top_product.generated_revenue)}` : undefined} />
+            <MetricCard icon={<Clock3 size={20} />} label="Tiempo de liquidación (comodato)" value={nullableDays(report.summary.weighted_average_liquidation_days)} detail={`Mediana ponderada: ${nullableDays(report.summary.weighted_median_liquidation_days)}`} />
+            <MetricCard icon={<ShieldAlert size={20} />} label="Merma registrada" value={`${formatNumber(report.summary.spoilage_units)} piezas`} detail={`Costo estimado vigente: ${nullableCurrency(report.summary.estimated_waste_cost)}`} />
+            <MetricCard icon={<ShieldAlert size={20} />} label="Socio con mayor merma" value={report.summary.top_spoilage_partner?.partner_name ?? 'Sin datos'} detail={report.summary.top_spoilage_partner ? `${formatNumber(report.summary.top_spoilage_partner.spoiled_units)} piezas · ${formatNumber(report.summary.top_spoilage_partner.spoilage_rate * 100, 1)}% · Costo estimado vigente: ${nullableCurrency(report.summary.top_spoilage_partner.estimated_waste_cost)} · Absorbido por ${report.summary.top_spoilage_partner.cost_responsibility === 'catcorn' ? 'Cat Corn' : report.summary.top_spoilage_partner.cost_responsibility}` : undefined} />
+          </section>
+
+          <section className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+            <ChartCard title="Productos más vendidos">
+              <ResponsiveContainer width="100%" height={330}>
+                <BarChart data={sortedProducts.slice(0, 10)} margin={{ top: 10, right: 12, bottom: 75, left: 0 }}>
+                  <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                  <XAxis dataKey="product_key" interval={0} angle={-35} textAnchor="end" tick={{ fill: '#A3A3A3', fontSize: 10 }} tickFormatter={(_, index) => productLabel(sortedProducts[index] ?? { product_name: '—', product_variant: null })} />
+                  <YAxis tick={{ fill: '#A3A3A3', fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip cursor={{ fill: 'rgba(255,255,255,0.04)' }} content={<ProductTooltip />} />
+                  <Bar dataKey="units_sold" radius={[6, 6, 0, 0]}>{sortedProducts.slice(0, 10).map((product, index) => <Cell key={product.product_key} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+            <ChartCard title="Merma por socio">
+              <ResponsiveContainer width="100%" height={330}>
+                <BarChart data={sortedSpoilage} margin={{ top: 10, right: 12, bottom: 75, left: 0 }}>
+                  <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                  <XAxis dataKey="partner_name" interval={0} angle={-35} textAnchor="end" tick={{ fill: '#A3A3A3', fontSize: 10 }} />
+                  <YAxis tick={{ fill: '#A3A3A3', fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip cursor={{ fill: 'rgba(255,255,255,0.04)' }} content={<SpoilageTooltip />} />
+                  <Bar dataKey="spoiled_units" fill="#F47BAA" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          </section>
+
+          <DataTableSection title="Rendimiento por producto" control={<SortSelect value={productSort} onChange={value => setProductSort(value as ProductSort)} options={[['units', 'Unidades'], ['revenue', 'Ingreso'], ['liquidation', 'Tiempo de liquidación'], ['spoilage', 'Merma'], ['spoilageCost', 'Costo de merma']]} />}>
+            <table className="min-w-[1500px] w-full text-xs">
+              <thead className="bg-white/5 text-cc-text-muted"><tr>{['Producto', 'Variante', 'Tamaño', 'Unidades vendidas', 'Ingreso generado', 'Socios distintos', 'Comodato unidades', 'Comodato importe', 'Mayoreo unidades', 'Mayoreo importe', 'Promedio días', 'Mediana días', 'Merma piezas', 'Costo estimado vigente'].map((label, index) => <th key={label} className={`px-3 py-3 ${index < 3 ? 'text-left' : 'text-right'}`}>{label}</th>)}</tr></thead>
+              <tbody className="divide-y divide-white/5">{sortedProducts.map(product => <tr key={product.product_key} className="text-cc-text-main hover:bg-white/[0.03]"><td className="px-3 py-3 font-semibold text-cc-cream">{product.product_name}</td><td className="px-3 py-3">{product.product_variant ?? '—'}</td><td className="px-3 py-3">{product.product_size ?? '—'}</td><NumberCell value={formatNumber(product.units_sold)} /><NumberCell value={formatCurrency(product.generated_revenue)} /><NumberCell value={formatNumber(product.distinct_partners)} /><NumberCell value={formatNumber(product.comodato_units)} /><NumberCell value={formatCurrency(product.comodato_revenue)} /><NumberCell value={formatNumber(product.wholesale_units)} /><NumberCell value={formatCurrency(product.wholesale_revenue)} /><NumberCell value={nullableDays(product.weighted_average_liquidation_days)} /><NumberCell value={nullableDays(product.weighted_median_liquidation_days)} /><NumberCell value={formatNumber(product.spoiled_units)} /><NumberCell value={nullableCurrency(product.estimated_waste_cost)} /></tr>)}</tbody>
+            </table>
+          </DataTableSection>
+
+          <DataTableSection title="Merma por socio" control={<SortSelect value={spoilageSort} onChange={value => setSpoilageSort(value as SpoilageSort)} options={[['units', 'Piezas mermadas'], ['cost', 'Costo estimado'], ['rate', 'Tasa de merma']]} />}>
+            <table className="min-w-[1050px] w-full text-xs">
+              <thead className="bg-white/5 text-cc-text-muted"><tr>{['Socio', 'Piezas mermadas', 'Costo estimado vigente', 'Piezas vendidas', 'Piezas retiradas', 'Piezas resueltas', 'Tasa de merma', 'Responsable del costo'].map((label, index) => <th key={label} className={`px-3 py-3 ${index === 0 || index === 7 ? 'text-left' : 'text-right'}`}>{label}</th>)}</tr></thead>
+              <tbody className="divide-y divide-white/5">{sortedSpoilage.map(partner => <tr key={partner.partner_id} className="text-cc-text-main hover:bg-white/[0.03]"><td className="px-3 py-3 font-semibold text-cc-cream">{partner.partner_name}</td><NumberCell value={formatNumber(partner.spoiled_units)} /><NumberCell value={nullableCurrency(partner.estimated_waste_cost)} /><NumberCell value={formatNumber(partner.sold_units)} /><NumberCell value={formatNumber(partner.withdrawn_units)} /><NumberCell value={formatNumber(partner.resolved_units)} /><NumberCell value={`${formatNumber(partner.spoilage_rate * 100, 2)}%`} /><td className="px-3 py-3">{partner.cost_responsibility === 'catcorn' ? 'Cat Corn' : partner.cost_responsibility}</td></tr>)}</tbody>
+            </table>
+          </DataTableSection>
+
+          <DataTableSection title={`Inventario lento · ${formatNumber(report.summary.open_inventory_units)} piezas abiertas`}>
+            <table className="min-w-[1150px] w-full text-xs">
+              <thead className="bg-white/5 text-cc-text-muted"><tr>{['Socio', 'Producto', 'Variante', 'Tamaño', 'Piezas en posesión', 'Entrega más antigua', 'Antigüedad', 'Rango', 'Valor estimado a costo vigente'].map((label, index) => <th key={label} className={`px-3 py-3 ${index < 4 ? 'text-left' : 'text-right'}`}>{label}</th>)}</tr></thead>
+              <tbody className="divide-y divide-white/5">{report.slow_inventory.map(item => <tr key={`${item.partner_id}-${item.product_key}`} className="text-cc-text-main hover:bg-white/[0.03]"><td className="px-3 py-3 font-semibold text-cc-cream">{item.partner_name}</td><td className="px-3 py-3">{item.product_name}</td><td className="px-3 py-3">{item.product_variant ?? '—'}</td><td className="px-3 py-3">{item.product_size ?? '—'}</td><NumberCell value={formatNumber(item.units_in_possession)} /><NumberCell value={formatDate(item.oldest_delivery_date)} /><NumberCell value={`${formatNumber(item.age_days)} días`} /><td className="px-3 py-3 text-right"><AgeBadge bucket={item.age_bucket} /></td><NumberCell value={nullableCurrency(item.estimated_inventory_cost)} /></tr>)}</tbody>
+            </table>
+          </DataTableSection>
+
+          <section className="rounded-2xl border border-white/10 bg-cc-surface p-5">
+            <div className="mb-4 flex items-center gap-2"><ShieldAlert size={19} className="text-amber-400" /><h3 className="font-bold text-cc-cream">Calidad de datos</h3></div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">{Object.entries(report.data_quality).map(([key, section]) => <div key={key} className={`rounded-xl border p-3 ${section.count > 0 ? 'border-amber-500/30 bg-amber-500/10' : 'border-white/10 bg-white/[0.02]'}`}><p className="text-xs text-cc-text-muted">{QUALITY_LABELS[key] ?? key}</p><p className={`mt-1 text-xl font-bold ${section.count > 0 ? 'text-amber-300' : 'text-cc-cream'}`}>{formatNumber(section.count)}</p>{section.count > 0 && <p className="mt-1 text-[11px] text-amber-200/80">El detalle completo se incluye en el XLSX.</p>}</div>)}</div>
+          </section>
+        </>
       )}
     </div>
   );
+};
+
+const MetricCard = ({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: string; detail?: string }) => (
+  <div className="rounded-2xl border border-white/5 bg-cc-surface p-5">
+    <div className="mb-3 flex items-center gap-2 text-cc-primary">{icon}<p className="text-xs font-semibold uppercase tracking-wide text-cc-text-muted">{label}</p></div>
+    <p className="text-2xl font-bold text-cc-cream">{value}</p>
+    {detail && <p className="mt-2 text-xs leading-relaxed text-cc-text-muted">{detail}</p>}
+  </div>
+);
+
+const ChartCard = ({ title, children }: { title: string; children: React.ReactNode }) => <section className="rounded-2xl border border-white/10 bg-cc-surface p-4"><h3 className="mb-3 font-bold text-cc-cream">{title}</h3>{children}</section>;
+
+const DataTableSection = ({ title, control, children }: { title: string; control?: React.ReactNode; children: React.ReactNode }) => <section className="overflow-hidden rounded-2xl border border-white/10 bg-cc-surface"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-4"><h3 className="font-bold text-cc-cream">{title}</h3>{control}</div><div className="overflow-x-auto">{children}</div></section>;
+
+const SortSelect = ({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: Array<[string, string]> }) => <label className="text-xs text-cc-text-muted">Ordenar por <select value={value} onChange={event => onChange(event.target.value)} className="ml-2 rounded-lg border border-white/10 bg-cc-bg px-2 py-1.5 text-cc-text-main">{options.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>;
+
+const NumberCell = ({ value }: { value: string }) => <td className="whitespace-nowrap px-3 py-3 text-right">{value}</td>;
+
+const AgeBadge = ({ bucket }: { bucket: '0-15' | '16-30' | '31-45' | '46+' }) => {
+  const color = bucket === '46+' ? 'bg-red-500/20 text-red-300' : bucket === '31-45' ? 'bg-orange-500/20 text-orange-300' : bucket === '16-30' ? 'bg-amber-500/20 text-amber-300' : 'bg-green-500/20 text-green-300';
+  const label = bucket === '46+' ? 'Más de 45 días' : `${bucket} días`;
+  return <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${color}`}>{label}</span>;
 };

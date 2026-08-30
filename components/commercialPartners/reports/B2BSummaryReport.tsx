@@ -417,7 +417,7 @@ export const B2BSummaryReport = ({ refreshTrigger = 0 }: B2BSummaryReportProps) 
             <div className="bg-cc-surface rounded-2xl border border-white/5 p-6">
               <p className="text-xs text-cc-text-muted uppercase tracking-wide mb-2">Vendedores</p>
               <p className="text-2xl font-bold text-cc-cream">
-                {formatNumber(0)}
+                {formatNumber(pieceSale.sellers)}
               </p>
             </div>
           </div>
