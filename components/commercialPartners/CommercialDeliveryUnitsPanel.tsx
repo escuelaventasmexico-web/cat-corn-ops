@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Barcode, CheckCircle2, Printer, X } from 'lucide-react';
 import { printCommercialDeliveryLabelTest, printCommercialDeliveryUnitLabels, renderCommercialDeliveryLabel } from '../../lib/printReceipt';
 import { getSavedCommercialDeliveryLabelPrinterName } from '../../lib/qzService';
@@ -27,6 +27,13 @@ const STATUS: Record<CommercialDeliveryUnit['status'], string> = {
   released: 'Liberada', returned_good: 'Devuelta en buen estado', spoiled: 'Mermada', voided: 'Anulada', replaced: 'Reemplazada',
 };
 
+const SCAN_CODE_LENGTH = 16;
+const SCANNER_MAX_INTER_KEY_MS = 100;
+const SCANNER_MAX_TOTAL_MS = 1200;
+const SCANNER_RESET_MS = 150;
+const SCANNER_ONLY_MESSAGE = 'Por seguridad, el código sólo puede capturarse con el escáner.';
+const SCANNER_TOO_SLOW_MESSAGE = 'Lectura demasiado lenta. Utiliza el escáner.';
+
 type DeliveryGroup = {
   id: string;
   sourceType: CommercialDeliverySourceType;
@@ -40,7 +47,6 @@ type AdminAction = { kind: 'release' | 'cancel'; delivery: DeliveryGroup } | nul
 export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, onReleased, refreshKey }: Props) {
   const { isAdmin } = useAuth();
   const [units, setUnits] = useState<CommercialDeliveryUnit[]>([]);
-  const [barcode, setBarcode] = useState('');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [printing, setPrinting] = useState(false);
@@ -51,9 +57,15 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
   const [adminPassword, setAdminPassword] = useState('');
   const [adminConfirmed, setAdminConfirmed] = useState(false);
   const [adminProcessing, setAdminProcessing] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const scannerBufferRef = useRef('');
+  const scannerStartedAtRef = useRef<number | null>(null);
+  const scannerLastDigitAtRef = useRef<number | null>(null);
+  const scannerResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scanRequestInFlightRef = useRef(false);
 
   const load = async () => {
     setLoading(true);
@@ -62,6 +74,9 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
     finally { setLoading(false); }
   };
   useEffect(() => { void load(); }, [partnerId, sourceType, refreshKey]);
+  useEffect(() => () => {
+    if (scannerResetTimerRef.current) clearTimeout(scannerResetTimerRef.current);
+  }, []);
 
   const pendingPrint = useMemo(() => units.filter(unit => unit.status === 'generated'), [units]);
   // The server accepts one source per atomic print confirmation. Do not mix
@@ -151,7 +166,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
       setMessage('Preparando 1 etiqueta…');
       const acceptedIds = await printCommercialDeliveryUnitLabels([labelData(unit)]);
       await registerAcceptedPrints(acceptedIds, reason);
-      setMessage(`Etiqueta ${unit.scan_code} aceptada por QZ Tray y registrada como reimpresión.`); inputRef.current?.focus();
+      setMessage(`Etiqueta •••• ${unit.scan_code.slice(-4)} aceptada por QZ Tray y registrada como reimpresión.`); inputRef.current?.focus();
     } catch (err: any) { setError(err.message || 'No se pudo reimprimir la etiqueta.'); }
     finally { setPrinting(false); }
   };
@@ -192,16 +207,104 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
     }
   };
 
-  const scan = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!barcode.trim()) return;
-    setError(null); setMessage(null);
+  const clearScannerCapture = () => {
+    if (scannerResetTimerRef.current) clearTimeout(scannerResetTimerRef.current);
+    scannerResetTimerRef.current = null;
+    scannerBufferRef.current = '';
+    scannerStartedAtRef.current = null;
+    scannerLastDigitAtRef.current = null;
+  };
+
+  const rejectScannerCapture = (reason: string) => {
+    clearScannerCapture();
+    setError(reason);
+  };
+
+  const queueScannerReset = () => {
+    if (scannerResetTimerRef.current) clearTimeout(scannerResetTimerRef.current);
+    scannerResetTimerRef.current = setTimeout(() => {
+      if (scannerBufferRef.current) rejectScannerCapture(SCANNER_TOO_SLOW_MESSAGE);
+    }, SCANNER_RESET_MS);
+  };
+
+  const submitScannedCode = async (scanCode: string) => {
+    if (scanRequestInFlightRef.current) return;
+    scanRequestInFlightRef.current = true;
+    setScanning(true); setError(null); setMessage(null);
     try {
-      const result = await scanCommercialDeliveryUnitForRelease(barcode, partnerId);
+      const result = await scanCommercialDeliveryUnitForRelease(scanCode, partnerId);
       setMessage(result.released ? 'Entrega liberada correctamente.' : `Escaneo confirmado: ${result.scanned} / ${result.total}.`);
-      setBarcode(''); await load(); inputRef.current?.focus();
+      await load();
       if (result.released) onReleased?.();
-    } catch (err: any) { setError(err.message || 'No se pudo liberar la bolsa.'); inputRef.current?.focus(); }
+    } catch (err: any) {
+      setError(err.message || 'No se pudo liberar la bolsa.');
+    } finally {
+      scanRequestInFlightRef.current = false;
+      setScanning(false);
+      clearScannerCapture();
+      inputRef.current?.focus();
+    }
+  };
+
+  const captureScannerKey = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (scanRequestInFlightRef.current) {
+      event.preventDefault();
+      return;
+    }
+
+    if (event.repeat) {
+      event.preventDefault();
+      rejectScannerCapture(SCANNER_TOO_SLOW_MESSAGE);
+      return;
+    }
+
+    const now = performance.now();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const scanCode = scannerBufferRef.current;
+      const startedAt = scannerStartedAtRef.current;
+      const valid = scanCode.length === SCAN_CODE_LENGTH
+        && /^\d+$/.test(scanCode)
+        && startedAt !== null
+        && now - startedAt <= SCANNER_MAX_TOTAL_MS;
+      clearScannerCapture();
+      if (!valid) {
+        setError(SCANNER_TOO_SLOW_MESSAGE);
+        inputRef.current?.focus();
+        return;
+      }
+      void submitScannedCode(scanCode);
+      return;
+    }
+
+    if (!/^\d$/.test(event.key)) {
+      event.preventDefault();
+      clearScannerCapture();
+      return;
+    }
+
+    event.preventDefault();
+    const lastDigitAt = scannerLastDigitAtRef.current;
+    if (lastDigitAt !== null && now - lastDigitAt > SCANNER_MAX_INTER_KEY_MS) {
+      rejectScannerCapture(SCANNER_TOO_SLOW_MESSAGE);
+      return;
+    }
+
+    if (!scannerBufferRef.current) scannerStartedAtRef.current = now;
+    scannerBufferRef.current += event.key;
+    scannerLastDigitAtRef.current = now;
+
+    if (scannerBufferRef.current.length > SCAN_CODE_LENGTH) {
+      rejectScannerCapture(SCANNER_TOO_SLOW_MESSAGE);
+      return;
+    }
+
+    queueScannerReset();
+  };
+
+  const blockManualScannerInput = (event: { preventDefault: () => void }) => {
+    event.preventDefault();
+    rejectScannerCapture(SCANNER_ONLY_MESSAGE);
   };
 
   const openAdminAction = (kind: NonNullable<AdminAction>['kind'], delivery: DeliveryGroup) => {
@@ -279,9 +382,10 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
       <div><p className="text-sm font-bold text-[#111111]">Etiquetas de entrega</p><p className="text-xs text-[#6b5c40]">Escaneadas / total: <strong>{progress.scanned} / {progress.total}</strong></p></div>
       <div className="flex flex-wrap gap-2"><button type="button" onClick={openLabelPreview} disabled={printing} className="flex items-center gap-2 rounded-lg border border-[#a87820] bg-white px-3 py-2 text-xs font-semibold text-[#4a2c0a] disabled:opacity-50"><Barcode size={15} />Vista previa de etiqueta</button><button type="button" onClick={() => void printTest()} disabled={printing} className="flex items-center gap-2 rounded-lg border border-[#a87820] bg-white px-3 py-2 text-xs font-semibold text-[#4a2c0a] disabled:opacity-50"><Printer size={15} />Imprimir etiqueta de prueba</button><button type="button" onClick={printPending} disabled={!nextPrintBatch.length || printing} className="flex items-center gap-2 rounded-lg border border-purple-300 bg-purple-100 px-3 py-2 text-xs font-semibold text-purple-800 disabled:opacity-50"><Printer size={15} />{printing ? 'Imprimiendo…' : `Imprimir siguiente entrega (${nextPrintBatch.length})`}</button></div>
     </div>
-    <form onSubmit={scan} className="rounded-xl border border-[#c49330] bg-[#D6A23A] p-4">
+    <form onSubmit={event => event.preventDefault()} className="rounded-xl border border-[#c49330] bg-[#D6A23A] p-4">
       <label className="mb-1 block text-xs font-bold text-[#111111]">Escanear etiqueta de la bolsa</label>
-      <div className="flex gap-2"><input ref={inputRef} autoFocus value={barcode} onChange={event => setBarcode(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-[#a87820] bg-white px-3 py-2 font-mono text-sm text-[#111111]" placeholder="1234 5678 9012 3456" /><button className="rounded-lg bg-[#2d1a00] px-4 py-2 text-xs font-bold text-white"><Barcode size={15} className="inline mr-1" />Liberar</button></div>
+      <div className="flex gap-2"><input ref={inputRef} autoFocus readOnly value="" autoComplete="off" inputMode="none" onKeyDown={captureScannerKey} onPaste={blockManualScannerInput} onCut={blockManualScannerInput} onDrop={blockManualScannerInput} onContextMenu={blockManualScannerInput} onBeforeInput={blockManualScannerInput} onBlur={clearScannerCapture} className="min-w-0 flex-1 rounded-lg border border-[#a87820] bg-white px-3 py-2 font-mono text-sm text-[#111111]" placeholder="Escanea la etiqueta" aria-label="Escanear etiqueta de la bolsa" /><button type="button" disabled className="rounded-lg bg-[#2d1a00] px-4 py-2 text-xs font-bold text-white disabled:opacity-60"><Barcode size={15} className="inline mr-1" />{scanning ? 'Liberando…' : 'Liberar'}</button></div>
+      <p className="mt-2 text-xs text-[#4a2c0a]">{scanning ? 'Procesando lectura…' : 'Listo para escanear'}</p>
     </form>
     {message && <p className="flex items-center gap-2 rounded-lg bg-green-50 p-3 text-sm text-green-800"><CheckCircle2 size={16} />{message}</p>}
     {error && <p className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-800"><AlertCircle size={16} />{error}</p>}
@@ -293,7 +397,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
     const canAdminister = isAdmin && delivery.sourceStatus === 'pending_release';
     return <section key={`${delivery.sourceType}:${delivery.id}`} className="rounded-xl border border-[#c49330] bg-[#fff8e6] p-3">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-bold text-[#111111]">{delivery.sourceType === 'comodato' ? 'Entrega Comodato' : 'Pedido Mayoreo'}</p><p className="text-xs text-[#6b5c40]">{new Date(delivery.deliveryDate).toLocaleDateString('es-MX')} · Estado: <strong>{delivery.sourceStatus}</strong></p><p className="mt-1 text-xs text-[#4a2c0a]">{delivery.units.length} bolsas · {printed} impresas · {scanned} escaneadas · {pending} pendientes</p></div>{canAdminister && <div className="flex flex-wrap gap-2"><button type="button" onClick={() => openAdminAction('release', delivery)} className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-bold text-white hover:bg-amber-800">Liberación administrativa</button><button type="button" onClick={() => openAdminAction('cancel', delivery)} className="rounded-lg bg-red-700 px-3 py-2 text-xs font-bold text-white hover:bg-red-800">Cancelar entrega</button></div>}</div>
-      <div className="mt-3 space-y-2">{delivery.units.map(unit => <article key={unit.id} className="rounded-lg border border-[#dec27f] bg-white p-3 text-sm"><div className="flex justify-between gap-2"><div><p className="font-mono font-bold text-[#111111]">{unit.scan_code}</p><p className="font-semibold text-[#111111]">{unit.product_name}{unit.product_variant ? ` — ${unit.product_variant}` : ''}</p><p className="text-xs text-[#6b5c40]">{unit.product_size || '—'} · {unit.source_type === 'comodato' ? 'Comodato' : 'Mayoreo'}</p></div><span className="h-fit rounded-full bg-[#fff8e6] px-2 py-1 text-xs font-medium text-[#4a2c0a]">{STATUS[unit.status]}</span></div><div className="mt-2 flex items-center justify-between gap-2"><p className="text-xs text-[#6b5c40]">Impresiones: {unit.print_count} · Liberación: {unit.released_at ? new Date(unit.released_at).toLocaleString('es-MX') : '—'}{unit.status === 'returned_good' ? ` · Retiro: ${unit.returned_good_at ? new Date(unit.returned_good_at).toLocaleString('es-MX') : '—'}` : ''}</p>{unit.status === 'printed' && <button type="button" disabled={printing} onClick={() => void reprint(unit)} className="text-xs font-semibold text-purple-800 underline">Reimprimir</button>}</div></article>)}</div>
+      <div className="mt-3 space-y-2">{delivery.units.map(unit => <article key={unit.id} className="rounded-lg border border-[#dec27f] bg-white p-3 text-sm"><div className="flex justify-between gap-2"><div><p className="font-mono font-bold text-[#111111]">Etiqueta •••• {unit.scan_code.slice(-4)}</p><p className="font-semibold text-[#111111]">{unit.product_name}{unit.product_variant ? ` — ${unit.product_variant}` : ''}</p><p className="text-xs text-[#6b5c40]">{unit.product_size || '—'} · {unit.source_type === 'comodato' ? 'Comodato' : 'Mayoreo'}</p></div><span className="h-fit rounded-full bg-[#fff8e6] px-2 py-1 text-xs font-medium text-[#4a2c0a]">{STATUS[unit.status]}</span></div><div className="mt-2 flex items-center justify-between gap-2"><p className="text-xs text-[#6b5c40]">Impresiones: {unit.print_count} · Liberación: {unit.released_at ? new Date(unit.released_at).toLocaleString('es-MX') : '—'}{unit.status === 'returned_good' ? ` · Retiro: ${unit.returned_good_at ? new Date(unit.returned_good_at).toLocaleString('es-MX') : '—'}` : ''}</p>{unit.status === 'printed' && <button type="button" disabled={printing} onClick={() => void reprint(unit)} className="text-xs font-semibold text-purple-800 underline">Reimprimir</button>}</div></article>)}</div>
     </section>;
   })}</div>}
   </section>;
