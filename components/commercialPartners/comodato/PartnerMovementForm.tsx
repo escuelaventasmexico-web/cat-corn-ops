@@ -320,7 +320,7 @@ const PartnerMovementForm: React.FC<Props> = ({
       return;
     }
     if (isWithdrawal && !withdrawalException) {
-      if (!withdrawalUnit || withdrawalUnit.barcode_value !== withdrawalBarcode.trim()) {
+      if (!withdrawalUnit || (withdrawalUnit.scan_code !== withdrawalBarcode.trim() && withdrawalUnit.barcode_value !== withdrawalBarcode.trim())) {
         setError('Escanea una etiqueta liberada antes de confirmar el retiro.');
         withdrawalInputRef.current?.focus();
         return;
@@ -545,7 +545,7 @@ const PartnerMovementForm: React.FC<Props> = ({
             <div className={`${CARD_CLS} border-red-300 bg-red-50`}>
               {!spoilageException ? <>
                 <label className={LABEL_CLS}>Escanear etiqueta de la bolsa *</label>
-                <input value={spoilageBarcode} onChange={e => setSpoilageBarcode(e.target.value)} autoFocus className={INPUT_CLS} placeholder="CCU1-…" />
+                <input value={spoilageBarcode} onChange={e => setSpoilageBarcode(e.target.value)} autoFocus className={INPUT_CLS} placeholder="1234 5678 9012 3456" />
                 <p className="mt-1 text-xs text-red-700">La merma operativa sólo puede registrarse sobre una bolsa liberada.</p>
                 {isAdmin && <button type="button" onClick={() => setSpoilageException(true)} className="mt-2 text-xs font-semibold text-red-800 underline">Registrar merma sin etiqueta</button>}
               </> : <>
@@ -756,7 +756,7 @@ const PartnerMovementForm: React.FC<Props> = ({
               {!withdrawalException ? <>
                 <p className="text-xs font-semibold text-[#4a2c0a] uppercase tracking-wider">Retiro por etiqueta</p>
                 <label className={LABEL_CLS}>Escanea el código de barras de la bolsa</label>
-                <div className="flex gap-2"><input ref={withdrawalInputRef} autoFocus value={withdrawalBarcode} onChange={event => { setWithdrawalBarcode(event.target.value); setWithdrawalUnit(null); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void previewWithdrawalUnit(); } }} className={INPUT_CLS} placeholder="CCU1-…" /><button type="button" onClick={() => void previewWithdrawalUnit()} className="rounded-lg bg-[#2d1a00] px-3 text-xs font-semibold text-[#F6E7C1]">Consultar</button></div>
+                <div className="flex gap-2"><input ref={withdrawalInputRef} autoFocus value={withdrawalBarcode} onChange={event => { setWithdrawalBarcode(event.target.value); setWithdrawalUnit(null); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void previewWithdrawalUnit(); } }} className={INPUT_CLS} placeholder="1234 5678 9012 3456" /><button type="button" onClick={() => void previewWithdrawalUnit()} className="rounded-lg bg-[#2d1a00] px-3 text-xs font-semibold text-[#F6E7C1]">Consultar</button></div>
                 <p className="text-xs text-[#6b5c40]">El lector funciona como teclado. Sólo se retira una bolsa liberada por confirmación.</p>
                 {withdrawalUnit && <div className="rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm text-[#4a2c0a]"><p className="font-semibold">{withdrawalUnit.product_name}{withdrawalUnit.product_variant ? ` — ${withdrawalUnit.product_variant}` : ''}</p><p>{withdrawalUnit.product_size || '—'} · Precio Cat Corn: {fmtCurrency(withdrawalUnit.unit_price)}</p><p>Socio: {withdrawalUnit.commercial_partners?.business_name || withdrawalUnit.commercial_partners?.responsible_name || 'Socio seleccionado'}</p><p className="text-xs">Liberada: {withdrawalUnit.released_at ? new Date(withdrawalUnit.released_at).toLocaleString('es-MX') : '—'}</p></div>}
                 {isAdmin && <button type="button" onClick={() => setWithdrawalException(true)} className="text-xs font-semibold text-orange-800 underline">Registrar retiro histórico sin etiqueta</button>}

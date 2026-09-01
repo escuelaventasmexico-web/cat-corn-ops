@@ -23,6 +23,23 @@ const TAG = '[QZ]';
 const PRINTER_KEY = 'catcorn_thermal_printer';
 const COMMERCIAL_DELIVERY_LABEL_PRINTER_KEY = 'catcorn_commercial_delivery_label_printer';
 
+/**
+ * Physical calibration for the YICHIP-compatible B2B label roll.
+ * Keep these values together so the first on-printer calibration can adjust
+ * position or spacing without changing the label renderer.
+ */
+export const COMMERCIAL_DELIVERY_LABEL_CALIBRATION = {
+  widthMm: 50,
+  heightMm: 30,
+  horizontalOffsetMm: 0,
+  verticalOffsetMm: 0,
+  gapMm: 0,
+  dpi: 203,
+  dotsPerMm: 8,
+  pixelWidth: 384,
+  pixelHeight: 240,
+} as const;
+
 /** Endpoint for the Vercel serverless signing function */
 const SIGN_ENDPOINT = '/api/qz-sign';
 
@@ -276,6 +293,44 @@ export async function printRaw(
     console.error(TAG, `❌ ERROR AL IMPRIMIR en "${printerName}":`, err);
     throw err;
   }
+}
+
+/**
+ * Sends exactly one raster page for one physical commercial-delivery label.
+ * There is no cut command, browser fallback, or printer fallback. Each call
+ * is intentionally a separate QZ job so 50 × 30 mm remains one label.
+ */
+export async function printCommercialDeliveryLabelImage(
+  printerName: string,
+  imageDataUrl: string,
+): Promise<void> {
+  await connectQZ();
+  const calibration = COMMERCIAL_DELIVERY_LABEL_CALIBRATION;
+  const config = qz.configs.create(printerName, {
+    colorType: 'blackwhite',
+    // QZ interprets density in dots/mm when units are millimetres: 8 d/mm
+    // equals the confirmed 203 dpi. The one-mm horizontal margins leave the
+    // 48-mm safe area represented by the 384-pixel canvas.
+    density: calibration.dotsPerMm,
+    units: 'mm',
+    size: { width: calibration.widthMm, height: calibration.heightMm },
+    margins: {
+      top: calibration.verticalOffsetMm,
+      right: 1,
+      bottom: 0,
+      left: calibration.horizontalOffsetMm + 1,
+    },
+    orientation: 'landscape',
+    scaleContent: false,
+    spool: { size: 1 },
+  });
+
+  await qz.print(config, [{
+    type: 'pixel',
+    format: 'image',
+    data: imageDataUrl,
+    flavor: 'base64',
+  }]);
 }
 
 // ─── Diagnostic test print ──────────────────────────────────────────

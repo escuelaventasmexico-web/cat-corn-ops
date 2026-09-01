@@ -3,10 +3,13 @@
  * Uses QZ Tray exclusively — no browser window.print().
  */
 import type { ReceiptData } from '../components/TicketReceipt';
+import JsBarcode from 'jsbarcode';
 import {
+  COMMERCIAL_DELIVERY_LABEL_CALIBRATION,
   ensurePrinterAvailable,
   getSavedCommercialDeliveryLabelPrinterName,
   getSavedPrinterName,
+  printCommercialDeliveryLabelImage,
   printRaw,
 } from './qzService';
 
@@ -390,12 +393,21 @@ export interface LabelPrintData {
 
 /** A delivery label identifies one physical bag, never a product SKU or lot. */
 export interface CommercialDeliveryLabelData {
-  barcodeValue: string;
+  unitId: string;
+  scanCode: string | null | undefined;
+  partnerName: string;
   productName: string;
   variant?: string | null;
   size?: string | null;
   sourceLabel: string;
-  unitPrice?: number;
+  deliveryDate: string;
+}
+
+export class CommercialDeliveryLabelPrintError extends Error {
+  constructor(message: string, readonly acceptedUnitIds: string[]) {
+    super(message);
+    this.name = 'CommercialDeliveryLabelPrintError';
+  }
 }
 
 /**
@@ -517,29 +529,155 @@ export async function printLabelViaQZ(
   console.info(TAG, `✅ ${quantity} etiqueta(s) enviada(s) — ${label.productName}`);
 }
 
-function buildCommercialDeliveryLabelCommands(label: CommercialDeliveryLabelData): string[] {
-  const variant = label.variant ? ` — ${label.variant}` : '';
-  const description = `${label.productName}${variant}`;
-  return buildLabelCommands({
-    productName: description,
-    size: label.size || label.sourceLabel,
-    sku: label.sourceLabel,
-    barcodeValue: label.barcodeValue,
-    price: label.unitPrice ?? 0,
+const SCAN_CODE_PATTERN = /^\d{16}$/;
+const LABEL_WIDTH = COMMERCIAL_DELIVERY_LABEL_CALIBRATION.pixelWidth;
+const LABEL_HEIGHT = COMMERCIAL_DELIVERY_LABEL_CALIBRATION.pixelHeight;
+const LABEL_SAFE_MARGIN = 12;
+
+const truncateToWidth = (context: CanvasRenderingContext2D, value: string, maxWidth: number) => {
+  if (context.measureText(value).width <= maxWidth) return value;
+  const ellipsis = '…';
+  let truncated = value;
+  while (truncated && context.measureText(`${truncated}${ellipsis}`).width > maxWidth) {
+    truncated = truncated.slice(0, -1);
+  }
+  return `${truncated}${ellipsis}`;
+};
+
+const drawFittedText = (
+  context: CanvasRenderingContext2D,
+  value: string,
+  y: number,
+  options: { maxWidth?: number; maxFontSize: number; minFontSize: number; weight?: number },
+) => {
+  const maxWidth = options.maxWidth ?? LABEL_WIDTH - LABEL_SAFE_MARGIN * 2;
+  let size = options.maxFontSize;
+  do {
+    context.font = `${options.weight ?? 400} ${size}px Arial, sans-serif`;
+    if (context.measureText(value).width <= maxWidth || size === options.minFontSize) break;
+    size -= 1;
+  } while (size > options.minFontSize);
+  context.fillText(truncateToWidth(context, value, maxWidth), LABEL_WIDTH / 2, y);
+};
+
+const formatScanCode = (scanCode: string) => scanCode.replace(/(\d{4})(?=\d)/g, '$1 ');
+
+const formatDeliveryDate = (date: string) => {
+  const parsed = new Date(`${date.slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) throw new Error('La etiqueta no tiene una fecha de entrega válida.');
+  return new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(parsed);
+};
+
+interface RenderedCommercialDeliveryLabel {
+  unitId: string;
+  width: number;
+  height: number;
+  imageBase64: string;
+}
+
+/** Renders the complete 50 × 30 mm label as one monochrome 384 × 240 page. */
+function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData): RenderedCommercialDeliveryLabel {
+  const scanCode = label.scanCode?.trim() ?? '';
+  if (!SCAN_CODE_PATTERN.test(scanCode)) {
+    throw new Error(`La etiqueta ${label.unitId} no tiene un scan_code válido de 16 dígitos.`);
+  }
+  if (!label.partnerName.trim() || !label.productName.trim()) {
+    throw new Error(`La etiqueta ${label.unitId} no tiene los datos de socio y producto requeridos.`);
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = LABEL_WIDTH;
+  canvas.height = LABEL_HEIGHT;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('El navegador no pudo preparar el lienzo de la etiqueta.');
+
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, LABEL_WIDTH, LABEL_HEIGHT);
+  context.fillStyle = '#000000';
+  context.textAlign = 'center';
+  context.textBaseline = 'alphabetic';
+
+  drawFittedText(context, `CAT CORN · ${label.sourceLabel.toUpperCase()}`, 23, { maxFontSize: 18, minFontSize: 13, weight: 700 });
+  drawFittedText(context, label.partnerName.trim(), 46, { maxFontSize: 16, minFontSize: 11, weight: 700 });
+  drawFittedText(context, label.productName.trim(), 66, { maxFontSize: 14, minFontSize: 10, weight: 600 });
+  const presentation = [label.variant, label.size].filter(Boolean).join(' · ') || 'Presentación no especificada';
+  drawFittedText(context, presentation, 83, { maxFontSize: 12, minFontSize: 9 });
+  drawFittedText(context, formatDeliveryDate(label.deliveryDate), 100, { maxFontSize: 11, minFontSize: 9 });
+
+  const barcodeCanvas = document.createElement('canvas');
+  JsBarcode(barcodeCanvas, scanCode, {
+    format: 'CODE128C',
+    displayValue: false,
+    width: 2,
+    height: 68,
+    margin: 0,
+    marginLeft: 14,
+    marginRight: 14,
+    background: '#ffffff',
+    lineColor: '#000000',
   });
+  if (barcodeCanvas.width > LABEL_WIDTH - LABEL_SAFE_MARGIN * 2 || barcodeCanvas.height > 76) {
+    throw new Error(`El CODE128 de la etiqueta ${label.unitId} no cabe en el área segura de 48 × 30 mm.`);
+  }
+  context.drawImage(barcodeCanvas, Math.round((LABEL_WIDTH - barcodeCanvas.width) / 2), 108);
+  drawFittedText(context, formatScanCode(scanCode), 207, { maxFontSize: 16, minFontSize: 13, weight: 700 });
+
+  return {
+    unitId: label.unitId,
+    width: canvas.width,
+    height: canvas.height,
+    imageBase64: canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, ''),
+  };
 }
 
 /**
- * Prints one distinct CODE128 label per physical delivery unit using the
- * dedicated commercial-label printer preference. It never falls back to the
- * POS receipt printer or browser printing.
+ * Prints one raster page per physical bag using the dedicated B2B printer.
+ * All pages must render successfully before QZ receives the first job.
  */
-export async function printCommercialDeliveryUnitLabels(labels: CommercialDeliveryLabelData[]): Promise<void> {
+export async function printCommercialDeliveryUnitLabels(labels: CommercialDeliveryLabelData[]): Promise<string[]> {
   const printerName = getSavedCommercialDeliveryLabelPrinterName();
   if (!printerName) throw new Error('No hay impresora de etiquetas B2B configurada. Configúrala antes de imprimir.');
   if (labels.length === 0) throw new Error('No hay etiquetas pendientes para imprimir.');
+  if (new Set(labels.map(label => label.unitId)).size !== labels.length) throw new Error('No se puede imprimir una misma unidad más de una vez en el mismo lote.');
+  if (new Set(labels.map(label => label.scanCode)).size !== labels.length) throw new Error('Cada etiqueta debe tener un scan_code distinto.');
+
+  const rendered = labels.map(renderCommercialDeliveryLabel);
+  if (rendered.length !== labels.length || rendered.some(label => label.width !== LABEL_WIDTH || label.height !== LABEL_HEIGHT)) {
+    throw new Error('No se pudo renderizar una página de 384 × 240 px para cada etiqueta seleccionada.');
+  }
+
   await ensurePrinterAvailable(printerName);
-  await printRaw(printerName, labels.flatMap(buildCommercialDeliveryLabelCommands));
+  const acceptedUnitIds: string[] = [];
+  for (const label of rendered) {
+    try {
+      await printCommercialDeliveryLabelImage(printerName, label.imageBase64);
+      acceptedUnitIds.push(label.unitId);
+    } catch (error) {
+      throw new CommercialDeliveryLabelPrintError(
+        `QZ Tray rechazó la etiqueta ${label.unitId} después de aceptar ${acceptedUnitIds.length} de ${rendered.length}. ${error instanceof Error ? error.message : String(error)}`,
+        acceptedUnitIds,
+      );
+    }
+  }
+  return acceptedUnitIds;
+}
+
+/** Sends a calibration page and never represents a real delivery unit. */
+export async function printCommercialDeliveryLabelTest(): Promise<void> {
+  const printerName = getSavedCommercialDeliveryLabelPrinterName();
+  if (!printerName) throw new Error('No hay impresora de etiquetas B2B configurada. Configúrala antes de imprimir la prueba.');
+  const [rendered] = [renderCommercialDeliveryLabel({
+    unitId: 'prueba',
+    scanCode: '1234567890123456',
+    partnerName: 'PRUEBA DE CALIBRACIÓN',
+    productName: 'ETIQUETA DE PRUEBA',
+    variant: '50 × 30 mm',
+    size: '384 × 240 px',
+    sourceLabel: 'PRUEBA',
+    deliveryDate: new Date().toISOString().slice(0, 10),
+  })];
+  await ensurePrinterAvailable(printerName);
+  await printCommercialDeliveryLabelImage(printerName, rendered.imageBase64);
 }
 
 // ─── Order bag label (customer name only) ────────────────────────────

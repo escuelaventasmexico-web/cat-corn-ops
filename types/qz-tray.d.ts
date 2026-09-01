@@ -48,6 +48,7 @@ declare module 'qz-tray' {
   type QZPrintData = string | {
     type?: 'raw' | 'pixel' | 'direct';
     format?: 'plain' | 'base64' | 'hex' | 'command' | 'image' | 'file' | 'xml';
+    flavor?: 'base64' | 'file' | 'plain' | 'hex' | 'xml';
     data: string;
     options?: Record<string, unknown>;
   };

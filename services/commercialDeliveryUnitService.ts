@@ -8,6 +8,7 @@ export type CommercialDeliveryUnitStatus =
 export interface CommercialDeliveryUnit {
   id: string;
   barcode_value: string;
+  scan_code: string;
   source_type: CommercialDeliverySourceType;
   partner_id: string;
   movement_id?: string | null;
@@ -28,6 +29,8 @@ export interface CommercialDeliveryUnit {
   returned_good_by?: string | null;
   return_movement_id?: string | null;
   commercial_partners?: { business_name?: string | null; responsible_name?: string | null } | null;
+  commercial_partner_movements?: { movement_date?: string | null } | null;
+  wholesale_orders?: { delivery_date?: string | null; order_date?: string | null } | null;
   print_count: number;
   last_reprint_reason?: string | null;
 }
@@ -130,7 +133,8 @@ export const findCommercialDeliveryUnitForPartner = async (barcode: string, part
   if (!supabase) throw new Error('Supabase no configurado');
   const { data, error } = await supabase.from('commercial_delivery_units')
     .select('*, commercial_partners(business_name, responsible_name)')
-    .eq('barcode_value', barcode.trim()).eq('partner_id', partnerId).maybeSingle();
+    .or(`scan_code.eq.${barcode.trim()},barcode_value.eq.${barcode.trim()}`)
+    .eq('partner_id', partnerId).maybeSingle();
   if (error) throw error;
   return data as CommercialDeliveryUnit | null;
 };
@@ -147,7 +151,9 @@ export const registerPartnerReturnException = (partnerId: string, item: Record<s
 
 export const listCommercialDeliveryUnits = async (partnerId: string, sourceType?: CommercialDeliverySourceType) => {
   if (!supabase) throw new Error('Supabase no configurado');
-  let query = supabase.from('commercial_delivery_units').select('*').eq('partner_id', partnerId)
+  let query = supabase.from('commercial_delivery_units')
+    .select('*, commercial_partners(business_name, responsible_name), commercial_partner_movements(movement_date), wholesale_orders(delivery_date, order_date)')
+    .eq('partner_id', partnerId)
     .order('generated_at', { ascending: false });
   if (sourceType) query = query.eq('source_type', sourceType);
   const { data, error } = await query;
