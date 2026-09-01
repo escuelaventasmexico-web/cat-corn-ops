@@ -383,6 +383,16 @@ export interface LabelPrintData {
   price: number;
 }
 
+/** A delivery label identifies one physical bag, never a product SKU or lot. */
+export interface CommercialDeliveryLabelData {
+  barcodeValue: string;
+  productName: string;
+  variant?: string | null;
+  size?: string | null;
+  sourceLabel: string;
+  unitPrice?: number;
+}
+
 /**
  * Build ESC/POS commands for a single product label.
  *
@@ -500,6 +510,29 @@ export async function printLabelViaQZ(
 
   await printRaw(printerName, allCmds);
   console.info(TAG, `✅ ${quantity} etiqueta(s) enviada(s) — ${label.productName}`);
+}
+
+function buildCommercialDeliveryLabelCommands(label: CommercialDeliveryLabelData): string[] {
+  const variant = label.variant ? ` — ${label.variant}` : '';
+  const description = `${label.productName}${variant}`;
+  return buildLabelCommands({
+    productName: description,
+    size: label.size || label.sourceLabel,
+    sku: label.sourceLabel,
+    barcodeValue: label.barcodeValue,
+    price: label.unitPrice ?? 0,
+  });
+}
+
+/**
+ * Prints one distinct CODE128 label per physical delivery unit using the same
+ * QZ Tray connection and saved printer used by POS receipts.
+ */
+export async function printCommercialDeliveryUnitLabels(labels: CommercialDeliveryLabelData[]): Promise<void> {
+  const printerName = getSavedPrinterName();
+  if (!printerName) throw new Error('No hay impresora configurada. Configura tu impresora en el POS.');
+  if (labels.length === 0) throw new Error('No hay etiquetas pendientes para imprimir.');
+  await printRaw(printerName, labels.flatMap(buildCommercialDeliveryLabelCommands));
 }
 
 // ─── Order bag label (customer name only) ────────────────────────────

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Truck, PackageCheck, RotateCcw, Trash2, CreditCard, AlertTriangle, Printer } from 'lucide-react';
+import { Truck, PackageCheck, RotateCcw, Trash2, CreditCard, AlertTriangle, Printer, Barcode } from 'lucide-react';
 import { supabase } from '../../../supabase';
 import { MovementType } from './types';
 import PartnerBalanceSummary from './PartnerBalanceSummary';
@@ -8,6 +8,7 @@ import PartnerMovementHistory from './PartnerMovementHistory';
 import PartnerMovementForm from './PartnerMovementForm';
 import PartnerPaymentForm from './PartnerPaymentForm';
 import { CommercialPartnerPrintModal } from '../CommercialPartnerPrintModal';
+import CommercialDeliveryUnitsPanel from '../CommercialDeliveryUnitsPanel';
 
 interface Props {
   partnerId: string;
@@ -41,6 +42,12 @@ const ACTION_BUTTON_DEFS: Array<{
     className: 'bg-purple-100 border-purple-300 text-purple-800 hover:bg-purple-200',
   },
   {
+    label: 'Etiquetas',
+    icon: <Barcode className="w-4 h-4" />,
+    modal: null,
+    className: 'bg-amber-100 border-amber-300 text-amber-900 hover:bg-amber-200',
+  },
+  {
     label: 'Liquidación',
     icon: <PackageCheck className="w-4 h-4" />,
     modal: { kind: 'movement', type: 'settlement' },
@@ -66,7 +73,7 @@ const ACTION_BUTTON_DEFS: Array<{
   },
 ];
 
-type SubTab = 'stock' | 'history';
+type SubTab = 'stock' | 'history' | 'labels';
 
 const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }) => {
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
@@ -134,7 +141,7 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
                 key={btn.label}
                 type="button"
                 disabled={disabled}
-                onClick={disabled ? undefined : () => setActiveModal(btn.modal)}
+                onClick={disabled ? undefined : () => btn.label === 'Etiquetas' ? setSubTab('labels') : setActiveModal(btn.modal)}
                 title={
                   disabled && btn.requiresActivo
                     ? 'Solo disponible para socios activos'
@@ -159,6 +166,7 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
         {([
           { id: 'stock', label: 'Inventario' },
           { id: 'history', label: 'Historial' },
+          { id: 'labels', label: 'Etiquetas' },
         ] as const).map(t => (
           <button
             key={t.id}
@@ -182,6 +190,9 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
       {subTab === 'history' && (
         <PartnerMovementHistory partnerId={partnerId} refreshKey={refreshKey} />
       )}
+      {subTab === 'labels' && (
+        <CommercialDeliveryUnitsPanel partnerId={partnerId} sourceType="comodato" refreshKey={refreshKey} onReleased={() => setRefreshKey(k => k + 1)} />
+      )}
 
       {/* Modals */}
       {activeModal?.kind === 'movement' && (
@@ -191,6 +202,7 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
           partnerStatus={partnerStatus}
           onClose={() => setActiveModal(null)}
           onSaved={handleSaved}
+          onDeliveryCreated={() => setSubTab('labels')}
         />
       )}
       {activeModal?.kind === 'payment' && (

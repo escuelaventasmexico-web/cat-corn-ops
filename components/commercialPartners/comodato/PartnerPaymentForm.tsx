@@ -58,9 +58,10 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
           // Fallback: sum from items table (more reliable)
           const [movItemRes, payRes] = await Promise.all([
             supabase!
-              .from('commercial_partner_movement_items')
-              .select('amount_due')
-              .eq('partner_id', partnerId),
+            .from('commercial_partner_movement_items')
+            .select('amount_due, movement:commercial_partner_movements!inner(partner_id,status)')
+            .eq('commercial_partner_movements.partner_id', partnerId)
+            .eq('commercial_partner_movements.status', 'completed'),
             supabase!
               .from('commercial_partner_payments')
               .select('amount')

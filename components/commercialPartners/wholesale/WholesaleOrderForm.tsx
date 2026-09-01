@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../../../supabase';
 import { Plus, Trash2 } from 'lucide-react';
 import { WholesaleProduct, MINIMUM_ORDER_PIECES, INPUT_CLS, SELECT_CLS, LABEL_CLS, CARD_CLS, BUTTON_PRIMARY_CLS, BUTTON_ADD_CLS, todayISO } from './types';
+import { createWholesaleOrderWithUnits } from '../../../services/commercialDeliveryUnitService';
 
 interface Props {
   partnerId: string;
@@ -10,6 +11,7 @@ interface Props {
 }
 
 interface OrderItem {
+  product_id?: string | null;
   product_code: string;
   product_name: string;
   product_variant: string;
@@ -22,7 +24,6 @@ const WholesaleOrderForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
   const [products, setProducts] = useState<WholesaleProduct[]>([]);
   const [items, setItems] = useState<OrderItem[]>([]);
   const [orderDate, setOrderDate] = useState(todayISO());
-  const [deliveryDate, setDeliveryDate] = useState(todayISO());
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +74,7 @@ const WholesaleOrderForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
         i === index
           ? {
               ...item,
+              product_id: product.product_id,
               product_code: product.product_code,
               product_name: product.product_name,
               product_variant: product.product_variant,
@@ -113,40 +115,24 @@ const WholesaleOrderForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
     setError(null);
 
     try {
-      // Create order
-      const { data: orderData, error: orderError } = await supabase
-        .from('wholesale_orders')
-        .insert({
-          partner_id: partnerId,
-          order_date: orderDate,
-          delivery_date: deliveryDate,
-          payment_terms_hours: 72,
-          minimum_order_pieces: MINIMUM_ORDER_PIECES,
-          order_status: 'delivered',
-          notes: notes || null,
-        })
-        .select('id')
-        .single();
-
-      if (orderError) throw orderError;
-
-      // Insert items
-      const itemsPayload = items.map(item => ({
-        wholesale_order_id: orderData.id,
-        partner_id: partnerId,
-        product_code: item.product_code,
-        product_name: item.product_name,
-        product_variant: item.product_variant,
-        product_size: item.product_size,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-      }));
-
-      const { error: itemsError } = await supabase
-        .from('wholesale_order_items')
-        .insert(itemsPayload);
-
-      if (itemsError) throw itemsError;
+      if (items.some(item => !item.product_id)) {
+        throw new Error('El catálogo debe tener un producto real asociado para generar etiquetas individuales.');
+      }
+      await createWholesaleOrderWithUnits({
+        partnerId,
+        orderDate,
+        notes,
+        paymentTermsHours: 72,
+        items: items.map(item => ({
+          product_id: item.product_id,
+          product_code: item.product_code,
+          product_name: item.product_name,
+          product_variant: item.product_variant,
+          product_size: item.product_size,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+        })),
+      });
 
       onSaved();
     } catch (err: any) {
@@ -162,7 +148,7 @@ const WholesaleOrderForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
       <div className="relative w-full max-w-2xl rounded-2xl bg-[#D6A23A] shadow-2xl" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex justify-between items-center px-6 pt-5 pb-3 border-b border-[#c49330]">
-          <h2 className="text-xl font-bold text-[#111111]">Registrar Venta Mayoreo</h2>
+            <h2 className="text-xl font-bold text-[#111111]">Registrar Venta Mayoreo</h2>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-[#c49330]/50 text-[#374151]">
             ✕
           </button>
@@ -172,7 +158,7 @@ const WholesaleOrderForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
           {error && <div className="mb-4 p-3 bg-red-100 border border-red-300 rounded-lg text-red-800 text-sm">{error}</div>}
 
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <div>
                 <label className={LABEL_CLS}>Fecha de Venta *</label>
                 <input 
@@ -183,17 +169,8 @@ const WholesaleOrderForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
                   style={{ color: '#111111', WebkitTextFillColor: '#111111', backgroundColor: '#ffffff' }}
                 />
               </div>
-              <div>
-                <label className={LABEL_CLS}>Fecha de Entrega *</label>
-                <input 
-                  type="date" 
-                  value={deliveryDate} 
-                  onChange={e => setDeliveryDate(e.target.value)} 
-                  className={INPUT_CLS}
-                  style={{ color: '#111111', WebkitTextFillColor: '#111111', backgroundColor: '#ffffff' }}
-                />
-              </div>
             </div>
+            <p className="text-xs text-[#6b5c40]">La fecha de entrega y el plazo de pago se asignarán al liberar todas las bolsas escaneadas.</p>
 
             <div>
               <label className={LABEL_CLS}>Notas</label>
@@ -301,7 +278,7 @@ const WholesaleOrderForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
             disabled={!canSave}
             className={BUTTON_PRIMARY_CLS}
           >
-            {saving ? 'Guardando...' : 'Guardar Venta'}
+              {saving ? 'Guardando...' : 'Guardar y generar etiquetas'}
           </button>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Plus, Trash2, AlertCircle } from 'lucide-react';
 import { supabase } from '../../../supabase';
 import {
@@ -19,11 +19,14 @@ import {
   getProductSize,
   getProductPrice,
 } from '../../../lib/comodatoProducts';
+import { CommercialDeliveryUnit, createComodatoDeliveryWithUnits, findCommercialDeliveryUnitForPartner, registerPartnerReturnByBarcode, registerPartnerReturnException, registerPartnerSpoilageByBarcode, registerPartnerSpoilageException } from '../../../services/commercialDeliveryUnitService';
+import { useAuth } from '../../../contexts/AuthContext';
 
 // ── Internal types ────────────────────────────────────────────────────────────────────────────────
 
 type ManualRow = {
   _key: number;
+  product_id?: string;
   product_name: string;
   product_variant: string;
   product_size: string;
@@ -48,12 +51,40 @@ type StockRow = {
   notes: string;
 };
 
+type CatalogProduct = Record<string, unknown> & { id: string };
+
+const normalizeProductIdentity = (value: unknown) => String(value ?? '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .trim()
+  .toLowerCase();
+
+const productField = (product: CatalogProduct, ...keys: string[]) =>
+  keys.map(key => product[key]).find(value => value !== null && value !== undefined && String(value).trim() !== '');
+
+const productSize = (product: CatalogProduct) => {
+  const direct = productField(product, 'product_size', 'size_label', 'size');
+  if (direct !== undefined) return direct;
+  const grams = productField(product, 'weight_grams', 'grams');
+  return grams === undefined ? undefined : `${grams} gr`;
+};
+
+const resolveCatalogProduct = (products: CatalogProduct[], row: Pick<ManualRow | StockRow, 'product_name' | 'product_variant' | 'product_size'>) => {
+  const matches = products.filter(product =>
+    normalizeProductIdentity(productField(product, 'product_name', 'name')) === normalizeProductIdentity(row.product_name)
+    && normalizeProductIdentity(productField(product, 'product_variant', 'category', 'flavor')) === normalizeProductIdentity(row.product_variant)
+    && normalizeProductIdentity(productSize(product)) === normalizeProductIdentity(row.product_size),
+  );
+  return matches.length === 1 ? matches[0] : null;
+};
+
 interface Props {
   partnerId: string;
   movementType: MovementType;
   partnerStatus: string;
   onClose: () => void;
   onSaved: () => void;
+  onDeliveryCreated?: () => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────────────────────
@@ -101,7 +132,9 @@ const PartnerMovementForm: React.FC<Props> = ({
   partnerStatus,
   onClose,
   onSaved,
+  onDeliveryCreated,
 }) => {
+  const { isAdmin } = useAuth();
   const isDelivery   = movementType === 'delivery';
   const isSettlement = movementType === 'settlement';
   const isWithdrawal = movementType === 'withdrawal';
@@ -118,9 +151,28 @@ const PartnerMovementForm: React.FC<Props> = ({
   const [counter, setCounter] = useState(1);
 
   const [stockRows, setStockRows] = useState<StockRow[]>([]);
+  const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
   const [loadingStock, setLoadingStock] = useState(false);
+  const [spoilageBarcode, setSpoilageBarcode] = useState('');
+  const [spoilageException, setSpoilageException] = useState(false);
+  const [exceptionRowKey, setExceptionRowKey] = useState<number | null>(null);
+  const [withdrawalBarcode, setWithdrawalBarcode] = useState('');
+  const [withdrawalUnit, setWithdrawalUnit] = useState<CommercialDeliveryUnit | null>(null);
+  const [withdrawalException, setWithdrawalException] = useState(false);
+  const [withdrawalExceptionRowKey, setWithdrawalExceptionRowKey] = useState<number | null>(null);
+  const withdrawalInputRef = useRef<HTMLInputElement>(null);
 
   const typeLabel = MOVEMENT_TYPE_LABELS[movementType];
+
+  useEffect(() => {
+    if (!supabase) return;
+    let active = true;
+    supabase.from('products').select('*').then(({ data, error: productError }) => {
+      if (!active || productError) return;
+      setCatalogProducts((data ?? []) as CatalogProduct[]);
+    });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (!supabase || isDelivery) return;
@@ -150,6 +202,22 @@ const PartnerMovementForm: React.FC<Props> = ({
 
     return () => { active = false; };
   }, [isDelivery, partnerId]);
+
+  useEffect(() => {
+    if (isWithdrawal && !withdrawalException) withdrawalInputRef.current?.focus();
+  }, [isWithdrawal, withdrawalException]);
+
+  const previewWithdrawalUnit = async () => {
+    if (!withdrawalBarcode.trim()) return;
+    setError(null); setWithdrawalUnit(null);
+    try {
+      const unit = await findCommercialDeliveryUnitForPartner(withdrawalBarcode, partnerId);
+      if (!unit) throw new Error('Etiqueta de entrega desconocida para este socio.');
+      if (unit.source_type === 'mayoreo') throw new Error('Esta etiqueta corresponde a un pedido de Mayoreo y no puede retirarse por este flujo.');
+      if (unit.status !== 'released') throw new Error(unit.status === 'returned_good' ? 'Esta etiqueta ya fue retirada en buen estado.' : `La etiqueta no está disponible para retiro (${unit.status}).`);
+      setWithdrawalUnit(unit);
+    } catch (err: any) { setError(err.message || 'No se pudo consultar la etiqueta.'); withdrawalInputRef.current?.focus(); }
+  };
 
   const addManualRow = () => {
     setManualRows(prev => [...prev, emptyManualRow(counter)]);
@@ -213,6 +281,69 @@ const PartnerMovementForm: React.FC<Props> = ({
     if (!supabase) return;
     setError(null);
     if (!validateStatus()) return;
+    if (isSpoilage && !spoilageException) {
+      if (!spoilageBarcode.trim()) {
+        setError('Escanea la etiqueta de la bolsa para registrar merma.');
+        return;
+      }
+      setSaving(true);
+      try {
+        await registerPartnerSpoilageByBarcode(spoilageBarcode, partnerId, generalNotes);
+        setSaving(false);
+        onSaved();
+      } catch (err: any) {
+        setSaving(false);
+        setError(err.message || 'No se pudo registrar la merma.');
+      }
+      return;
+    }
+    if (isSpoilage && spoilageException) {
+      const selected = stockRows.find(row => row._key === exceptionRowKey);
+      if (!selected || !generalNotes.trim()) {
+        setError('La excepción administrativa requiere producto y motivo obligatorio.');
+        return;
+      }
+      setSaving(true);
+      try {
+        const product = resolveCatalogProduct(catalogProducts, selected);
+        if (!product) throw new Error('El producto histórico no tiene una coincidencia única en el catálogo real.');
+        await registerPartnerSpoilageException(partnerId, {
+          product_id: product.id, product_name: selected.product_name,
+          product_variant: selected.product_variant, product_size: selected.product_size,
+          unit_price: Number(selected.price_to_catcorn),
+        }, generalNotes);
+        setSaving(false); onSaved();
+      } catch (err: any) { setSaving(false); setError(err.message || 'No se pudo registrar la excepción.'); }
+      return;
+    }
+    if (isWithdrawal && !withdrawalException) {
+      if (!withdrawalUnit || withdrawalUnit.barcode_value !== withdrawalBarcode.trim()) {
+        setError('Escanea una etiqueta liberada antes de confirmar el retiro.');
+        withdrawalInputRef.current?.focus();
+        return;
+      }
+      setSaving(true);
+      try {
+        await registerPartnerReturnByBarcode(withdrawalBarcode, partnerId, generalNotes);
+        setSaving(false); onSaved();
+      } catch (err: any) { setSaving(false); setError(err.message || 'No se pudo registrar el retiro por etiqueta.'); }
+      return;
+    }
+    if (isWithdrawal && withdrawalException) {
+      const selected = stockRows.find(row => row._key === withdrawalExceptionRowKey);
+      if (!selected || !generalNotes.trim()) {
+        setError('La excepción histórica requiere producto y motivo obligatorio.');
+        return;
+      }
+      setSaving(true);
+      try {
+        const product = resolveCatalogProduct(catalogProducts, selected);
+        if (!product) throw new Error('El producto histórico no tiene una coincidencia única en el catálogo real.');
+        await registerPartnerReturnException(partnerId, { product_id: product.id, unit_price: Number(selected.price_to_catcorn) }, generalNotes);
+        setSaving(false); onSaved();
+      } catch (err: any) { setSaving(false); setError(err.message || 'No se pudo registrar la excepción histórica.'); }
+      return;
+    }
     if (noStock) {
       setError('Este socio no tiene productos en posesion para registrar este movimiento.');
       return;
@@ -249,11 +380,14 @@ const PartnerMovementForm: React.FC<Props> = ({
         }
       }
       
-      itemsPayload = rows.map(r => ({
+      const resolvedProducts = rows.map(row => resolveCatalogProduct(catalogProducts, row));
+      if (resolvedProducts.some(product => !product)) {
+        setError('Cada producto debe tener una coincidencia única en el catálogo real para generar etiquetas.');
+        return;
+      }
+      itemsPayload = rows.map((r, index) => ({
         partner_id: partnerId,
-        product_name: r.product_name.trim(),
-        product_variant: r.product_variant.trim() || null,
-        product_size: r.product_size.trim() || null,
+        product_id: resolvedProducts[index]!.id,
         quantity_delivered: num(r.quantity_delivered),
         quantity_sold: 0,
         quantity_withdrawn: 0,
@@ -304,6 +438,26 @@ const PartnerMovementForm: React.FC<Props> = ({
     }
 
     setSaving(true);
+
+    if (isDelivery) {
+      try {
+        await createComodatoDeliveryWithUnits({
+          partnerId,
+          movementDate: date,
+          nextVisitDate,
+          nextVisitReason,
+          notes: generalNotes,
+          items: itemsPayload,
+        });
+        setSaving(false);
+        onDeliveryCreated?.();
+        onSaved();
+      } catch (err: any) {
+        setSaving(false);
+        setError(err.message || 'No se pudo guardar la entrega y generar etiquetas.');
+      }
+      return;
+    }
 
     const { data: movement, error: movementErr } = await supabase
       .from('commercial_partner_movements')
@@ -357,6 +511,23 @@ const PartnerMovementForm: React.FC<Props> = ({
         </div>
 
         <div className="px-6 py-4 flex flex-col gap-5">
+          {isSpoilage && (
+            <div className={`${CARD_CLS} border-red-300 bg-red-50`}>
+              {!spoilageException ? <>
+                <label className={LABEL_CLS}>Escanear etiqueta de la bolsa *</label>
+                <input value={spoilageBarcode} onChange={e => setSpoilageBarcode(e.target.value)} autoFocus className={INPUT_CLS} placeholder="CCU1-…" />
+                <p className="mt-1 text-xs text-red-700">La merma operativa sólo puede registrarse sobre una bolsa liberada.</p>
+                {isAdmin && <button type="button" onClick={() => setSpoilageException(true)} className="mt-2 text-xs font-semibold text-red-800 underline">Registrar merma sin etiqueta</button>}
+              </> : <>
+                <p className="text-xs font-bold text-red-800">Excepción administrativa auditada</p>
+                <select value={exceptionRowKey ?? ''} onChange={event => setExceptionRowKey(Number(event.target.value))} className={`${SELECT_CLS} mt-2`}>
+                  <option value="">Selecciona producto histórico</option>
+                  {stockRows.map(row => <option key={row._key} value={row._key}>{row.product_name} — {row.product_variant} ({row.current_quantity})</option>)}
+                </select>
+                <button type="button" onClick={() => setSpoilageException(false)} className="mt-2 text-xs font-semibold text-red-800 underline">Volver al escaneo obligatorio</button>
+              </>}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={LABEL_CLS}>Fecha del movimiento *</label>
@@ -390,7 +561,9 @@ const PartnerMovementForm: React.FC<Props> = ({
             </div>
           )}
 
-          {isDelivery ? (
+          {isSpoilage ? (
+            <p className="text-xs text-[#6b5c40]">La información de producto y entrega se obtiene de la etiqueta escaneada.</p>
+          ) : isDelivery ? (
             <div className="space-y-3">
               <p className="text-xs font-semibold text-[#4a2c0a] uppercase tracking-wider">Productos</p>
 
@@ -545,6 +718,22 @@ const PartnerMovementForm: React.FC<Props> = ({
                   </span>
                 </div>
               )}
+            </div>
+          ) : isWithdrawal ? (
+            <div className={`${CARD_CLS} space-y-3`}>
+              {!withdrawalException ? <>
+                <p className="text-xs font-semibold text-[#4a2c0a] uppercase tracking-wider">Retiro por etiqueta</p>
+                <label className={LABEL_CLS}>Escanea el código de barras de la bolsa</label>
+                <div className="flex gap-2"><input ref={withdrawalInputRef} autoFocus value={withdrawalBarcode} onChange={event => { setWithdrawalBarcode(event.target.value); setWithdrawalUnit(null); }} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void previewWithdrawalUnit(); } }} className={INPUT_CLS} placeholder="CCU1-…" /><button type="button" onClick={() => void previewWithdrawalUnit()} className="rounded-lg bg-[#2d1a00] px-3 text-xs font-semibold text-[#F6E7C1]">Consultar</button></div>
+                <p className="text-xs text-[#6b5c40]">El lector funciona como teclado. Sólo se retira una bolsa liberada por confirmación.</p>
+                {withdrawalUnit && <div className="rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm text-[#4a2c0a]"><p className="font-semibold">{withdrawalUnit.product_name}{withdrawalUnit.product_variant ? ` — ${withdrawalUnit.product_variant}` : ''}</p><p>{withdrawalUnit.product_size || '—'} · Precio Cat Corn: {fmtCurrency(withdrawalUnit.unit_price)}</p><p>Socio: {withdrawalUnit.commercial_partners?.business_name || withdrawalUnit.commercial_partners?.responsible_name || 'Socio seleccionado'}</p><p className="text-xs">Liberada: {withdrawalUnit.released_at ? new Date(withdrawalUnit.released_at).toLocaleString('es-MX') : '—'}</p></div>}
+                {isAdmin && <button type="button" onClick={() => setWithdrawalException(true)} className="text-xs font-semibold text-orange-800 underline">Registrar retiro histórico sin etiqueta</button>}
+              </> : <>
+                <p className="text-xs font-bold text-orange-800">Excepción histórica auditada</p>
+                <select value={withdrawalExceptionRowKey ?? ''} onChange={event => setWithdrawalExceptionRowKey(Number(event.target.value))} className={SELECT_CLS}><option value="">Selecciona producto histórico</option>{stockRows.map(row => <option key={row._key} value={row._key}>{row.product_name} — {row.product_variant} ({row.current_quantity})</option>)}</select>
+                <p className="text-xs text-orange-800">Sólo administrador. El motivo general es obligatorio.</p>
+                <button type="button" onClick={() => setWithdrawalException(false)} className="text-xs font-semibold text-orange-800 underline">Volver al escaneo obligatorio</button>
+              </>}
             </div>
           ) : (
             <div className="space-y-3">
@@ -770,10 +959,10 @@ const PartnerMovementForm: React.FC<Props> = ({
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={saving || loadingStock || noStock}
+              disabled={saving || loadingStock || (!isWithdrawal && noStock)}
               className="flex-1 py-2.5 rounded-xl bg-[#2d1a00] text-[#F6E7C1] font-semibold hover:bg-[#4a2c0a] transition-colors disabled:opacity-75"
             >
-              {saving ? 'Guardando...' : `Guardar ${typeLabel}`}
+              {saving ? 'Guardando...' : isDelivery ? 'Guardar y generar etiquetas' : isWithdrawal && !withdrawalException ? 'Confirmar retiro de 1 bolsa' : `Guardar ${typeLabel}`}
             </button>
           </div>
         </div>

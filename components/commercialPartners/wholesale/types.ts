@@ -1,8 +1,8 @@
 // ── Wholesale (Mayoreo) module types ────────────────────────────────────────
 
 export type ContractStatus = 'draft' | 'generated' | 'reviewed' | 'activated' | 'cancelled';
-export type OrderStatus = 'draft' | 'delivered' | 'cancelled';
-export type PaymentStatus = 'pending' | 'partial' | 'paid' | 'cancelled';
+export type OrderStatus = 'draft' | 'pending_release' | 'delivered' | 'cancelled';
+export type PaymentStatus = 'not_released' | 'pending' | 'partial' | 'paid' | 'cancelled';
 export type PaymentMethod = 'cash' | 'transfer' | 'card' | 'other';
 export type DocumentType = 'ine_front' | 'ine_back' | 'business_photo' | 'contract_pdf' | 'signed_contract_photo';
 
@@ -138,17 +138,20 @@ export const CONTRACT_STATUS_COLORS: Record<ContractStatus, string> = {
 
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   draft: 'Borrador',
+  pending_release: 'Pendiente de liberación',
   delivered: 'Entregada',
   cancelled: 'Cancelada',
 };
 
 export const ORDER_STATUS_COLORS: Record<OrderStatus, string> = {
   draft: 'bg-gray-100 text-gray-800 border-gray-300',
+  pending_release: 'bg-amber-100 text-amber-800 border-amber-300',
   delivered: 'bg-blue-100 text-blue-800 border-blue-300',
   cancelled: 'bg-red-100 text-red-800 border-red-300',
 };
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  not_released: 'Sin liberar',
   pending: 'Pendiente',
   partial: 'Parcial',
   paid: 'Pagado',
@@ -156,6 +159,7 @@ export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
 };
 
 export const PAYMENT_STATUS_COLORS: Record<PaymentStatus, string> = {
+  not_released: 'bg-gray-100 text-gray-800 border-gray-300',
   pending: 'bg-red-100 text-red-800 border-red-300',
   partial: 'bg-yellow-100 text-yellow-800 border-yellow-300',
   paid: 'bg-green-100 text-green-800 border-green-300',

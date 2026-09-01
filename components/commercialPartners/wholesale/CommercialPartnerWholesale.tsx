@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../../supabase';
-import { ShoppingCart, CreditCard } from 'lucide-react';
+import { ShoppingCart, CreditCard, Barcode } from 'lucide-react';
 import { WholesaleSummary, BUTTON_PRIMARY_CLS } from './types';
 import WholesaleSummaryCards from './WholesaleSummaryCards';
 import WholesaleOrderHistory from './WholesaleOrderHistory';
 import WholesalePaymentHistory from './WholesalePaymentHistory';
 import WholesaleOrderForm from './WholesaleOrderForm';
 import WholesalePaymentForm from './WholesalePaymentForm';
+import CommercialDeliveryUnitsPanel from '../CommercialDeliveryUnitsPanel';
 
 interface Props {
   partnerId: string;
@@ -18,6 +19,7 @@ const CommercialPartnerWholesale: React.FC<Props> = ({ partnerId, refreshKey = 0
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<'order' | 'payment' | null>(null);
+  const [showLabels, setShowLabels] = useState(false);
   const [internalRefresh, setInternalRefresh] = useState(0);
 
   useEffect(() => {
@@ -85,7 +87,12 @@ const CommercialPartnerWholesale: React.FC<Props> = ({ partnerId, refreshKey = 0
           <CreditCard size={16} />
           Registrar Pago
         </button>
+        <button onClick={() => setShowLabels(value => !value)} className={`${BUTTON_PRIMARY_CLS} flex items-center gap-2`}>
+          <Barcode size={16} /> Etiquetas
+        </button>
       </div>
+
+      {showLabels && <CommercialDeliveryUnitsPanel partnerId={partnerId} sourceType="mayoreo" onReleased={() => setInternalRefresh(r => r + 1)} />}
 
       {/* Order History */}
       <div>

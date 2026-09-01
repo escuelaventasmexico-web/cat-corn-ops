@@ -34,8 +34,9 @@ const PartnerCurrentStock: React.FC<Props> = ({ partnerId, refreshKey }) => {
         // Fallback: aggregate from movement items
         const { data: raw, error: rawErr } = await supabase
           .from('commercial_partner_movement_items')
-          .select('product_name, product_variant, product_size, quantity_delivered, quantity_sold, quantity_withdrawn, quantity_spoiled, price_to_catcorn, suggested_retail_price, movement:commercial_partner_movements!inner(partner_id)')
-          .eq('commercial_partner_movements.partner_id', partnerId);
+          .select('product_name, product_variant, product_size, quantity_delivered, quantity_sold, quantity_withdrawn, quantity_spoiled, price_to_catcorn, suggested_retail_price, movement:commercial_partner_movements!inner(partner_id,status)')
+          .eq('commercial_partner_movements.partner_id', partnerId)
+          .eq('commercial_partner_movements.status', 'completed');
 
         if (rawErr) {
           setError('No se pudo cargar el inventario en posesión.');

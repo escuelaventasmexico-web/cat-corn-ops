@@ -34,12 +34,19 @@ const PartnerBalanceSummary: React.FC<Props> = ({ partnerId, refreshKey }) => {
   const [summary, setSummary] = useState<PartnerOperationalSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pendingRelease, setPendingRelease] = useState(0);
 
   useEffect(() => {
     if (!supabase) return;
     (async () => {
       setLoading(true);
       setError(null);
+      const { count: pendingCount } = await supabase
+        .from('commercial_delivery_units')
+        .select('id', { count: 'exact', head: true })
+        .eq('partner_id', partnerId)
+        .in('status', ['generated', 'printed', 'scanned']);
+      setPendingRelease(pendingCount ?? 0);
 
       // Try view first; fall back to manual aggregation if view doesn't exist
       const { data, error: err } = await supabase
@@ -53,8 +60,9 @@ const PartnerBalanceSummary: React.FC<Props> = ({ partnerId, refreshKey }) => {
         const [movItemRes, payRes, stockRes] = await Promise.all([
           supabase!
             .from('commercial_partner_movement_items')
-            .select('amount_due')
-            .eq('partner_id', partnerId),
+            .select('amount_due, movement:commercial_partner_movements!inner(partner_id,status)')
+            .eq('commercial_partner_movements.partner_id', partnerId)
+            .eq('commercial_partner_movements.status', 'completed'),
           supabase!
             .from('commercial_partner_payments')
             .select('amount')
@@ -141,6 +149,12 @@ const PartnerBalanceSummary: React.FC<Props> = ({ partnerId, refreshKey }) => {
         label="Total cobrado"
         value={fmtCurrency(summary?.total_paid ?? 0)}
         accent="text-green-700"
+      />
+      <Stat
+        icon={<Package className="w-4 h-4" />}
+        label="Pendientes de liberar"
+        value={String(pendingRelease)}
+        accent="text-amber-700"
       />
       <Stat
         icon={<Package className="w-4 h-4" />}
