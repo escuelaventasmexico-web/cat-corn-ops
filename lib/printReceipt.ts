@@ -528,6 +528,7 @@ const LABEL_HEIGHT = COMMERCIAL_DELIVERY_LABEL_CALIBRATION.pixelHeight;
 // The physical roll is 400 × 240 dots. Keep every printed element inside the
 // centered 384-dot printable area, leaving eight dots clear on each side.
 const LABEL_SAFE_MARGIN = 8;
+const LABEL_PRINT_WIDTH = LABEL_WIDTH - LABEL_SAFE_MARGIN * 2;
 
 const truncateToWidth = (context: CanvasRenderingContext2D, value: string, maxWidth: number) => {
   if (context.measureText(value).width <= maxWidth) return value;
@@ -563,11 +564,14 @@ const formatDeliveryDate = (date: string) => {
   return new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(parsed);
 };
 
-interface RenderedCommercialDeliveryLabel {
+export interface RenderedCommercialDeliveryLabel {
   unitId: string;
-  width: number;
-  height: number;
-  imageDataUrl: string;
+  previewWidth: number;
+  previewHeight: number;
+  printWidth: number;
+  printHeight: number;
+  previewImageDataUrl: string;
+  printImageDataUrl: string;
 }
 
 /** Renders the complete 50 × 30 mm label as one monochrome 400 × 240 page. */
@@ -611,17 +615,33 @@ export function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData
     background: '#ffffff',
     lineColor: '#000000',
   });
-  if (barcodeCanvas.width > LABEL_WIDTH - LABEL_SAFE_MARGIN * 2 || barcodeCanvas.height > 76) {
+  if (barcodeCanvas.width > LABEL_PRINT_WIDTH || barcodeCanvas.height > 76) {
     throw new Error(`El CODE128 de la etiqueta ${label.unitId} no cabe en el área segura de 48 × 30 mm.`);
   }
   context.drawImage(barcodeCanvas, Math.round((LABEL_WIDTH - barcodeCanvas.width) / 2), 110);
   drawFittedText(context, formatScanCode(scanCode), 207, { maxFontSize: 16, minFontSize: 13, weight: 700 });
 
+  // YICHIP prints 384 dots across. This crops only the intentionally blank
+  // eight-pixel gutters and preserves the 1:1 dot geometry of the 400 px view.
+  const printCanvas = document.createElement('canvas');
+  printCanvas.width = LABEL_PRINT_WIDTH;
+  printCanvas.height = LABEL_HEIGHT;
+  const printContext = printCanvas.getContext('2d');
+  if (!printContext) throw new Error('El navegador no pudo preparar la imagen física de la etiqueta.');
+  printContext.drawImage(
+    canvas,
+    LABEL_SAFE_MARGIN, 0, LABEL_PRINT_WIDTH, LABEL_HEIGHT,
+    0, 0, LABEL_PRINT_WIDTH, LABEL_HEIGHT,
+  );
+
   return {
     unitId: label.unitId,
-    width: canvas.width,
-    height: canvas.height,
-    imageDataUrl: canvas.toDataURL('image/png'),
+    previewWidth: canvas.width,
+    previewHeight: canvas.height,
+    printWidth: printCanvas.width,
+    printHeight: printCanvas.height,
+    previewImageDataUrl: canvas.toDataURL('image/png'),
+    printImageDataUrl: printCanvas.toDataURL('image/png'),
   };
 }
 
@@ -637,12 +657,15 @@ export async function printCommercialDeliveryUnitLabels(labels: CommercialDelive
   if (new Set(labels.map(label => label.scanCode)).size !== labels.length) throw new Error('Cada etiqueta debe tener un scan_code distinto.');
 
   const rendered = labels.map(renderCommercialDeliveryLabel);
-  if (rendered.length !== labels.length || rendered.some(label => label.width !== LABEL_WIDTH || label.height !== LABEL_HEIGHT)) {
-    throw new Error('No se pudo renderizar una página de 400 × 240 px para cada etiqueta seleccionada.');
+  if (rendered.length !== labels.length || rendered.some(label =>
+    label.previewWidth !== LABEL_WIDTH || label.previewHeight !== LABEL_HEIGHT
+    || label.printWidth !== LABEL_PRINT_WIDTH || label.printHeight !== LABEL_HEIGHT
+  )) {
+    throw new Error('No se pudo renderizar una vista previa de 400 × 240 px y una imagen física de 384 × 240 px para cada etiqueta seleccionada.');
   }
 
   await ensurePrinterAvailable(printerName);
-  await printCommercialDeliveryLabelImages(printerName, rendered.map(label => label.imageDataUrl));
+  await printCommercialDeliveryLabelImages(printerName, rendered.map(label => label.printImageDataUrl));
   return rendered.map(label => label.unitId);
 }
 
@@ -660,8 +683,12 @@ export async function printCommercialDeliveryLabelTest(): Promise<void> {
     sourceLabel: 'COMODATO',
     deliveryDate: new Date().toISOString().slice(0, 10),
   });
+  if (rendered.previewWidth !== LABEL_WIDTH || rendered.previewHeight !== LABEL_HEIGHT
+    || rendered.printWidth !== LABEL_PRINT_WIDTH || rendered.printHeight !== LABEL_HEIGHT) {
+    throw new Error('La etiqueta de prueba no tiene las dimensiones requeridas de 400 × 240 y 384 × 240 px.');
+  }
   await ensurePrinterAvailable(printerName);
-  await printCommercialDeliveryLabelImages(printerName, [rendered.imageDataUrl]);
+  await printCommercialDeliveryLabelImages(printerName, [rendered.printImageDataUrl]);
 }
 
 // ─── Order bag label (customer name only) ────────────────────────────

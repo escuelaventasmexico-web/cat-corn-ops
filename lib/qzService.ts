@@ -304,8 +304,9 @@ const getPngBase64 = (dataUrl: string): string => {
 };
 
 /**
- * Prints a complete batch of 50 × 30 mm B2B PNG pages through QZ's pixel
- * pipeline. It deliberately never invokes the POS RAW-print helper.
+ * Prints B2B label PNGs through QZ's RAW image conversion pipeline. QZ Tray
+ * converts each Base64 PNG to ESC/POS raster data before it reaches YICHIP,
+ * avoiding macOS/CUPS PostScript conversion. It never invokes the POS helper.
  */
 export async function printCommercialDeliveryLabelImages(
   printerName: string,
@@ -318,16 +319,22 @@ export async function printCommercialDeliveryLabelImages(
   const pngBase64 = imageDataUrls.map(getPngBase64);
 
   await connectQZ();
-  const calibration = COMMERCIAL_DELIVERY_LABEL_CALIBRATION;
   const config = qz.configs.create(printerName, {
-    units: 'mm',
-    size: { width: calibration.widthMm, height: calibration.heightMm },
-    margins: 0,
-    colorType: 'blackwhite',
-    interpolation: 'nearest-neighbor',
-    scaleContent: true,
+    encoding: 'ISO-8859-1',
+    forceRaw: true,
+    spool: { size: 1 },
+    jobName: 'Cat Corn - Etiquetas B2B',
   });
-  const printData = pngBase64.map(data => ({ type: 'pixel' as const, format: 'image' as const, flavor: 'base64' as const, data }));
+  const printData = pngBase64.map(data => ({
+    type: 'raw' as const,
+    format: 'image' as const,
+    flavor: 'base64' as const,
+    data,
+    options: {
+      language: 'ESCPOS' as const,
+      dotDensity: 'double' as const,
+    },
+  }));
   await qz.print(config, printData);
 }
 

@@ -144,7 +144,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
           deliveryDate: new Date().toISOString().slice(0, 10),
         });
       setError(null);
-      setPreviewImage(rendered.imageDataUrl);
+      setPreviewImage(rendered.previewImageDataUrl);
     } catch (err: any) {
       setError(err.message || 'No se pudo generar la vista previa de la etiqueta.');
     }
