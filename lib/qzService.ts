@@ -36,7 +36,7 @@ export const COMMERCIAL_DELIVERY_LABEL_CALIBRATION = {
   gapMm: 0,
   dpi: 203,
   dotsPerMm: 8,
-  pixelWidth: 384,
+  pixelWidth: 400,
   pixelHeight: 240,
 } as const;
 
@@ -295,42 +295,40 @@ export async function printRaw(
   }
 }
 
+const getPngBase64 = (dataUrl: string): string => {
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
+  if (!match?.[1]) {
+    throw new Error('La etiqueta B2B no contiene un data URL PNG válido con base64.');
+  }
+  return match[1];
+};
+
 /**
- * Sends exactly one raster page for one physical commercial-delivery label.
- * There is no cut command, browser fallback, or printer fallback. Each call
- * is intentionally a separate QZ job so 50 × 30 mm remains one label.
+ * Prints a complete batch of 50 × 30 mm B2B PNG pages through QZ's pixel
+ * pipeline. It deliberately never invokes the POS RAW-print helper.
  */
-export async function printCommercialDeliveryLabelImage(
+export async function printCommercialDeliveryLabelImages(
   printerName: string,
-  imageDataUrl: string,
+  imageDataUrls: string[],
 ): Promise<void> {
+  if (!printerName || printerName !== getSavedCommercialDeliveryLabelPrinterName()) {
+    throw new Error('La impresora seleccionada no corresponde a la preferencia B2B guardada.');
+  }
+  if (imageDataUrls.length === 0) throw new Error('No hay imágenes de etiquetas B2B para imprimir.');
+  const pngBase64 = imageDataUrls.map(getPngBase64);
+
   await connectQZ();
   const calibration = COMMERCIAL_DELIVERY_LABEL_CALIBRATION;
   const config = qz.configs.create(printerName, {
-    colorType: 'blackwhite',
-    // QZ interprets density in dots/mm when units are millimetres: 8 d/mm
-    // equals the confirmed 203 dpi. The one-mm horizontal margins leave the
-    // 48-mm safe area represented by the 384-pixel canvas.
-    density: calibration.dotsPerMm,
     units: 'mm',
     size: { width: calibration.widthMm, height: calibration.heightMm },
-    margins: {
-      top: calibration.verticalOffsetMm,
-      right: 1,
-      bottom: 0,
-      left: calibration.horizontalOffsetMm + 1,
-    },
-    orientation: 'landscape',
-    scaleContent: false,
-    spool: { size: 1 },
+    margins: 0,
+    colorType: 'blackwhite',
+    interpolation: 'nearest-neighbor',
+    scaleContent: true,
   });
-
-  await qz.print(config, [{
-    type: 'pixel',
-    format: 'image',
-    data: imageDataUrl,
-    flavor: 'base64',
-  }]);
+  const printData = pngBase64.map(data => ({ type: 'pixel' as const, format: 'image' as const, flavor: 'base64' as const, data }));
+  await qz.print(config, printData);
 }
 
 // ─── Diagnostic test print ──────────────────────────────────────────

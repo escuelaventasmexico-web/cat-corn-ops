@@ -20,10 +20,15 @@ DECLARE
 BEGIN
   LOOP
     v_code := SUBSTRING(
-      REGEXP_REPLACE(ENCODE(gen_random_bytes(32), 'hex'), '[a-f]', '', 'g')
+      REGEXP_REPLACE(REPLACE(gen_random_uuid()::TEXT, '-', ''), '[a-f]', '', 'g')
       FROM 1 FOR 16
     );
-    IF v_code ~ '^[0-9]{16}$' THEN
+    IF v_code ~ '^[0-9]{16}$'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.commercial_delivery_units AS unit
+        WHERE unit.scan_code = v_code
+      ) THEN
       RETURN v_code;
     END IF;
   END LOOP;
@@ -186,6 +191,50 @@ $$;
 ALTER TABLE public.commercial_delivery_units
   ALTER COLUMN scan_code SET NOT NULL;
 
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM public.commercial_delivery_units
+    WHERE scan_code IS NULL
+      OR scan_code !~ '^[0-9]{16}$'
+  ) THEN
+    RAISE EXCEPTION 'Every commercial delivery unit must have a valid 16-digit scan_code';
+  END IF;
+
+  IF EXISTS (
+    SELECT scan_code
+    FROM public.commercial_delivery_units
+    GROUP BY scan_code
+    HAVING COUNT(*) > 1
+  ) THEN
+    RAISE EXCEPTION 'Duplicate commercial delivery scan_code detected';
+  END IF;
+
+END;
+$$;
+
+-- Trigger names execute alphabetically in PostgreSQL. The 00 prefix makes
+-- this assignment run before commercial_delivery_unit_guard validates INSERTs.
+-- A client-supplied value is intentionally overwritten; scan codes are issued
+-- only by the database and remain immutable after insertion.
+CREATE OR REPLACE FUNCTION public._commercial_delivery_assign_scan_code()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO public, pg_temp
+AS $$
+BEGIN
+  NEW.scan_code := public._commercial_delivery_generate_scan_code();
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER "00_commercial_delivery_scan_code_before_insert"
+  BEFORE INSERT ON public.commercial_delivery_units
+  FOR EACH ROW
+  EXECUTE FUNCTION public._commercial_delivery_assign_scan_code();
+
 -- New units retry their INSERT if (and only if) the unique scan-code
 -- constraint detects a collision. The constraint remains the final authority.
 CREATE OR REPLACE FUNCTION public._commercial_delivery_insert_unit(
@@ -212,7 +261,6 @@ SET search_path TO public, pg_temp
 AS $$
 DECLARE
   v_unit_id UUID;
-  v_scan_code TEXT;
   v_attempt INTEGER := 0;
   v_constraint_name TEXT;
 BEGIN
@@ -221,15 +269,14 @@ BEGIN
     IF v_attempt > 20 THEN
       RAISE EXCEPTION 'Could not allocate a unique delivery scan_code';
     END IF;
-    v_scan_code := public._commercial_delivery_generate_scan_code();
     BEGIN
       INSERT INTO public.commercial_delivery_units (
-        barcode_value, scan_code, source_type, partner_id, movement_id,
+        barcode_value, source_type, partner_id, movement_id,
         wholesale_order_id, source_item_id, product_id, product_lot_id,
         product_code, product_name, product_variant, product_size, unit_price,
         unit_cost, generated_by, replaces_unit_id
       ) VALUES (
-        'CCU1-' || REPLACE(gen_random_uuid()::TEXT, '-', ''), v_scan_code,
+        'CCU1-' || REPLACE(gen_random_uuid()::TEXT, '-', ''),
         p_source_type, p_partner_id, p_movement_id, p_wholesale_order_id,
         p_source_item_id, p_product_id, p_product_lot_id, p_product_code,
         p_product_name, p_product_variant, p_product_size, p_unit_price,
@@ -247,6 +294,7 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public._commercial_delivery_generate_scan_code() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public._commercial_delivery_assign_scan_code() FROM PUBLIC, anon, authenticated, service_role;
 REVOKE ALL ON FUNCTION public._commercial_delivery_insert_unit(TEXT,UUID,UUID,UUID,UUID,UUID,UUID,TEXT,TEXT,TEXT,TEXT,NUMERIC,NUMERIC,UUID,UUID) FROM PUBLIC, anon, authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.create_comodato_delivery_with_units(
@@ -402,11 +450,13 @@ CREATE OR REPLACE FUNCTION public.scan_commercial_delivery_unit_for_release(p_ba
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path TO public, pg_temp AS $$
 DECLARE v_actor UUID; v_unit public.commercial_delivery_units%ROWTYPE; v_now TIMESTAMPTZ := now(); v_total INTEGER; v_scanned INTEGER; v_hours INTEGER;
 BEGIN
+  IF COALESCE(BTRIM(p_barcode_value), '') !~ '^[0-9]{16}$' THEN
+    RAISE EXCEPTION 'El código de etiqueta debe contener exactamente 16 dígitos';
+  END IF;
   v_actor := public._commercial_delivery_actor(p_partner_id);
   SELECT * INTO v_unit FROM public.commercial_delivery_units
-  WHERE scan_code = BTRIM(p_barcode_value) OR barcode_value = BTRIM(p_barcode_value)
-  ORDER BY CASE WHEN scan_code = BTRIM(p_barcode_value) THEN 0 ELSE 1 END
-  LIMIT 1 FOR UPDATE;
+  WHERE scan_code = BTRIM(p_barcode_value)
+  FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Unknown delivery label'; END IF;
   IF v_unit.partner_id <> p_partner_id THEN RAISE EXCEPTION 'This label belongs to another partner'; END IF;
   IF v_unit.status <> 'printed' THEN RAISE EXCEPTION 'Label is not ready for release (%)', v_unit.status; END IF;
@@ -438,11 +488,13 @@ CREATE OR REPLACE FUNCTION public.register_partner_spoilage_by_barcode(p_barcode
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path TO public, pg_temp AS $$
 DECLARE v_actor UUID; v_unit public.commercial_delivery_units%ROWTYPE; v_movement UUID; v_item UUID;
 BEGIN
+  IF COALESCE(BTRIM(p_barcode_value), '') !~ '^[0-9]{16}$' THEN
+    RAISE EXCEPTION 'El código de etiqueta debe contener exactamente 16 dígitos';
+  END IF;
   v_actor := public._commercial_delivery_actor(p_partner_id);
   SELECT * INTO v_unit FROM public.commercial_delivery_units
-  WHERE scan_code = BTRIM(p_barcode_value) OR barcode_value = BTRIM(p_barcode_value)
-  ORDER BY CASE WHEN scan_code = BTRIM(p_barcode_value) THEN 0 ELSE 1 END
-  LIMIT 1 FOR UPDATE;
+  WHERE scan_code = BTRIM(p_barcode_value)
+  FOR UPDATE;
   IF NOT FOUND OR v_unit.partner_id <> p_partner_id THEN RAISE EXCEPTION 'Delivery label does not belong to this partner'; END IF;
   IF v_unit.source_type <> 'comodato' OR v_unit.status <> 'released' THEN RAISE EXCEPTION 'Only released comodato units can be spoiled'; END IF;
   INSERT INTO public.commercial_partner_movements(partner_id, movement_type, movement_date, status, notes)
@@ -459,11 +511,13 @@ CREATE OR REPLACE FUNCTION public.register_partner_return_by_barcode(p_barcode_v
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path TO public, pg_temp AS $$
 DECLARE v_actor UUID; v_unit public.commercial_delivery_units%ROWTYPE; v_returned public.commercial_delivery_units%ROWTYPE; v_movement UUID; v_item UUID;
 BEGIN
+  IF COALESCE(BTRIM(p_barcode_value), '') !~ '^[0-9]{16}$' THEN
+    RAISE EXCEPTION 'El código de etiqueta debe contener exactamente 16 dígitos';
+  END IF;
   v_actor := public._commercial_delivery_actor(p_partner_id);
   SELECT * INTO v_unit FROM public.commercial_delivery_units
-  WHERE scan_code = BTRIM(p_barcode_value) OR barcode_value = BTRIM(p_barcode_value)
-  ORDER BY CASE WHEN scan_code = BTRIM(p_barcode_value) THEN 0 ELSE 1 END
-  LIMIT 1 FOR UPDATE;
+  WHERE scan_code = BTRIM(p_barcode_value)
+  FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Etiqueta de entrega desconocida'; END IF;
   IF v_unit.partner_id <> p_partner_id THEN RAISE EXCEPTION 'Esta etiqueta pertenece a otro socio'; END IF;
   IF v_unit.source_type = 'mayoreo' THEN RAISE EXCEPTION 'Esta etiqueta corresponde a un pedido de Mayoreo y no puede retirarse por este flujo'; END IF;

@@ -320,7 +320,7 @@ const PartnerMovementForm: React.FC<Props> = ({
       return;
     }
     if (isWithdrawal && !withdrawalException) {
-      if (!withdrawalUnit || (withdrawalUnit.scan_code !== withdrawalBarcode.trim() && withdrawalUnit.barcode_value !== withdrawalBarcode.trim())) {
+      if (!withdrawalUnit || withdrawalUnit.scan_code !== withdrawalBarcode.trim()) {
         setError('Escanea una etiqueta liberada antes de confirmar el retiro.');
         withdrawalInputRef.current?.focus();
         return;

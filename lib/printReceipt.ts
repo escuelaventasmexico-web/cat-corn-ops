@@ -9,7 +9,7 @@ import {
   ensurePrinterAvailable,
   getSavedCommercialDeliveryLabelPrinterName,
   getSavedPrinterName,
-  printCommercialDeliveryLabelImage,
+  printCommercialDeliveryLabelImages,
   printRaw,
 } from './qzService';
 
@@ -403,13 +403,6 @@ export interface CommercialDeliveryLabelData {
   deliveryDate: string;
 }
 
-export class CommercialDeliveryLabelPrintError extends Error {
-  constructor(message: string, readonly acceptedUnitIds: string[]) {
-    super(message);
-    this.name = 'CommercialDeliveryLabelPrintError';
-  }
-}
-
 /**
  * Build ESC/POS commands for a single product label.
  *
@@ -532,7 +525,9 @@ export async function printLabelViaQZ(
 const SCAN_CODE_PATTERN = /^\d{16}$/;
 const LABEL_WIDTH = COMMERCIAL_DELIVERY_LABEL_CALIBRATION.pixelWidth;
 const LABEL_HEIGHT = COMMERCIAL_DELIVERY_LABEL_CALIBRATION.pixelHeight;
-const LABEL_SAFE_MARGIN = 12;
+// The physical roll is 400 × 240 dots. Keep every printed element inside the
+// centered 384-dot printable area, leaving eight dots clear on each side.
+const LABEL_SAFE_MARGIN = 8;
 
 const truncateToWidth = (context: CanvasRenderingContext2D, value: string, maxWidth: number) => {
   if (context.measureText(value).width <= maxWidth) return value;
@@ -572,11 +567,11 @@ interface RenderedCommercialDeliveryLabel {
   unitId: string;
   width: number;
   height: number;
-  imageBase64: string;
+  imageDataUrl: string;
 }
 
-/** Renders the complete 50 × 30 mm label as one monochrome 384 × 240 page. */
-function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData): RenderedCommercialDeliveryLabel {
+/** Renders the complete 50 × 30 mm label as one monochrome 400 × 240 page. */
+export function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData): RenderedCommercialDeliveryLabel {
   const scanCode = label.scanCode?.trim() ?? '';
   if (!SCAN_CODE_PATTERN.test(scanCode)) {
     throw new Error(`La etiqueta ${label.unitId} no tiene un scan_code válido de 16 dígitos.`);
@@ -597,12 +592,12 @@ function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData): Rend
   context.textAlign = 'center';
   context.textBaseline = 'alphabetic';
 
-  drawFittedText(context, `CAT CORN · ${label.sourceLabel.toUpperCase()}`, 23, { maxFontSize: 18, minFontSize: 13, weight: 700 });
-  drawFittedText(context, label.partnerName.trim(), 46, { maxFontSize: 16, minFontSize: 11, weight: 700 });
-  drawFittedText(context, label.productName.trim(), 66, { maxFontSize: 14, minFontSize: 10, weight: 600 });
+  drawFittedText(context, `CAT CORN · ${label.sourceLabel.toUpperCase()}`, 26, { maxFontSize: 18, minFontSize: 13, weight: 700 });
+  drawFittedText(context, label.partnerName.trim(), 49, { maxFontSize: 16, minFontSize: 11, weight: 700 });
+  drawFittedText(context, label.productName.trim(), 69, { maxFontSize: 14, minFontSize: 10, weight: 600 });
   const presentation = [label.variant, label.size].filter(Boolean).join(' · ') || 'Presentación no especificada';
-  drawFittedText(context, presentation, 83, { maxFontSize: 12, minFontSize: 9 });
-  drawFittedText(context, formatDeliveryDate(label.deliveryDate), 100, { maxFontSize: 11, minFontSize: 9 });
+  drawFittedText(context, presentation, 86, { maxFontSize: 12, minFontSize: 9 });
+  drawFittedText(context, formatDeliveryDate(label.deliveryDate), 103, { maxFontSize: 11, minFontSize: 9 });
 
   const barcodeCanvas = document.createElement('canvas');
   JsBarcode(barcodeCanvas, scanCode, {
@@ -619,14 +614,14 @@ function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData): Rend
   if (barcodeCanvas.width > LABEL_WIDTH - LABEL_SAFE_MARGIN * 2 || barcodeCanvas.height > 76) {
     throw new Error(`El CODE128 de la etiqueta ${label.unitId} no cabe en el área segura de 48 × 30 mm.`);
   }
-  context.drawImage(barcodeCanvas, Math.round((LABEL_WIDTH - barcodeCanvas.width) / 2), 108);
+  context.drawImage(barcodeCanvas, Math.round((LABEL_WIDTH - barcodeCanvas.width) / 2), 110);
   drawFittedText(context, formatScanCode(scanCode), 207, { maxFontSize: 16, minFontSize: 13, weight: 700 });
 
   return {
     unitId: label.unitId,
     width: canvas.width,
     height: canvas.height,
-    imageBase64: canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, ''),
+    imageDataUrl: canvas.toDataURL('image/png'),
   };
 }
 
@@ -643,41 +638,30 @@ export async function printCommercialDeliveryUnitLabels(labels: CommercialDelive
 
   const rendered = labels.map(renderCommercialDeliveryLabel);
   if (rendered.length !== labels.length || rendered.some(label => label.width !== LABEL_WIDTH || label.height !== LABEL_HEIGHT)) {
-    throw new Error('No se pudo renderizar una página de 384 × 240 px para cada etiqueta seleccionada.');
+    throw new Error('No se pudo renderizar una página de 400 × 240 px para cada etiqueta seleccionada.');
   }
 
   await ensurePrinterAvailable(printerName);
-  const acceptedUnitIds: string[] = [];
-  for (const label of rendered) {
-    try {
-      await printCommercialDeliveryLabelImage(printerName, label.imageBase64);
-      acceptedUnitIds.push(label.unitId);
-    } catch (error) {
-      throw new CommercialDeliveryLabelPrintError(
-        `QZ Tray rechazó la etiqueta ${label.unitId} después de aceptar ${acceptedUnitIds.length} de ${rendered.length}. ${error instanceof Error ? error.message : String(error)}`,
-        acceptedUnitIds,
-      );
-    }
-  }
-  return acceptedUnitIds;
+  await printCommercialDeliveryLabelImages(printerName, rendered.map(label => label.imageDataUrl));
+  return rendered.map(label => label.unitId);
 }
 
 /** Sends a calibration page and never represents a real delivery unit. */
 export async function printCommercialDeliveryLabelTest(): Promise<void> {
   const printerName = getSavedCommercialDeliveryLabelPrinterName();
   if (!printerName) throw new Error('No hay impresora de etiquetas B2B configurada. Configúrala antes de imprimir la prueba.');
-  const [rendered] = [renderCommercialDeliveryLabel({
+  const rendered = renderCommercialDeliveryLabel({
     unitId: 'prueba',
     scanCode: '1234567890123456',
     partnerName: 'PRUEBA DE CALIBRACIÓN',
     productName: 'ETIQUETA DE PRUEBA',
     variant: '50 × 30 mm',
-    size: '384 × 240 px',
-    sourceLabel: 'PRUEBA',
+    size: '400 × 240 px',
+    sourceLabel: 'COMODATO',
     deliveryDate: new Date().toISOString().slice(0, 10),
-  })];
+  });
   await ensurePrinterAvailable(printerName);
-  await printCommercialDeliveryLabelImage(printerName, rendered.imageBase64);
+  await printCommercialDeliveryLabelImages(printerName, [rendered.imageDataUrl]);
 }
 
 // ─── Order bag label (customer name only) ────────────────────────────

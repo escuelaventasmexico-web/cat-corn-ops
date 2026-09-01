@@ -158,30 +158,22 @@ WITH expected_relations(name, kind) AS (
   SELECT
     expected.rpc_name,
     rpc_function.oid,
+    pg_get_function_identity_arguments(rpc_function.oid) AS actual_arguments,
     pg_get_functiondef(rpc_function.oid) AS function_definition,
-    CASE expected.rpc_name
-      WHEN 'create_comodato_delivery_with_units' THEN
-        pg_get_functiondef(rpc_function.oid) ILIKE '%commercial_partner_movements%'
-        AND pg_get_functiondef(rpc_function.oid) ~* E'\\mstatus\\M'
-        AND pg_get_functiondef(rpc_function.oid) !~* E'\\morder_status\\M'
-      WHEN 'create_wholesale_order_with_units' THEN
-        pg_get_functiondef(rpc_function.oid) ILIKE '%wholesale_orders%'
-        AND pg_get_functiondef(rpc_function.oid) ~* E'\\morder_status\\M'
-        AND pg_get_functiondef(rpc_function.oid) !~* E'\\m(NEW|OLD)\\s*\\.\\s*status\\M'
-      ELSE FALSE
-    END AS matches
+    rpc_function.oid IS NOT NULL
+      AND pg_get_function_identity_arguments(rpc_function.oid) = expected.arguments
+      AND pg_get_functiondef(rpc_function.oid) ILIKE '%public._commercial_delivery_insert_unit%'
+      AND pg_get_functiondef(rpc_function.oid) NOT ILIKE '%insert into%commercial_delivery_units%'
+      AND pg_get_function_identity_arguments(rpc_function.oid) NOT ILIKE '%scan_code%'
+      AS matches
   FROM (VALUES
-    ('create_comodato_delivery_with_units'::TEXT),
-    ('create_wholesale_order_with_units'::TEXT)
-  ) AS expected(rpc_name)
+    ('create_comodato_delivery_with_units'::TEXT, 'p_partner_id uuid, p_movement_date date, p_next_visit_date date, p_next_visit_reason text, p_notes text, p_items jsonb'::TEXT),
+    ('create_wholesale_order_with_units', 'p_partner_id uuid, p_order_date date, p_notes text, p_items jsonb, p_payment_terms_hours integer')
+  ) AS expected(rpc_name, arguments)
   LEFT JOIN pg_namespace AS namespace ON namespace.nspname = 'public'
   LEFT JOIN pg_proc AS rpc_function
     ON rpc_function.pronamespace = namespace.oid
    AND rpc_function.proname = expected.rpc_name
-   AND pg_get_function_identity_arguments(rpc_function.oid) IN (
-     'p_partner_id uuid, p_movement_date date, p_next_visit_date date, p_next_visit_reason text, p_notes text, p_items jsonb',
-     'p_partner_id uuid, p_order_date date, p_notes text, p_items jsonb, p_payment_terms_hours integer'
-   )
 ), expected_rpcs(name, arguments) AS (
   VALUES
     ('create_comodato_delivery_with_units'::TEXT, 'p_partner_id uuid, p_movement_date date, p_next_visit_date date, p_next_visit_reason text, p_notes text, p_items jsonb'),
@@ -329,6 +321,119 @@ WITH expected_relations(name, kind) AS (
   WHERE status='returned_good'
     AND (returned_good_at IS NULL OR returned_good_by IS NULL OR return_movement_id IS NULL
       OR spoiled_at IS NOT NULL OR spoilage_movement_id IS NOT NULL)
+), scan_code_column_contract AS (
+  SELECT attribute.attname AS column_name,
+    format_type(attribute.atttypid, attribute.atttypmod) AS data_type,
+    attribute.attnotnull AS not_null,
+    attribute.attname = 'scan_code'
+      AND format_type(attribute.atttypid, attribute.atttypmod) = 'text'
+      AND attribute.attnotnull AS matches
+  FROM pg_attribute AS attribute
+  WHERE attribute.attrelid = 'public.commercial_delivery_units'::REGCLASS
+    AND attribute.attname = 'scan_code'
+    AND attribute.attnum > 0 AND NOT attribute.attisdropped
+), scan_code_constraint_contract AS (
+  SELECT
+    COALESCE(BOOL_OR(constraint.conname = 'commercial_delivery_units_scan_code_key'
+      AND constraint.contype = 'u'), false) AS has_unique_constraint,
+    COALESCE(BOOL_OR(constraint.conname = 'commercial_delivery_units_scan_code_format_check'
+      AND constraint.contype = 'c'
+      AND pg_get_constraintdef(constraint.oid, true) ILIKE '%scan_code%^[0-9]{16}%'), false) AS has_format_constraint
+  FROM pg_constraint AS constraint
+  WHERE constraint.conrelid = 'public.commercial_delivery_units'::REGCLASS
+), scan_code_data AS (
+  SELECT
+    (SELECT COUNT(*)::BIGINT FROM public.commercial_delivery_units) AS total_units,
+    (SELECT COUNT(*)::BIGINT FROM public.commercial_delivery_units WHERE scan_code IS NULL) AS missing_scan_codes,
+    (SELECT COUNT(*)::BIGINT FROM public.commercial_delivery_units WHERE scan_code IS NOT NULL AND scan_code !~ '^[0-9]{16}$') AS invalid_scan_codes,
+    (SELECT COUNT(*)::BIGINT FROM (
+      SELECT scan_code
+      FROM public.commercial_delivery_units
+      WHERE scan_code IS NOT NULL
+      GROUP BY scan_code
+      HAVING COUNT(*) > 1
+    ) AS duplicate_codes) AS duplicate_scan_codes
+), known_test_unit AS (
+  SELECT
+    '2e6a0b12-160e-4c0d-9690-1c24ddc4e0e7'::UUID AS id,
+    EXISTS(SELECT 1 FROM public.commercial_delivery_units WHERE id = '2e6a0b12-160e-4c0d-9690-1c24ddc4e0e7'::UUID) AS exists,
+    (SELECT scan_code FROM public.commercial_delivery_units WHERE id = '2e6a0b12-160e-4c0d-9690-1c24ddc4e0e7'::UUID) AS scan_code,
+    COALESCE((SELECT scan_code ~ '^[0-9]{16}$' FROM public.commercial_delivery_units WHERE id = '2e6a0b12-160e-4c0d-9690-1c24ddc4e0e7'::UUID), false) AS scan_code_valid
+), scan_code_generator_security AS (
+  SELECT COUNT(*) = 1 AS exists_exactly_once,
+    COALESCE(BOOL_AND(procedure.prorettype = 'text'::REGTYPE), false) AS returns_text,
+    COALESCE(BOOL_AND(procedure.prosecdef), false) AS security_definer,
+    COALESCE(BOOL_AND(COALESCE(array_to_string(procedure.proconfig, ','), '') ILIKE '%search_path=public, pg_temp%'), false) AS pinned_search_path,
+    COALESCE(BOOL_AND(NOT has_function_privilege('public', procedure.oid, 'EXECUTE')), false) AS public_execute_revoked,
+    COALESCE(BOOL_AND(NOT has_function_privilege('anon', procedure.oid, 'EXECUTE')), false) AS anon_execute_revoked,
+    COALESCE(BOOL_AND(NOT has_function_privilege('authenticated', procedure.oid, 'EXECUTE')), false) AS authenticated_execute_revoked,
+    COALESCE(BOOL_AND(NOT has_function_privilege('service_role', procedure.oid, 'EXECUTE')), false) AS service_role_execute_revoked
+  FROM pg_proc AS procedure
+  JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+  WHERE namespace.nspname = 'public'
+    AND procedure.proname = '_commercial_delivery_generate_scan_code'
+    AND pg_get_function_identity_arguments(procedure.oid) = ''
+), scan_code_assignment_security AS (
+  SELECT COUNT(*) = 1 AS exists_exactly_once,
+    COALESCE(BOOL_AND(procedure.prosecdef), false) AS security_definer,
+    COALESCE(BOOL_AND(COALESCE(array_to_string(procedure.proconfig, ','), '') ILIKE '%search_path=public, pg_temp%'), false) AS pinned_search_path,
+    COALESCE(BOOL_AND(pg_get_functiondef(procedure.oid) ILIKE '%new.scan_code := public._commercial_delivery_generate_scan_code()%'), false) AS assigns_generated_code,
+    COALESCE(BOOL_AND(NOT has_function_privilege('public', procedure.oid, 'EXECUTE')), false) AS public_execute_revoked,
+    COALESCE(BOOL_AND(NOT has_function_privilege('anon', procedure.oid, 'EXECUTE')), false) AS anon_execute_revoked,
+    COALESCE(BOOL_AND(NOT has_function_privilege('authenticated', procedure.oid, 'EXECUTE')), false) AS authenticated_execute_revoked,
+    COALESCE(BOOL_AND(NOT has_function_privilege('service_role', procedure.oid, 'EXECUTE')), false) AS service_role_execute_revoked
+  FROM pg_proc AS procedure
+  JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+  WHERE namespace.nspname = 'public'
+    AND procedure.proname = '_commercial_delivery_assign_scan_code'
+    AND pg_get_function_identity_arguments(procedure.oid) = ''
+), scan_code_generation_trigger AS (
+  SELECT COUNT(*) = 1 AND COALESCE(BOOL_AND(
+    trigger.tgrelid = 'public.commercial_delivery_units'::REGCLASS
+    AND (trigger.tgtype & 2) <> 0
+    AND (trigger.tgtype & 4) <> 0
+    AND (trigger.tgtype & 8) = 0
+    AND (trigger.tgtype & 16) = 0
+    AND trigger.tgenabled = 'O'
+    AND procedure.proname = '_commercial_delivery_assign_scan_code'
+  ), false) AS installed
+  FROM pg_trigger AS trigger
+  LEFT JOIN pg_proc AS procedure ON procedure.oid = trigger.tgfoid
+  LEFT JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+  WHERE NOT trigger.tgisinternal
+    AND trigger.tgname = '00_commercial_delivery_scan_code_before_insert'
+    AND namespace.nspname = 'public'
+), scan_code_insert_helper AS (
+  SELECT COUNT(*) = 1 AS exists_exactly_once,
+    COALESCE(BOOL_AND(
+      pg_get_function_identity_arguments(procedure.oid) = 'p_source_type text, p_partner_id uuid, p_movement_id uuid, p_wholesale_order_id uuid, p_source_item_id uuid, p_product_id uuid, p_product_lot_id uuid, p_product_code text, p_product_name text, p_product_variant text, p_product_size text, p_unit_price numeric, p_unit_cost numeric, p_generated_by uuid, p_replaces_unit_id uuid'
+      AND pg_get_functiondef(procedure.oid) ILIKE '%insert into public.commercial_delivery_units%'
+      AND pg_get_function_identity_arguments(procedure.oid) NOT ILIKE '%scan_code%'
+      AND NOT has_function_privilege('public', procedure.oid, 'EXECUTE')
+      AND NOT has_function_privilege('anon', procedure.oid, 'EXECUTE')
+      AND NOT has_function_privilege('authenticated', procedure.oid, 'EXECUTE')
+      AND NOT has_function_privilege('service_role', procedure.oid, 'EXECUTE')
+    ), false) AS valid
+  FROM pg_proc AS procedure
+  JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+  WHERE namespace.nspname = 'public'
+    AND procedure.proname = '_commercial_delivery_insert_unit'
+), scan_code_operational_rpcs AS (
+  SELECT procedure.proname,
+    procedure.oid IS NOT NULL
+      AND pg_get_functiondef(procedure.oid) ILIKE '%scan_code = btrim(p_barcode_value)%'
+      AND pg_get_functiondef(procedure.oid) ILIKE '%^[0-9]{16}$%'
+      AND pg_get_functiondef(procedure.oid) NOT ILIKE '%barcode_value = btrim(p_barcode_value)%'
+      AND pg_get_functiondef(procedure.oid) NOT ILIKE '%or barcode_value%'
+      AS resolves_only_by_scan_code
+  FROM pg_proc AS procedure
+  JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+  WHERE namespace.nspname = 'public'
+    AND procedure.proname IN (
+      'scan_commercial_delivery_unit_for_release',
+      'register_partner_spoilage_by_barcode',
+      'register_partner_return_by_barcode'
+    )
 ), b2b_snapshot_at_verification AS (
   SELECT jsonb_build_object(
     'units_sold', report->'summary'->'units_sold',
@@ -388,6 +493,19 @@ SELECT jsonb_build_object(
     AND (SELECT COUNT(*)=3 AND BOOL_AND(matches) FROM return_unit_column_contract)
     AND (SELECT event_supported FROM returned_good_audit_contract)
     AND (SELECT COUNT(*)=0 FROM returned_good_violations)
+    AND (SELECT COUNT(*)=1 AND BOOL_AND(matches) FROM scan_code_column_contract)
+    AND (SELECT has_unique_constraint AND has_format_constraint FROM scan_code_constraint_contract)
+    AND (SELECT missing_scan_codes=0 AND invalid_scan_codes=0 AND duplicate_scan_codes=0 FROM scan_code_data)
+    AND (SELECT NOT exists OR scan_code_valid FROM known_test_unit)
+    AND (SELECT exists_exactly_once AND returns_text AND security_definer AND pinned_search_path
+      AND public_execute_revoked AND anon_execute_revoked AND authenticated_execute_revoked AND service_role_execute_revoked)
+      FROM scan_code_generator_security)
+    AND (SELECT exists_exactly_once AND security_definer AND pinned_search_path AND assigns_generated_code
+      AND public_execute_revoked AND anon_execute_revoked AND authenticated_execute_revoked AND service_role_execute_revoked
+      FROM scan_code_assignment_security)
+    AND (SELECT installed FROM scan_code_generation_trigger)
+    AND (SELECT valid FROM scan_code_insert_helper)
+    AND (SELECT COUNT(*)=3 AND BOOL_AND(resolves_only_by_scan_code) FROM scan_code_operational_rpcs)
     AND (SELECT COUNT(*)=6 AND BOOL_AND(
       (relname='v_wholesale_order_totals'
         AND definition ILIKE '%wholesale_order_items%'
@@ -475,6 +593,17 @@ SELECT jsonb_build_object(
     'column_contract',COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY expected_name) FROM return_unit_column_contract x),'[]'::JSONB),
     'audit_event_supported',(SELECT event_supported FROM returned_good_audit_contract),
     'invalid_units',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM returned_good_violations x),'[]'::JSONB)
+  ),
+  'scan_codes',jsonb_build_object(
+    'column_contract',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM scan_code_column_contract x),'[]'::JSONB),
+    'constraint_contract',COALESCE((SELECT to_jsonb(x) FROM scan_code_constraint_contract x),'null'::JSONB),
+    'data',COALESCE((SELECT to_jsonb(x) FROM scan_code_data x),'null'::JSONB),
+    'known_test_unit',COALESCE((SELECT to_jsonb(x) FROM known_test_unit x),'null'::JSONB),
+    'generator_security',COALESCE((SELECT to_jsonb(x) FROM scan_code_generator_security x),'null'::JSONB),
+    'assignment_security',COALESCE((SELECT to_jsonb(x) FROM scan_code_assignment_security x),'null'::JSONB),
+    'generation_trigger_installed',COALESCE((SELECT installed FROM scan_code_generation_trigger),false),
+    'insert_helper',COALESCE((SELECT to_jsonb(x) FROM scan_code_insert_helper x),'null'::JSONB),
+    'operational_rpcs',COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY proname) FROM scan_code_operational_rpcs x),'[]'::JSONB)
   ),
   'status_constraints',COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY table_name) FROM status_constraints x),'[]'::JSONB),
   'views',COALESCE((SELECT jsonb_object_agg(relname,definition) FROM view_definitions),'{}'::JSONB),
