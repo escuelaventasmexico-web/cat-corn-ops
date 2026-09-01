@@ -16,17 +16,18 @@ import {
 import {
   getProductNames,
   getAllowedVariants,
+  getComodatoSourceProductCode,
   getProductSize,
   getProductPrice,
 } from '../../../lib/comodatoProducts';
-import { CommercialDeliveryUnit, createComodatoDeliveryWithUnits, findCommercialDeliveryUnitForPartner, registerPartnerReturnByBarcode, registerPartnerReturnException, registerPartnerSpoilageByBarcode, registerPartnerSpoilageException } from '../../../services/commercialDeliveryUnitService';
+import { CommercialDeliveryUnit, createComodatoDeliveryWithUnits, findCommercialDeliveryUnitForPartner, registerPartnerReturnByBarcode, registerPartnerReturnException, registerPartnerSpoilageByBarcode, registerPartnerSpoilageException, resolveActiveComodatoProductIds } from '../../../services/commercialDeliveryUnitService';
 import { useAuth } from '../../../contexts/AuthContext';
 
 // ── Internal types ────────────────────────────────────────────────────────────────────────────────
 
 type ManualRow = {
   _key: number;
-  product_id?: string;
+  source_product_code: string;
   product_name: string;
   product_variant: string;
   product_size: string;
@@ -93,6 +94,7 @@ const num = (s: string) => parseFloat(s) || 0;
 
 const emptyManualRow = (k: number): ManualRow => ({
   _key: k,
+  source_product_code: '',
   product_name: '',
   product_variant: '',
   product_size: '',
@@ -106,7 +108,8 @@ const emptyManualRow = (k: number): ManualRow => ({
 const getProductDetails = (productName: string, variant: string) => {
   const size = getProductSize(productName);
   const price = getProductPrice(productName, variant);
-  return { size: size || '', price: price?.toString() || '' };
+  const sourceProductCode = getComodatoSourceProductCode(productName, variant);
+  return { size: size || '', price: price?.toString() || '', sourceProductCode: sourceProductCode || '' };
 };
 
 const toStockRow = (item: PartnerCurrentStockItem, k: number): StockRow => ({
@@ -378,16 +381,43 @@ const PartnerMovementForm: React.FC<Props> = ({
           setError('No se pudo determinar el precio Cat Corn. Verifica la selección.');
           return;
         }
+        if (!r.source_product_code) {
+          setError(
+            `El producto seleccionado ${r.product_name} · ${r.product_variant} · ${r.product_size} no tiene un código de Comodato configurado para generar etiquetas.`,
+          );
+          return;
+        }
       }
-      
-      const resolvedProducts = rows.map(row => resolveCatalogProduct(catalogProducts, row));
-      if (resolvedProducts.some(product => !product)) {
-        setError('Cada producto debe tener una coincidencia única en el catálogo real para generar etiquetas.');
+
+      let productIdsBySourceCode: Map<string, string>;
+      try {
+        productIdsBySourceCode = await resolveActiveComodatoProductIds(
+          rows.map(row => row.source_product_code),
+        );
+      } catch (err: any) {
+        const message = err.message || 'No se pudo resolver la relación de Comodato.';
+        const affectedRow = rows.find(row => message.includes(row.source_product_code));
+        setError(
+          affectedRow
+            ? `No existe una relación activa única para ${affectedRow.product_name} · ${affectedRow.product_variant} · ${affectedRow.product_size} (código ${affectedRow.source_product_code}).`
+            : message,
+        );
         return;
       }
-      itemsPayload = rows.map((r, index) => ({
+
+      const rowWithoutProductId = rows.find(
+        row => !productIdsBySourceCode.get(row.source_product_code),
+      );
+      if (rowWithoutProductId) {
+        setError(
+          `No existe una relación activa única para ${rowWithoutProductId.product_name} · ${rowWithoutProductId.product_variant} · ${rowWithoutProductId.product_size} (código ${rowWithoutProductId.source_product_code}).`,
+        );
+        return;
+      }
+
+      itemsPayload = rows.map(r => ({
         partner_id: partnerId,
-        product_id: resolvedProducts[index]!.id,
+        product_id: productIdsBySourceCode.get(r.source_product_code)!,
         quantity_delivered: num(r.quantity_delivered),
         quantity_sold: 0,
         quantity_withdrawn: 0,
@@ -591,10 +621,11 @@ const PartnerMovementForm: React.FC<Props> = ({
                           const productName = e.target.value;
                           const allowedVariants = getAllowedVariants(productName);
                           const defaultVariant = allowedVariants.length > 0 ? allowedVariants[0] : '';
-                          const { size, price } = getProductDetails(productName, defaultVariant);
+                          const { size, price, sourceProductCode } = getProductDetails(productName, defaultVariant);
                           updateManualRow(row._key, 'product_name', productName);
                           updateManualRow(row._key, 'product_variant', defaultVariant);
                           updateManualRow(row._key, 'product_size', size);
+                          updateManualRow(row._key, 'source_product_code', sourceProductCode);
                           updateManualRow(row._key, 'price_to_catcorn', price);
                         }}
                         className={`${SELECT_CLS} bg-white`}
@@ -613,8 +644,9 @@ const PartnerMovementForm: React.FC<Props> = ({
                         value={row.product_variant}
                         onChange={e => {
                           const variant = e.target.value;
-                          const { price } = getProductDetails(row.product_name, variant);
+                          const { price, sourceProductCode } = getProductDetails(row.product_name, variant);
                           updateManualRow(row._key, 'product_variant', variant);
+                          updateManualRow(row._key, 'source_product_code', sourceProductCode);
                           updateManualRow(row._key, 'price_to_catcorn', price);
                         }}
                         disabled={!row.product_name}

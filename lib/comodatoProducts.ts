@@ -8,6 +8,11 @@ export interface ComodatoProduct {
   allowed_variants: string[];
   size: string;
   prices: Record<string, number>;
+  /**
+   * Stable B2B catalog identity. This is intentionally separate from the
+   * products table: it only resolves the physical product for a delivery.
+   */
+  source_product_codes: Record<string, string>;
 }
 
 export const COMODATO_PRODUCTS: ComodatoProduct[] = [
@@ -19,6 +24,10 @@ export const COMODATO_PRODUCTS: ComodatoProduct[] = [
       'Clásico': 30,
       'Sabores': 30,
     },
+    source_product_codes: {
+      'Clásico': 'MICHI_CLASICO_90',
+      'Sabores': 'MICHI_SABORES_90',
+    },
   },
   {
     product_name: 'Gato Mayor',
@@ -27,6 +36,10 @@ export const COMODATO_PRODUCTS: ComodatoProduct[] = [
     prices: {
       'Clásico': 50,
       'Sabores': 50,
+    },
+    source_product_codes: {
+      'Clásico': 'GATO_MAYOR_CLASICO_180',
+      'Sabores': 'GATO_MAYOR_SABORES_180',
     },
   },
   {
@@ -37,6 +50,10 @@ export const COMODATO_PRODUCTS: ComodatoProduct[] = [
       'Clásico': 70,
       'Sabores': 70,
     },
+    source_product_codes: {
+      'Clásico': 'JEFE_FELINO_CLASICO_240',
+      'Sabores': 'JEFE_FELINO_SABORES_240',
+    },
   },
   {
     product_name: 'Caramelo Michi',
@@ -45,6 +62,9 @@ export const COMODATO_PRODUCTS: ComodatoProduct[] = [
     prices: {
       'Caramelo': 40,
     },
+    source_product_codes: {
+      'Caramelo': 'CARAMELO_MICHI_90',
+    },
   },
   {
     product_name: 'Caramelo Gato Mayor',
@@ -52,6 +72,9 @@ export const COMODATO_PRODUCTS: ComodatoProduct[] = [
     size: '180 gr',
     prices: {
       'Caramelo': 80,
+    },
+    source_product_codes: {
+      'Caramelo': 'CARAMELO_GATO_MAYOR_180',
     },
   },
 ];
@@ -81,6 +104,15 @@ export const getProductPrice = (productName: string, variant: string): number | 
   const product = getComodatoProduct(productName);
   if (!product) return null;
   return product.prices[variant] ?? null;
+};
+
+/**
+ * Resolve the explicit Comodato source code selected in the UI. It must be
+ * mapped to products.id through b2b_product_mappings before creating labels.
+ */
+export const getComodatoSourceProductCode = (productName: string, variant: string): string | null => {
+  const product = getComodatoProduct(productName);
+  return product?.source_product_codes[variant] ?? null;
 };
 
 /**

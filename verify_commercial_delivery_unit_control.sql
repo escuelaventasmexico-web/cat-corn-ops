@@ -119,6 +119,69 @@ WITH expected_relations(name, kind) AS (
     EXISTS(SELECT 1 FROM pg_trigger t WHERE t.tgrelid='public.wholesale_orders'::REGCLASS AND t.tgname='trg_set_wholesale_payment_due_at' AND t.tgfoid=p.oid AND NOT t.tgisinternal) AS trigger_exists
   FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
   WHERE n.nspname='public' AND p.proname='set_wholesale_payment_due_at' AND pg_get_function_identity_arguments(p.oid)=''
+), source_guard_expectations(source_relation, trigger_name, expected_function, source_column, incompatible_column) AS (
+  VALUES
+    ('public.commercial_partner_movements'::REGCLASS, 'commercial_delivery_movement_guard'::TEXT, '_commercial_delivery_comodato_source_guard'::TEXT, 'status'::TEXT, 'order_status'::TEXT),
+    ('public.wholesale_orders'::REGCLASS, 'commercial_delivery_order_guard'::TEXT, '_commercial_delivery_wholesale_source_guard'::TEXT, 'order_status'::TEXT, 'status'::TEXT)
+), source_guard_contract AS (
+  SELECT
+    expected.source_relation::TEXT AS source_relation,
+    expected.trigger_name,
+    expected.expected_function,
+    expected.source_column,
+    expected.incompatible_column,
+    trigger.oid AS trigger_oid,
+    guard_function.oid AS function_oid,
+    guard_function.proname AS actual_function,
+    pg_get_functiondef(guard_function.oid) AS function_definition,
+    trigger.oid IS NOT NULL
+      AND guard_function.oid IS NOT NULL
+      AND guard_function.proname = expected.expected_function
+      AND (
+        (expected.source_column = 'status'
+          AND pg_get_functiondef(guard_function.oid) ~* E'\\mNEW\\s*\\.\\s*status\\M'
+          AND pg_get_functiondef(guard_function.oid) ~* E'\\mOLD\\s*\\.\\s*status\\M'
+          AND pg_get_functiondef(guard_function.oid) !~* E'\\m(NEW|OLD)\\s*\\.\\s*order_status\\M')
+        OR (expected.source_column = 'order_status'
+          AND pg_get_functiondef(guard_function.oid) ~* E'\\mNEW\\s*\\.\\s*order_status\\M'
+          AND pg_get_functiondef(guard_function.oid) ~* E'\\mOLD\\s*\\.\\s*order_status\\M'
+          AND pg_get_functiondef(guard_function.oid) !~* E'\\m(NEW|OLD)\\s*\\.\\s*status\\M')
+      )
+      AND pg_get_functiondef(guard_function.oid) ILIKE '%pending_release%' AS matches
+  FROM source_guard_expectations AS expected
+  LEFT JOIN pg_trigger AS trigger
+    ON trigger.tgrelid = expected.source_relation
+   AND trigger.tgname = expected.trigger_name
+   AND NOT trigger.tgisinternal
+  LEFT JOIN pg_proc AS guard_function ON guard_function.oid = trigger.tgfoid
+), source_creation_rpc_contract AS (
+  SELECT
+    expected.rpc_name,
+    rpc_function.oid,
+    pg_get_functiondef(rpc_function.oid) AS function_definition,
+    CASE expected.rpc_name
+      WHEN 'create_comodato_delivery_with_units' THEN
+        pg_get_functiondef(rpc_function.oid) ILIKE '%commercial_partner_movements%'
+        AND pg_get_functiondef(rpc_function.oid) ~* E'\\mstatus\\M'
+        AND pg_get_functiondef(rpc_function.oid) !~* E'\\morder_status\\M'
+      WHEN 'create_wholesale_order_with_units' THEN
+        pg_get_functiondef(rpc_function.oid) ILIKE '%wholesale_orders%'
+        AND pg_get_functiondef(rpc_function.oid) ~* E'\\morder_status\\M'
+        AND pg_get_functiondef(rpc_function.oid) !~* E'\\m(NEW|OLD)\\s*\\.\\s*status\\M'
+      ELSE FALSE
+    END AS matches
+  FROM (VALUES
+    ('create_comodato_delivery_with_units'::TEXT),
+    ('create_wholesale_order_with_units'::TEXT)
+  ) AS expected(rpc_name)
+  LEFT JOIN pg_namespace AS namespace ON namespace.nspname = 'public'
+  LEFT JOIN pg_proc AS rpc_function
+    ON rpc_function.pronamespace = namespace.oid
+   AND rpc_function.proname = expected.rpc_name
+   AND pg_get_function_identity_arguments(rpc_function.oid) IN (
+     'p_partner_id uuid, p_movement_date date, p_next_visit_date date, p_next_visit_reason text, p_notes text, p_items jsonb',
+     'p_partner_id uuid, p_order_date date, p_notes text, p_items jsonb, p_payment_terms_hours integer'
+   )
 ), expected_rpcs(name, arguments) AS (
   VALUES
     ('create_comodato_delivery_with_units'::TEXT, 'p_partner_id uuid, p_movement_date date, p_next_visit_date date, p_next_visit_reason text, p_notes text, p_items jsonb'),
@@ -162,6 +225,47 @@ WITH expected_relations(name, kind) AS (
 ), pending_payment_leaks AS (
   SELECT p.id, p.wholesale_order_id FROM public.wholesale_payments p
   JOIN public.wholesale_orders o ON o.id=p.wholesale_order_id WHERE o.order_status='pending_release'
+), pending_release_source_gaps AS (
+  SELECT
+    'comodato'::TEXT AS source_type,
+    movement.id AS source_id,
+    COALESCE(items.required_units, 0)::BIGINT AS required_units,
+    COALESCE(units.active_units, 0)::BIGINT AS active_label_units
+  FROM public.commercial_partner_movements AS movement
+  LEFT JOIN LATERAL (
+    SELECT SUM(item.quantity_delivered)::BIGINT AS required_units
+    FROM public.commercial_partner_movement_items AS item
+    WHERE item.movement_id = movement.id
+  ) AS items ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT COUNT(*) FILTER (WHERE unit.status IN ('generated', 'printed', 'scanned', 'released')) AS active_units
+    FROM public.commercial_delivery_units AS unit
+    WHERE unit.movement_id = movement.id
+  ) AS units ON TRUE
+  WHERE movement.status = 'pending_release'
+    AND movement.movement_type = 'delivery'
+    AND (COALESCE(items.required_units, 0) < 1 OR COALESCE(items.required_units, 0) <> COALESCE(units.active_units, 0))
+
+  UNION ALL
+
+  SELECT
+    'mayoreo'::TEXT AS source_type,
+    wholesale_order.id AS source_id,
+    COALESCE(items.required_units, 0)::BIGINT AS required_units,
+    COALESCE(units.active_units, 0)::BIGINT AS active_label_units
+  FROM public.wholesale_orders AS wholesale_order
+  LEFT JOIN LATERAL (
+    SELECT SUM(item.quantity)::BIGINT AS required_units
+    FROM public.wholesale_order_items AS item
+    WHERE item.wholesale_order_id = wholesale_order.id
+  ) AS items ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT COUNT(*) FILTER (WHERE unit.status IN ('generated', 'printed', 'scanned', 'released')) AS active_units
+    FROM public.commercial_delivery_units AS unit
+    WHERE unit.wholesale_order_id = wholesale_order.id
+  ) AS units ON TRUE
+  WHERE wholesale_order.order_status = 'pending_release'
+    AND (COALESCE(items.required_units, 0) < 1 OR COALESCE(items.required_units, 0) <> COALESCE(units.active_units, 0))
 ), delivery_unit_invariants AS (
   SELECT u.source_type, COALESCE(u.movement_id,u.wholesale_order_id) AS source_id,
     COUNT(*) FILTER(WHERE u.status='released') AS released_units,
@@ -248,6 +352,8 @@ SELECT jsonb_build_object(
     AND (SELECT COUNT(*)=1 AND NOT attnotnull AND data_type='uuid' AND has_products_fk FROM movement_item_product)
     AND (SELECT COUNT(*)=1 AND attnotnull AND data_type='date' FROM wholesale_delivery_date)
     AND (SELECT COUNT(*)=1 AND trigger_exists AND function_definition ILIKE '%pending_release%' AND function_definition ILIKE '%released_at%' FROM due_date_trigger)
+    AND (SELECT COUNT(*)=2 AND BOOL_AND(matches) FROM source_guard_contract)
+    AND (SELECT COUNT(*)=2 AND BOOL_AND(oid IS NOT NULL AND matches) FROM source_creation_rpc_contract)
     AND (SELECT COUNT(*)=8 AND BOOL_AND(oid IS NOT NULL AND actual_arguments=arguments) FROM rpc_contract)
     AND (SELECT COUNT(*)=1 AND exists AND security_definer AND pinned_search_path
       AND NOT public_execute AND NOT anon_execute AND NOT authenticated_execute AND NOT service_role_execute
@@ -275,6 +381,7 @@ SELECT jsonb_build_object(
     AND (SELECT COUNT(*)=0 FROM pending_due_leaks)
     AND (SELECT COUNT(*)=0 FROM pending_balance_leaks)
     AND (SELECT COUNT(*)=0 FROM pending_payment_leaks)
+    AND (SELECT COUNT(*)=0 FROM pending_release_source_gaps)
     AND (SELECT COUNT(*)=0 FROM released_source_mismatches)
     AND (SELECT COUNT(*)=0 FROM active_void_or_replacement_leaks)
     AND (SELECT COUNT(*)=0 FROM invalid_unit_snapshots)
@@ -349,6 +456,8 @@ SELECT jsonb_build_object(
     'movement_item_product_id',COALESCE((SELECT to_jsonb(x) FROM movement_item_product x),'null'::JSONB),
     'wholesale_delivery_date',COALESCE((SELECT to_jsonb(x) FROM wholesale_delivery_date x),'null'::JSONB),
     'due_date_trigger',COALESCE((SELECT jsonb_build_object('exists',true,'trigger_exists',trigger_exists) FROM due_date_trigger),'null'::JSONB),
+    'source_guard_contract',COALESCE((SELECT jsonb_agg(to_jsonb(x) - 'function_definition' ORDER BY source_relation) FROM source_guard_contract x),'[]'::JSONB),
+    'source_creation_rpcs',COALESCE((SELECT jsonb_agg(to_jsonb(x) - 'function_definition' ORDER BY rpc_name) FROM source_creation_rpc_contract x),'[]'::JSONB),
     'rpcs',COALESCE((SELECT jsonb_agg(jsonb_build_object('name',name,'expected_arguments',arguments,'actual_arguments',actual_arguments,'exists',oid IS NOT NULL) ORDER BY name) FROM rpc_contract),'[]'::JSONB),
     'audit_security',COALESCE((SELECT to_jsonb(x) FROM audit_security x),'null'::JSONB),
     'protected_tables',COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY table_name) FROM protected_tables x),'[]'::JSONB)
@@ -356,7 +465,8 @@ SELECT jsonb_build_object(
   'pending_release_leaks',jsonb_build_object(
     'payment_due_at',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM pending_due_leaks x),'[]'::JSONB),
     'wholesale_balances',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM pending_balance_leaks x),'[]'::JSONB),
-    'wholesale_payments',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM pending_payment_leaks x),'[]'::JSONB)
+    'wholesale_payments',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM pending_payment_leaks x),'[]'::JSONB),
+    'source_gaps',COALESCE((SELECT jsonb_agg(to_jsonb(x) ORDER BY source_type, source_id) FROM pending_release_source_gaps x),'[]'::JSONB)
   ),
   'released_source_mismatches',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM released_source_mismatches x),'[]'::JSONB),
   'active_void_or_replacement_leaks',COALESCE((SELECT jsonb_agg(to_jsonb(x)) FROM active_void_or_replacement_leaks x),'[]'::JSONB),

@@ -32,11 +32,55 @@ export interface CommercialDeliveryUnit {
   last_reprint_reason?: string | null;
 }
 
+interface B2BProductMappingRow {
+  source_product_code: string;
+  product_id: string | null;
+}
+
 const rpc = async <T>(name: string, args: Record<string, unknown>): Promise<T> => {
   if (!supabase) throw new Error('Supabase no configurado');
   const { data, error } = await supabase.rpc(name, args);
   if (error) throw error;
   return data as T;
+};
+
+/**
+ * Resolves only the explicit B2B source codes selected by the commercial
+ * catalog. It deliberately does not inspect product names, POS prices or SKUs.
+ */
+export const resolveActiveComodatoProductIds = async (sourceProductCodes: string[]) => {
+  if (!supabase) throw new Error('Supabase no configurado');
+
+  const uniqueCodes = [...new Set(sourceProductCodes.map(code => code.trim()).filter(Boolean))];
+  if (uniqueCodes.length === 0) return new Map<string, string>();
+
+  const { data, error } = await supabase
+    .from('b2b_product_mappings')
+    .select('source_product_code, product_id')
+    .eq('source_catalog', 'comodato')
+    .eq('active', true)
+    .is('valid_to', null)
+    .in('source_product_code', uniqueCodes);
+
+  if (error) throw error;
+
+  const rowsByCode = new Map<string, B2BProductMappingRow[]>();
+  for (const row of (data ?? []) as B2BProductMappingRow[]) {
+    const rows = rowsByCode.get(row.source_product_code) ?? [];
+    rows.push(row);
+    rowsByCode.set(row.source_product_code, rows);
+  }
+
+  const resolved = new Map<string, string>();
+  for (const code of uniqueCodes) {
+    const matches = rowsByCode.get(code) ?? [];
+    if (matches.length !== 1 || !matches[0].product_id) {
+      throw new Error(`No existe una relación activa única de Comodato para el código ${code}.`);
+    }
+    resolved.set(code, matches[0].product_id);
+  }
+
+  return resolved;
 };
 
 export const createComodatoDeliveryWithUnits = (args: {
