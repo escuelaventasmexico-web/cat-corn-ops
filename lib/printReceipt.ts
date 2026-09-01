@@ -597,7 +597,7 @@ export function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData
   context.textBaseline = 'alphabetic';
 
   drawFittedText(context, `CAT CORN · ${label.sourceLabel.toUpperCase()}`, 26, { maxFontSize: 18, minFontSize: 13, weight: 700 });
-  drawFittedText(context, label.partnerName.trim(), 49, { maxFontSize: 16, minFontSize: 11, weight: 700 });
+  drawFittedText(context, 'SOCIOS COMERCIALES', 49, { maxFontSize: 16, minFontSize: 11, weight: 700 });
   drawFittedText(context, label.productName.trim(), 69, { maxFontSize: 14, minFontSize: 10, weight: 600 });
   const presentation = [label.variant, label.size].filter(Boolean).join(' · ') || 'Presentación no especificada';
   drawFittedText(context, presentation, 86, { maxFontSize: 12, minFontSize: 9 });

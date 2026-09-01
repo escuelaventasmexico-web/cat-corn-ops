@@ -33,7 +33,7 @@ export const COMMERCIAL_DELIVERY_LABEL_CALIBRATION = {
   heightMm: 30,
   horizontalOffsetMm: 0,
   verticalOffsetMm: 0,
-  gapMm: 0,
+  gapMm: 3,
   dpi: 203,
   dotsPerMm: 8,
   pixelWidth: 400,
@@ -317,6 +317,10 @@ export async function printCommercialDeliveryLabelImages(
   }
   if (imageDataUrls.length === 0) throw new Error('No hay imágenes de etiquetas B2B para imprimir.');
   const pngBase64 = imageDataUrls.map(getPngBase64);
+  const gapFeedDots = Math.round(
+    COMMERCIAL_DELIVERY_LABEL_CALIBRATION.gapMm
+      * COMMERCIAL_DELIVERY_LABEL_CALIBRATION.dotsPerMm,
+  );
 
   await connectQZ();
   const config = qz.configs.create(printerName, {
@@ -325,16 +329,19 @@ export async function printCommercialDeliveryLabelImages(
     spool: { size: 1 },
     jobName: 'Cat Corn - Etiquetas B2B',
   });
-  const printData = pngBase64.map(data => ({
-    type: 'raw' as const,
-    format: 'image' as const,
-    flavor: 'base64' as const,
-    data,
-    options: {
-      language: 'ESCPOS' as const,
-      dotDensity: 'double' as const,
+  const printData = pngBase64.flatMap(data => [
+    {
+      type: 'raw' as const,
+      format: 'image' as const,
+      flavor: 'base64' as const,
+      data,
+      options: {
+        language: 'ESCPOS' as const,
+        dotDensity: 'double' as const,
+      },
     },
-  }));
+    '\x1B\x4A' + String.fromCharCode(gapFeedDots),
+  ]);
   await qz.print(config, printData);
 }
 
