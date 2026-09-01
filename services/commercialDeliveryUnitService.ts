@@ -31,11 +31,38 @@ export interface CommercialDeliveryUnit {
   commercial_partners?: { business_name?: string | null; responsible_name?: string | null } | null;
   print_count: number;
   last_reprint_reason?: string | null;
+  void_reason?: string | null;
+  commercial_partner_movements?: { status?: string | null; movement_date?: string | null } | null;
+  wholesale_orders?: { order_status?: string | null; order_date?: string | null } | null;
+}
+
+export interface AdminCommercialDeliveryResult {
+  source_id: string;
+  source_type: CommercialDeliverySourceType;
+  released_units?: number;
+  previously_scanned_units?: number;
+  bypassed_units?: number;
+  voided_units?: number;
+  released_at?: string;
+  cancelled_at?: string;
+  final_status: 'completed' | 'delivered' | 'cancelled';
 }
 
 interface B2BProductMappingRow {
   source_product_code: string;
   product_id: string | null;
+}
+
+interface ComodatoSourceRow {
+  id: string;
+  status: string | null;
+  movement_date: string | null;
+}
+
+interface WholesaleSourceRow {
+  id: string;
+  order_status: string | null;
+  order_date: string | null;
 }
 
 const rpc = async <T>(name: string, args: Record<string, unknown>): Promise<T> => {
@@ -151,14 +178,78 @@ export const registerPartnerReturnException = (partnerId: string, item: Record<s
     p_partner_id: partnerId, p_item: item, p_reason: reason,
   });
 
+export const adminForceReleaseCommercialDelivery = (args: {
+  sourceType: CommercialDeliverySourceType; sourceId: string; reason: string;
+}) => rpc<AdminCommercialDeliveryResult>('admin_force_release_commercial_delivery', {
+  p_source_type: args.sourceType,
+  p_source_id: args.sourceId,
+  p_reason: args.reason.trim(),
+});
+
+export const adminCancelCommercialDelivery = (args: {
+  sourceType: CommercialDeliverySourceType; sourceId: string; reason: string;
+}) => rpc<AdminCommercialDeliveryResult>('admin_cancel_commercial_delivery', {
+  p_source_type: args.sourceType,
+  p_source_id: args.sourceId,
+  p_reason: args.reason.trim(),
+});
+
 export const listCommercialDeliveryUnits = async (partnerId: string, sourceType?: CommercialDeliverySourceType) => {
   if (!supabase) throw new Error('Supabase no configurado');
+
   let query = supabase.from('commercial_delivery_units')
     .select('*, commercial_partners(business_name, responsible_name)')
     .eq('partner_id', partnerId)
     .order('generated_at', { ascending: false });
   if (sourceType) query = query.eq('source_type', sourceType);
+
   const { data, error } = await query;
   if (error) throw error;
-  return (data ?? []) as CommercialDeliveryUnit[];
+  const units = (data ?? []) as CommercialDeliveryUnit[];
+
+  // commercial_delivery_units has more than one FK path to movement records.
+  // Load the two source tables explicitly so PostgREST never has to guess an
+  // embedded relationship.
+  const movementIds = [...new Set(units.map(unit => unit.movement_id).filter((id): id is string => Boolean(id)))];
+  const wholesaleOrderIds = [...new Set(units.map(unit => unit.wholesale_order_id).filter((id): id is string => Boolean(id)))];
+
+  const movementsById = new Map<string, Omit<ComodatoSourceRow, 'id'>>();
+  if (movementIds.length > 0) {
+    const { data: movementData, error: movementError } = await supabase
+      .from('commercial_partner_movements')
+      .select('id, status, movement_date')
+      .in('id', movementIds);
+    if (movementError) throw movementError;
+    for (const movement of (movementData ?? []) as ComodatoSourceRow[]) {
+      movementsById.set(movement.id, {
+        status: movement.status,
+        movement_date: movement.movement_date,
+      });
+    }
+  }
+
+  const wholesaleOrdersById = new Map<string, Omit<WholesaleSourceRow, 'id'>>();
+  if (wholesaleOrderIds.length > 0) {
+    const { data: orderData, error: orderError } = await supabase
+      .from('wholesale_orders')
+      .select('id, order_status, order_date')
+      .in('id', wholesaleOrderIds);
+    if (orderError) throw orderError;
+    for (const order of (orderData ?? []) as WholesaleSourceRow[]) {
+      wholesaleOrdersById.set(order.id, {
+        order_status: order.order_status,
+        order_date: order.order_date,
+      });
+    }
+  }
+
+  return units.map(unit => ({
+    ...unit,
+    commercial_partner_movements: unit.movement_id
+      ? movementsById.get(unit.movement_id) ?? null
+      : null,
+    wholesale_orders: unit.wholesale_order_id
+      ? wholesaleOrdersById.get(unit.wholesale_order_id) ?? null
+      : null,
+  }));
 };
