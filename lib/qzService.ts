@@ -21,6 +21,7 @@ import qz from 'qz-tray';
 
 const TAG = '[QZ]';
 const PRINTER_KEY = 'catcorn_thermal_printer';
+const COMMERCIAL_DELIVERY_LABEL_PRINTER_KEY = 'catcorn_commercial_delivery_label_printer';
 
 /** Endpoint for the Vercel serverless signing function */
 const SIGN_ENDPOINT = '/api/qz-sign';
@@ -226,6 +227,17 @@ export async function listPrinters(): Promise<string[]> {
 }
 
 /**
+ * Confirms that the specifically selected printer is still visible to QZ Tray.
+ * This deliberately does not fall back to another configured printer.
+ */
+export async function ensurePrinterAvailable(printerName: string): Promise<void> {
+  const printers = await listPrinters();
+  if (!printers.includes(printerName)) {
+    throw new Error(`La impresora configurada "${printerName}" ya no está disponible en QZ Tray. Conecta la impresora o selecciona otra.`);
+  }
+}
+
+/**
  * Send raw ESC/POS data to a named thermal printer.
  *
  * Key decisions for macOS compatibility:
@@ -396,6 +408,24 @@ export function savePrinterName(name: string): void {
 export function getSavedPrinterName(): string | null {
   try {
     return localStorage.getItem(PRINTER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Browser-local preference for commercial-delivery barcode labels only.
+ * It is intentionally distinct from the POS receipt printer preference.
+ */
+export function saveCommercialDeliveryLabelPrinterName(name: string): void {
+  try {
+    localStorage.setItem(COMMERCIAL_DELIVERY_LABEL_PRINTER_KEY, name);
+  } catch { /* quota / private mode — ignore */ }
+}
+
+export function getSavedCommercialDeliveryLabelPrinterName(): string | null {
+  try {
+    return localStorage.getItem(COMMERCIAL_DELIVERY_LABEL_PRINTER_KEY);
   } catch {
     return null;
   }

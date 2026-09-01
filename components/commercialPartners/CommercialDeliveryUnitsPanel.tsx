@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Barcode, CheckCircle2, Printer } from 'lucide-react';
 import { printCommercialDeliveryUnitLabels } from '../../lib/printReceipt';
+import { getSavedCommercialDeliveryLabelPrinterName } from '../../lib/qzService';
 import {
   CommercialDeliverySourceType,
   CommercialDeliveryUnit,
@@ -8,6 +9,7 @@ import {
   markCommercialDeliveryUnitsPrinted,
   scanCommercialDeliveryUnitForRelease,
 } from '../../services/commercialDeliveryUnitService';
+import CommercialDeliveryLabelPrinterSettings from './CommercialDeliveryLabelPrinterSettings';
 
 interface Props {
   partnerId: string;
@@ -27,6 +29,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [printing, setPrinting] = useState(false);
+  const [printerSettingsOpen, setPrinterSettingsOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -58,6 +61,11 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
 
   const printPending = async () => {
     if (!nextPrintBatch.length) return;
+    if (!getSavedCommercialDeliveryLabelPrinterName()) {
+      setError('Configura una impresora de etiquetas B2B antes de imprimir.');
+      setPrinterSettingsOpen(true);
+      return;
+    }
     setPrinting(true); setError(null); setMessage(null);
     try {
       await printCommercialDeliveryUnitLabels(nextPrintBatch.map(unit => ({
@@ -72,6 +80,11 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
   };
 
   const reprint = async (unit: CommercialDeliveryUnit) => {
+    if (!getSavedCommercialDeliveryLabelPrinterName()) {
+      setError('Configura una impresora de etiquetas B2B antes de reimprimir.');
+      setPrinterSettingsOpen(true);
+      return;
+    }
     const reason = window.prompt('Motivo de reimpresión (obligatorio):');
     if (!reason?.trim()) return;
     setPrinting(true); setError(null); setMessage(null);
@@ -99,6 +112,11 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
   };
 
   return <section className="space-y-3">
+    <CommercialDeliveryLabelPrinterSettings
+      open={printerSettingsOpen}
+      onOpenChange={setPrinterSettingsOpen}
+      onConfigured={() => setError(null)}
+    />
     <div className="rounded-xl border border-[#c49330] bg-[#fff8e6] p-4 flex flex-wrap justify-between gap-3">
       <div><p className="text-sm font-bold text-[#111111]">Etiquetas de entrega</p><p className="text-xs text-[#6b5c40]">Escaneadas / total: <strong>{progress.scanned} / {progress.total}</strong></p></div>
       <button type="button" onClick={printPending} disabled={!nextPrintBatch.length || printing} className="flex items-center gap-2 rounded-lg border border-purple-300 bg-purple-100 px-3 py-2 text-xs font-semibold text-purple-800 disabled:opacity-50"><Printer size={15} />{printing ? 'Imprimiendo…' : `Imprimir siguiente entrega (${nextPrintBatch.length})`}</button>

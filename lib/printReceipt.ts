@@ -3,7 +3,12 @@
  * Uses QZ Tray exclusively — no browser window.print().
  */
 import type { ReceiptData } from '../components/TicketReceipt';
-import { printRaw, getSavedPrinterName } from './qzService';
+import {
+  ensurePrinterAvailable,
+  getSavedCommercialDeliveryLabelPrinterName,
+  getSavedPrinterName,
+  printRaw,
+} from './qzService';
 
 // ─── 58 mm thermal: 32 chars per line at normal font ─────────────────
 const LINE_W = 32;
@@ -525,13 +530,15 @@ function buildCommercialDeliveryLabelCommands(label: CommercialDeliveryLabelData
 }
 
 /**
- * Prints one distinct CODE128 label per physical delivery unit using the same
- * QZ Tray connection and saved printer used by POS receipts.
+ * Prints one distinct CODE128 label per physical delivery unit using the
+ * dedicated commercial-label printer preference. It never falls back to the
+ * POS receipt printer or browser printing.
  */
 export async function printCommercialDeliveryUnitLabels(labels: CommercialDeliveryLabelData[]): Promise<void> {
-  const printerName = getSavedPrinterName();
-  if (!printerName) throw new Error('No hay impresora configurada. Configura tu impresora en el POS.');
+  const printerName = getSavedCommercialDeliveryLabelPrinterName();
+  if (!printerName) throw new Error('No hay impresora de etiquetas B2B configurada. Configúrala antes de imprimir.');
   if (labels.length === 0) throw new Error('No hay etiquetas pendientes para imprimir.');
+  await ensurePrinterAvailable(printerName);
   await printRaw(printerName, labels.flatMap(buildCommercialDeliveryLabelCommands));
 }
 
