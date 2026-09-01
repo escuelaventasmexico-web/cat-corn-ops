@@ -2,7 +2,7 @@ import React, { useEffect, useState, ReactNode } from 'react';
 import { Lock, AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../supabase';
+import { verifyFinancialAccessPassword } from '../lib/financialAccessPassword';
 
 interface SensitiveModuleGuardProps {
   children: ReactNode;
@@ -83,40 +83,9 @@ export const SensitiveModuleGuard: React.FC<SensitiveModuleGuardProps> = ({ chil
     setError(null);
 
     try {
-      if (!supabase) {
-        setError('No se pudo verificar la clave financiera. Intenta nuevamente.');
-        setLoading(false);
-        return;
-      }
+      const verification = await verifyFinancialAccessPassword(password);
 
-      const { data, error: rpcError } = await supabase.rpc(
-        'verify_financial_access_password',
-        {
-          p_password: password,
-        }
-      );
-
-      if (rpcError) {
-        console.error('[FINANCIAL_ACCESS] RPC error:', rpcError);
-        setError('No se pudo verificar la clave financiera. Intenta nuevamente.');
-        setLoading(false);
-        return;
-      }
-
-      // Handle array response from RETURNS TABLE RPC
-      const result = Array.isArray(data) ? data[0] : data;
-
-      if (!result) {
-        console.error('[FINANCIAL_ACCESS] No result from RPC');
-        setError('No se pudo verificar la clave financiera. Intenta nuevamente.');
-        setLoading(false);
-        return;
-      }
-
-      console.log('[FINANCIAL_ACCESS] RPC Result:', { success: result.success });
-
-      if (result.success === true) {
-        console.log('[FINANCIAL_ACCESS] Password verified successfully');
+      if (verification.status === 'verified') {
         // Clear password immediately after verification
         setPassword('');
         setError(null);
@@ -126,10 +95,7 @@ export const SensitiveModuleGuard: React.FC<SensitiveModuleGuardProps> = ({ chil
         unlockFinancialAccess();
         setIsUnlocked(true);
       } else {
-        // Incorrect password
-        const errorMsg = result.error_message || 'Clave financiera incorrecta.';
-        console.log('[FINANCIAL_ACCESS] Password incorrect:', errorMsg);
-        setError(errorMsg);
+        setError(verification.errorMessage);
         // Focus input for retry
         const inputElement = document.getElementById('financial-password-input') as HTMLInputElement;
         if (inputElement) {
@@ -137,8 +103,7 @@ export const SensitiveModuleGuard: React.FC<SensitiveModuleGuardProps> = ({ chil
           inputElement.select();
         }
       }
-    } catch (err) {
-      console.error('[FINANCIAL_ACCESS] Unexpected error:', err);
+    } catch {
       setError('No se pudo verificar la clave financiera. Intenta nuevamente.');
     } finally {
       setLoading(false);

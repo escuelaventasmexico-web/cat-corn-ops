@@ -104,9 +104,8 @@ const PartnerCurrentStock: React.FC<Props> = ({ partnerId, refreshKey }) => {
   }
 
   const inStock = items.filter(i => (i.current_quantity ?? 0) > 0);
-  const outOfStock = items.filter(i => (i.current_quantity ?? 0) <= 0);
 
-  if (items.length === 0) {
+  if (inStock.length === 0) {
     return (
       <div className={`${CARD_CLS} text-center py-8`}>
         <Package className="w-8 h-8 text-[#c49330] mx-auto mb-2" />
@@ -169,18 +168,10 @@ const PartnerCurrentStock: React.FC<Props> = ({ partnerId, refreshKey }) => {
 
   return (
     <div className="space-y-4">
-      {inStock.length > 0 && (
-        <div className="space-y-2">
-          <p className={SECTION_TITLE_CLS}>En posesión ({inStock.length})</p>
-          {inStock.map(renderRow)}
-        </div>
-      )}
-      {outOfStock.length > 0 && (
-        <div className="space-y-2">
-          <p className={SECTION_TITLE_CLS}>Sin existencia ({outOfStock.length})</p>
-          {outOfStock.map(renderRow)}
-        </div>
-      )}
+      <div className="space-y-2">
+        <p className={SECTION_TITLE_CLS}>En posesión ({inStock.length})</p>
+        {inStock.map(renderRow)}
+      </div>
     </div>
   );
 };

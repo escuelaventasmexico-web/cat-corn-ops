@@ -12,6 +12,7 @@ import {
   scanCommercialDeliveryUnitForRelease,
 } from '../../services/commercialDeliveryUnitService';
 import { useAuth } from '../../contexts/AuthContext';
+import { verifyFinancialAccessPassword } from '../../lib/financialAccessPassword';
 import CommercialDeliveryLabelPrinterSettings from './CommercialDeliveryLabelPrinterSettings';
 
 interface Props {
@@ -47,6 +48,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [adminAction, setAdminAction] = useState<AdminAction>(null);
   const [adminReason, setAdminReason] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
   const [adminConfirmed, setAdminConfirmed] = useState(false);
   const [adminProcessing, setAdminProcessing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -204,14 +206,29 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
 
   const openAdminAction = (kind: NonNullable<AdminAction>['kind'], delivery: DeliveryGroup) => {
     setAdminReason('');
+    setAdminPassword('');
     setAdminConfirmed(false);
     setAdminAction({ kind, delivery });
   };
 
+  const closeAdminAction = () => {
+    setAdminPassword('');
+    setAdminReason('');
+    setAdminConfirmed(false);
+    setAdminAction(null);
+  };
+
   const runAdminAction = async () => {
-    if (!adminAction || adminReason.trim().length < 10 || !adminConfirmed) return;
+    if (!adminAction || adminReason.trim().length < 10 || !adminConfirmed || !adminPassword) return;
     setAdminProcessing(true); setError(null); setMessage(null);
     try {
+      const verification = await verifyFinancialAccessPassword(adminPassword);
+      setAdminPassword('');
+      if (verification.status !== 'verified') {
+        throw new Error(verification.status === 'invalid'
+          ? 'Contraseña administrativa incorrecta'
+          : verification.errorMessage);
+      }
       const args = {
         sourceType: adminAction.delivery.sourceType,
         sourceId: adminAction.delivery.id,
@@ -223,12 +240,13 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
       setMessage(adminAction.kind === 'release'
         ? `Entrega liberada administrativamente: ${result.released_units} bolsas.`
         : `Entrega cancelada: ${result.voided_units} etiquetas anuladas sin borrar historial.`);
-      setAdminAction(null);
+      closeAdminAction();
       await load();
       onReleased?.();
     } catch (err: any) {
       setError(err.message || 'No se pudo completar la acción administrativa.');
     } finally {
+      setAdminPassword('');
       setAdminProcessing(false);
     }
   };
@@ -239,14 +257,16 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
       onOpenChange={setPrinterSettingsOpen}
       onConfigured={() => setError(null)}
     />
-    {adminAction && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => !adminProcessing && setAdminAction(null)}>
+    {adminAction && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => !adminProcessing && closeAdminAction()}>
       <div className="w-full max-w-lg rounded-xl border border-red-300 bg-white p-5 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="mb-3 flex items-start justify-between gap-3"><div><h3 className="font-bold text-[#111111]">{adminAction.kind === 'release' ? 'Liberación administrativa' : 'Cancelar entrega'}</h3><p className="mt-1 text-xs text-[#6b5c40]">{adminAction.delivery.sourceType === 'comodato' ? 'Comodato' : 'Mayoreo'} · {adminAction.delivery.units.length} bolsas</p></div><button type="button" disabled={adminProcessing} onClick={() => setAdminAction(null)} aria-label="Cerrar" className="text-[#4a2c0a]"><X size={18} /></button></div>
+        <div className="mb-3 flex items-start justify-between gap-3"><div><h3 className="font-bold text-[#111111]">{adminAction.kind === 'release' ? 'Liberación administrativa' : 'Cancelar entrega'}</h3><p className="mt-1 text-xs text-[#6b5c40]">{adminAction.delivery.sourceType === 'comodato' ? 'Comodato' : 'Mayoreo'} · {adminAction.delivery.units.length} bolsas</p></div><button type="button" disabled={adminProcessing} onClick={closeAdminAction} aria-label="Cerrar" className="text-[#4a2c0a]"><X size={18} /></button></div>
         {adminAction.kind === 'release' ? <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Esta excepción libera las bolsas pendientes sin los escaneos faltantes. Escaneadas: <strong>{adminAction.delivery.units.filter(unit => unit.status === 'scanned').length}</strong>. Omitidas: <strong>{adminAction.delivery.units.filter(unit => ['generated', 'printed'].includes(unit.status)).length}</strong>.</p> : <p className="rounded-lg bg-red-50 p-3 text-sm text-red-900">La entrega y sus etiquetas se conservarán para auditoría; no se eliminará ningún historial.</p>}
         <label className="mt-4 block text-xs font-bold text-[#111111]">Motivo obligatorio (mínimo 10 caracteres)</label>
         <textarea value={adminReason} onChange={event => setAdminReason(event.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[#c49330] p-2 text-sm" placeholder="Describe la autorización excepcional…" />
+        <label className="mt-3 block text-xs font-bold text-[#111111]">Contraseña administrativa</label>
+        <input type="password" autoComplete="current-password" value={adminPassword} onChange={event => setAdminPassword(event.target.value)} className="mt-1 w-full rounded-lg border border-[#c49330] p-2 text-sm" />
         <label className="mt-3 flex items-start gap-2 text-xs text-[#4a2c0a]"><input type="checkbox" checked={adminConfirmed} onChange={event => setAdminConfirmed(event.target.checked)} />Confirmo esta acción administrativa y su auditoría permanente.</label>
-        <button type="button" disabled={adminProcessing || !adminConfirmed || adminReason.trim().length < 10} onClick={() => void runAdminAction()} className={`mt-4 w-full rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50 ${adminAction.kind === 'release' ? 'bg-amber-700 hover:bg-amber-800' : 'bg-red-700 hover:bg-red-800'}`}>{adminProcessing ? 'Procesando…' : adminAction.kind === 'release' ? 'Confirmar liberación administrativa' : 'Cancelar entrega'}</button>
+        <button type="button" disabled={adminProcessing || !adminConfirmed || adminReason.trim().length < 10 || !adminPassword} onClick={() => void runAdminAction()} className={`mt-4 w-full rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50 ${adminAction.kind === 'release' ? 'bg-amber-700 hover:bg-amber-800' : 'bg-red-700 hover:bg-red-800'}`}>{adminProcessing ? 'Procesando…' : adminAction.kind === 'release' ? 'Confirmar liberación administrativa' : 'Cancelar entrega'}</button>
       </div>
     </div>}
     {previewImage && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPreviewImage(null)}>
