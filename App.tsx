@@ -129,7 +129,9 @@ function AppRoutes() {
         } />
         <Route path="/socios-comerciales" element={
           <ProtectedRoute requiredModules={['socios_comerciales']}>
-            <CommercialPartners />
+            <SensitiveModuleGuard>
+              <CommercialPartners />
+            </SensitiveModuleGuard>
           </ProtectedRoute>
         } />
         {/* Catch-all for unauthorized access */}
