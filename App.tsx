@@ -129,7 +129,7 @@ function AppRoutes() {
         } />
         <Route path="/socios-comerciales" element={
           <ProtectedRoute requiredModules={['socios_comerciales']}>
-            <SensitiveModuleGuard>
+            <SensitiveModuleGuard allowCommercialPartnersRoleBypass>
               <CommercialPartners />
             </SensitiveModuleGuard>
           </ProtectedRoute>

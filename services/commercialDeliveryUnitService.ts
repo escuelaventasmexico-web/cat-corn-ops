@@ -48,6 +48,16 @@ export interface AdminCommercialDeliveryResult {
   final_status: 'completed' | 'delivered' | 'cancelled';
 }
 
+/** An exact historical product snapshot that has never had delivery labels. */
+export interface HistoricalUnlabelledStockItem {
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  available_quantity: number;
+  historical_price_to_catcorn: number | null;
+  historical_suggested_retail_price: number | null;
+}
+
 interface B2BProductMappingRow {
   source_product_code: string;
   product_id: string | null;
@@ -153,6 +163,41 @@ export const registerPartnerSpoilageException = (partnerId: string, item: Record
   rpc<{ movement_id: string }>('register_partner_spoilage_exception', {
     p_partner_id: partnerId, p_item: item, p_reason: reason,
   });
+
+export const getPartnerHistoricalUnlabelledStock = async (partnerId: string) => {
+  const rows = await rpc<HistoricalUnlabelledStockItem[]>('get_partner_historical_unlabelled_stock', {
+    p_partner_id: partnerId,
+  });
+  return (rows ?? []).map(row => ({
+    ...row,
+    available_quantity: Number(row.available_quantity),
+    historical_price_to_catcorn: row.historical_price_to_catcorn === null ? null : Number(row.historical_price_to_catcorn),
+    historical_suggested_retail_price: row.historical_suggested_retail_price === null ? null : Number(row.historical_suggested_retail_price),
+  }));
+};
+
+export const registerPartnerHistoricalSpoilageException = (args: {
+  partnerId: string;
+  productName: string;
+  productVariant?: string | null;
+  productSize?: string | null;
+  quantity: number;
+  reason: string;
+  movementDate: string;
+}) => rpc<{ movement_id: string; movement_item_id: string; quantity_spoiled: number }>(
+  'register_partner_spoilage_historical_exception',
+  {
+    p_partner_id: args.partnerId,
+    p_identity: {
+      product_name: args.productName,
+      product_variant: args.productVariant ?? null,
+      product_size: args.productSize ?? null,
+    },
+    p_quantity: args.quantity,
+    p_reason: args.reason.trim(),
+    p_movement_date: args.movementDate,
+  },
+);
 
 export const findCommercialDeliveryUnitForPartner = async (barcode: string, partnerId: string) => {
   if (!supabase) throw new Error('Supabase no configurado');

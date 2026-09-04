@@ -18,12 +18,14 @@ import { PendingCommissionsModal } from './PendingCommissionsModal';
 import { AvailableCommissionsModal } from './AvailableCommissionsModal';
 import { ExtraDayCommissionModal } from './ExtraDayCommissionModal';
 import { AdminPartnerTargetEditor } from './AdminPartnerTargetEditor';
+import { loadAvailableForPayment } from './payments/paymentUtils';
 
 export const AdminCommissionDashboard = () => {
   const [sellers, setSellers] = useState<UserProfile[]>([]);
   const [selectedSellerId, setSelectedSellerId] = useState<string | null>(null);
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [summary, setSummary] = useState<SellerCommissionMonthlySummary | null>(null);
+  const [totalAvailable, setTotalAvailable] = useState(0);
   const [showPendingModal, setShowPendingModal] = useState(false);
   const [showAvailableModal, setShowAvailableModal] = useState(false);
   const [showExtraDayModal, setShowExtraDayModal] = useState(false);
@@ -94,6 +96,16 @@ export const AdminCommissionDashboard = () => {
     }
   };
 
+  const loadTotalAvailable = async (sellerId: string) => {
+    try {
+      const available = await loadAvailableForPayment(sellerId);
+      setTotalAvailable(parseNumericValue(available?.available_amount));
+    } catch (err) {
+      console.error('Error loading total available commissions:', err);
+      setTotalAvailable(0);
+    }
+  };
+
   const loadAllSellersSummary = async () => {
     if (!supabase) return;
 
@@ -132,9 +144,10 @@ export const AdminCommissionDashboard = () => {
   useEffect(() => {
     if (selectedSellerId) {
       loadSellerSummary(selectedSellerId);
-    }
+      loadTotalAvailable(selectedSellerId);
+    } else setTotalAvailable(0);
     loadAllSellersSummary();
-  }, [currentDate, sellers]);
+  }, [currentDate, sellers, selectedSellerId]);
 
   if (loading) {
     return (
@@ -239,6 +252,7 @@ export const AdminCommissionDashboard = () => {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <CommissionSummaryCards 
                 summary={summary} 
+                totalAvailable={totalAvailable}
                 onPendingClick={() => setShowPendingModal(true)}
                 onAvailableClick={() => setShowAvailableModal(true)}
               />
@@ -254,6 +268,7 @@ export const AdminCommissionDashboard = () => {
                 setRefreshKey(prev => prev + 1);
                 loadAllSellersSummary();
                 loadSellerSummary(selectedSellerId);
+                loadTotalAvailable(selectedSellerId);
               }}
             />
           </div>
@@ -294,6 +309,7 @@ export const AdminCommissionDashboard = () => {
                 setRefreshKey(prev => prev + 1);
                 loadAllSellersSummary();
                 loadSellerSummary(selectedSellerId);
+                loadTotalAvailable(selectedSellerId);
               }}
             />
           </div>
@@ -427,6 +443,7 @@ export const AdminCommissionDashboard = () => {
             setRefreshKey(prev => prev + 1);
             loadAllSellersSummary();
             loadSellerSummary(selectedSellerId);
+            loadTotalAvailable(selectedSellerId);
           }}
         />
       )}

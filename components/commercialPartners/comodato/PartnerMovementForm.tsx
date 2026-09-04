@@ -20,7 +20,7 @@ import {
   getProductSize,
   getProductPrice,
 } from '../../../lib/comodatoProducts';
-import { CommercialDeliveryUnit, createComodatoDeliveryWithUnits, findCommercialDeliveryUnitForPartner, registerPartnerReturnByBarcode, registerPartnerReturnException, registerPartnerSpoilageByBarcode, registerPartnerSpoilageException, resolveActiveComodatoProductIds } from '../../../services/commercialDeliveryUnitService';
+import { CommercialDeliveryUnit, createComodatoDeliveryWithUnits, findCommercialDeliveryUnitForPartner, getPartnerHistoricalUnlabelledStock, HistoricalUnlabelledStockItem, registerPartnerHistoricalSpoilageException, registerPartnerReturnByBarcode, registerPartnerReturnException, registerPartnerSpoilageByBarcode, resolveActiveComodatoProductIds } from '../../../services/commercialDeliveryUnitService';
 import { useAuth } from '../../../contexts/AuthContext';
 
 // ── Internal types ────────────────────────────────────────────────────────────────────────────────
@@ -51,6 +51,8 @@ type StockRow = {
   spoilage_absorbed_by: string;
   notes: string;
 };
+
+type HistoricalSpoilageRow = HistoricalUnlabelledStockItem & { _key: number };
 
 type CatalogProduct = Record<string, unknown> & { id: string };
 
@@ -159,6 +161,9 @@ const PartnerMovementForm: React.FC<Props> = ({
   const [spoilageBarcode, setSpoilageBarcode] = useState('');
   const [spoilageException, setSpoilageException] = useState(false);
   const [exceptionRowKey, setExceptionRowKey] = useState<number | null>(null);
+  const [historicalSpoilageRows, setHistoricalSpoilageRows] = useState<HistoricalSpoilageRow[]>([]);
+  const [historicalSpoilageQuantity, setHistoricalSpoilageQuantity] = useState('1');
+  const [loadingHistoricalSpoilage, setLoadingHistoricalSpoilage] = useState(false);
   const [withdrawalBarcode, setWithdrawalBarcode] = useState('');
   const [withdrawalUnit, setWithdrawalUnit] = useState<CommercialDeliveryUnit | null>(null);
   const [withdrawalException, setWithdrawalException] = useState(false);
@@ -205,6 +210,26 @@ const PartnerMovementForm: React.FC<Props> = ({
 
     return () => { active = false; };
   }, [isDelivery, partnerId]);
+
+  useEffect(() => {
+    if (!isSpoilage || !spoilageException) return;
+    let active = true;
+    setLoadingHistoricalSpoilage(true);
+    setHistoricalSpoilageRows([]);
+    setExceptionRowKey(null);
+
+    getPartnerHistoricalUnlabelledStock(partnerId)
+      .then(rows => {
+        if (!active) return;
+        setHistoricalSpoilageRows(rows.map((row, index) => ({ ...row, _key: index })));
+      })
+      .catch((err: any) => {
+        if (active) setError(err?.message || 'No se pudo cargar el saldo histórico sin etiqueta.');
+      })
+      .finally(() => { if (active) setLoadingHistoricalSpoilage(false); });
+
+    return () => { active = false; };
+  }, [isSpoilage, partnerId, spoilageException]);
 
   useEffect(() => {
     if (isWithdrawal && !withdrawalException) withdrawalInputRef.current?.focus();
@@ -301,20 +326,27 @@ const PartnerMovementForm: React.FC<Props> = ({
       return;
     }
     if (isSpoilage && spoilageException) {
-      const selected = stockRows.find(row => row._key === exceptionRowKey);
-      if (!selected || !generalNotes.trim()) {
-        setError('La excepción administrativa requiere producto y motivo obligatorio.');
+      const selected = historicalSpoilageRows.find(row => row._key === exceptionRowKey);
+      const quantity = Number(historicalSpoilageQuantity);
+      if (!selected || !generalNotes.trim() || !Number.isInteger(quantity) || quantity <= 0) {
+        setError('La excepción administrativa requiere producto histórico, cantidad entera positiva y motivo obligatorio.');
+        return;
+      }
+      if (quantity > selected.available_quantity) {
+        setError(`La cantidad solicitada excede el saldo histórico sin etiqueta disponible (${selected.available_quantity}).`);
         return;
       }
       setSaving(true);
       try {
-        const product = resolveCatalogProduct(catalogProducts, selected);
-        if (!product) throw new Error('El producto histórico no tiene una coincidencia única en el catálogo real.');
-        await registerPartnerSpoilageException(partnerId, {
-          product_id: product.id, product_name: selected.product_name,
-          product_variant: selected.product_variant, product_size: selected.product_size,
-          unit_price: Number(selected.price_to_catcorn),
-        }, generalNotes);
+        await registerPartnerHistoricalSpoilageException({
+          partnerId,
+          productName: selected.product_name,
+          productVariant: selected.product_variant,
+          productSize: selected.product_size,
+          quantity,
+          reason: generalNotes,
+          movementDate: date,
+        });
         setSaving(false); onSaved();
       } catch (err: any) { setSaving(false); setError(err.message || 'No se pudo registrar la excepción.'); }
       return;
@@ -550,10 +582,12 @@ const PartnerMovementForm: React.FC<Props> = ({
                 {isAdmin && <button type="button" onClick={() => setSpoilageException(true)} className="mt-2 text-xs font-semibold text-red-800 underline">Registrar merma sin etiqueta</button>}
               </> : <>
                 <p className="text-xs font-bold text-red-800">Excepción administrativa auditada</p>
-                <select value={exceptionRowKey ?? ''} onChange={event => setExceptionRowKey(Number(event.target.value))} className={`${SELECT_CLS} mt-2`}>
+                <p className="mt-1 text-xs text-red-700">Sólo muestra saldo histórico sin etiqueta; las bolsas etiquetadas conservan el escaneo obligatorio.</p>
+                <select disabled={loadingHistoricalSpoilage} value={exceptionRowKey ?? ''} onChange={event => setExceptionRowKey(event.target.value === '' ? null : Number(event.target.value))} className={`${SELECT_CLS} mt-2`}>
                   <option value="">Selecciona producto histórico</option>
-                  {stockRows.map(row => <option key={row._key} value={row._key}>{row.product_name} — {row.product_variant} ({row.current_quantity})</option>)}
+                  {historicalSpoilageRows.map(row => <option key={row._key} value={row._key}>{row.product_name}{row.product_variant ? ` — ${row.product_variant}` : ''}{row.product_size ? ` · ${row.product_size}` : ''} ({row.available_quantity} disponibles)</option>)}
                 </select>
+                {loadingHistoricalSpoilage ? <p className="mt-1 text-xs text-red-700">Cargando saldo histórico…</p> : historicalSpoilageRows.length === 0 ? <p className="mt-1 text-xs text-red-700">No hay saldo histórico sin etiqueta disponible para este socio.</p> : <div className="mt-2"><label className={LABEL_CLS}>Cantidad de merma histórica *</label><input type="number" min="1" step="1" value={historicalSpoilageQuantity} onChange={event => setHistoricalSpoilageQuantity(event.target.value)} className={INPUT_CLS} /></div>}
                 <button type="button" onClick={() => setSpoilageException(false)} className="mt-2 text-xs font-semibold text-red-800 underline">Volver al escaneo obligatorio</button>
               </>}
             </div>

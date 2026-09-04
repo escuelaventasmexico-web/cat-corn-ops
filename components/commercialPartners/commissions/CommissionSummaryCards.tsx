@@ -4,11 +4,17 @@ import { TrendingUp, DollarSign, Clock, CheckCircle } from 'lucide-react';
 
 interface CommissionSummaryCardsProps {
   summary: SellerCommissionMonthlySummary | null;
+  totalAvailable?: number;
   onPendingClick?: () => void;
   onAvailableClick?: () => void;
 }
 
-export const CommissionSummaryCards = ({ summary, onPendingClick, onAvailableClick }: CommissionSummaryCardsProps) => {
+export const CommissionSummaryCards = ({
+  summary,
+  totalAvailable = 0,
+  onPendingClick,
+  onAvailableClick,
+}: CommissionSummaryCardsProps) => {
   if (!summary) return null;
 
   const available = parseNumericValue(summary.available_total);
@@ -42,6 +48,21 @@ export const CommissionSummaryCards = ({ summary, onPendingClick, onAvailableCli
           <DollarSign className="w-12 h-12 text-cc-primary opacity-20 group-hover:opacity-30 group-disabled:opacity-20 transition-opacity" />
         </div>
       </button>
+
+      <div className="bg-cc-surface border border-cc-primary/30 rounded-2xl p-6 col-span-2 md:col-start-1">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-cc-text-muted text-sm font-semibold mb-2">Comisiones disponibles totales</p>
+            <p className="text-3xl font-bold text-cc-primary mb-2">
+              {formatCurrency(totalAvailable)}
+            </p>
+            <p className="text-xs text-cc-text-muted">
+              Saldo listo para pagarse de todos los meses.
+            </p>
+          </div>
+          <DollarSign className="w-10 h-10 text-cc-primary opacity-20" />
+        </div>
+      </div>
 
       {/* Secondary Cards */}
       {/* Pending de Liberación - CLICKABLE */}

@@ -6,11 +6,22 @@ import { verifyFinancialAccessPassword } from '../lib/financialAccessPassword';
 
 interface SensitiveModuleGuardProps {
   children: ReactNode;
+  /** Enables the seller-role bypass only for the explicitly opted-in route. */
+  allowCommercialPartnersRoleBypass?: boolean;
 }
 
-export const SensitiveModuleGuard: React.FC<SensitiveModuleGuardProps> = ({ children }) => {
-  const { financialAccessUnlockedUntil, unlockFinancialAccess, lockFinancialAccess } = useAuth();
+export const SensitiveModuleGuard: React.FC<SensitiveModuleGuardProps> = ({
+  children,
+  allowCommercialPartnersRoleBypass = false,
+}) => {
+  const {
+    financialAccessUnlockedUntil,
+    unlockFinancialAccess,
+    lockFinancialAccess,
+    isCommercialPartnersUser,
+  } = useAuth();
   const navigate = useNavigate();
+  const bypassFinancialPassword = allowCommercialPartnersRoleBypass && isCommercialPartnersUser;
 
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -116,8 +127,9 @@ export const SensitiveModuleGuard: React.FC<SensitiveModuleGuardProps> = ({ chil
     navigate('/dashboard');
   };
 
-  // If unlocked, render children
-  if (isUnlocked) {
+  // This opt-in is used only by /socios-comerciales. Administrators still
+  // follow the existing shared financial-password and timed-unlock flow.
+  if (bypassFinancialPassword || isUnlocked) {
     return <>{children}</>;
   }
 
