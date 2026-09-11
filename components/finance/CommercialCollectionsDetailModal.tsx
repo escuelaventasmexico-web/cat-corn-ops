@@ -2,6 +2,7 @@ import { X, Building2, ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   getCommercialCollectionDetails,
+  formatMexicoCityPaymentDateTime,
   type CommercialCollectionItem,
   type CommercialCollectionDetail,
 } from '../../services/commercialCollectionsService';
@@ -20,16 +21,13 @@ interface Props {
 const fmt = (n: number) =>
   new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n);
 
-/**
- * Format payment_date WITHOUT timezone conversion
- * Assumes payment_date is stored as business date at midnight UTC (e.g., 2026-08-20T00:00:00Z)
- * Represents business date 2026-08-20, NOT a datetime needing timezone conversion
- */
-const formatBusinessDate = (isoString: string): string => {
-  if (!isoString) return '—';
-  // Extract YYYY-MM-DD without any conversion
-  const dateStr = isoString.slice(0, 10);
-  const [year, month, day] = dateStr.split('-');
+const formatBusinessDate = (isoString: string): string => isoString
+  ? formatMexicoCityPaymentDateTime(isoString)
+  : '—';
+
+const formatCalendarDate = (value: string): string => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return '—';
+  const [year, month, day] = value.split('-');
   return `${day}/${month}/${year}`;
 };
 
@@ -109,7 +107,7 @@ const ComodatoCard = ({ item, isExpanded, onToggle }: PaymentCardProps) => (
             <span className="text-cc-cream">{getMethodLabel(item.payment_method)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-cc-text-muted">Fecha:</span>
+            <span className="text-cc-text-muted">Ingreso confirmado el:</span>
             <span className="text-cc-cream">{formatBusinessDate(item.payment_date)}</span>
           </div>
           {item.reference && (
@@ -133,7 +131,7 @@ const ComodatoCard = ({ item, isExpanded, onToggle }: PaymentCardProps) => (
             {item.movement.movement_date && (
               <div className="flex justify-between">
                 <span className="text-cc-text-muted">Fecha:</span>
-                <span className="text-cc-cream">{formatBusinessDate(item.movement.movement_date)}</span>
+                <span className="text-cc-cream">{formatCalendarDate(item.movement.movement_date)}</span>
               </div>
             )}
             {item.movement.movement_type && (
@@ -272,7 +270,7 @@ const PieceSaleCard = ({ item, isExpanded, onToggle }: PaymentCardProps) => (
           <span className="text-cc-cream font-bold">{fmt(item.amount)}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-cc-text-muted">Fecha:</span>
+          <span className="text-cc-text-muted">Ingreso confirmado el:</span>
           <span className="text-cc-cream">{formatBusinessDate(item.payment_date)}</span>
         </div>
         {item.reference && (

@@ -133,7 +133,10 @@ const PaymentVerificationReviewModal: React.FC<Props> = ({
 
   const formatCurrency = (val: number) =>
     val.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
-  const formatDate = (date: string) => new Date(date).toLocaleDateString('es-MX');
+  const formatDate = (value: string) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : '—';
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -194,7 +197,7 @@ const PaymentVerificationReviewModal: React.FC<Props> = ({
                 </p>
               </div>
               <div>
-                <span className="text-xs text-gray-600 uppercase">Fecha de pago</span>
+                <span className="text-xs text-gray-600 uppercase">Fecha reportada</span>
                 <p className="font-medium text-gray-900">{formatDate(verification.payment_date)}</p>
               </div>
               <div>

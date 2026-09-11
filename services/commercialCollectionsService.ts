@@ -42,8 +42,9 @@ export interface CommercialCollections {
  *
  * If ANY source fails, returns error. No partial totals.
  *
- * @param startDate Start date (inclusive) in UTC
- * @param endDate End date (inclusive) in UTC
+ * The Date arguments represent business-date boundaries by their UTC calendar
+ * components (for example, `Date.UTC(2026, 8, 10)`). Queries are then built at
+ * Mexico City midnight and use an exclusive end boundary.
  * @returns CommercialCollections object with totals and breakdown
  */
 export async function getCommercialCollections(
@@ -68,14 +69,9 @@ export async function getCommercialCollections(
   }
 
   try {
-    // Convert dates to ISO strings for comparison
-    // Payment dates are stored as calendar dates in UTC (e.g., 2026-08-07T00:00:00.000Z)
-    const startISO = startDate.toISOString();
-    const endISO = endDate.toISOString();
+    const startISO = mexicoCityBoundary(startDate).toISOString();
+    const endISO = mexicoCityBoundary(endDate).toISOString();
 
-    let comodatoTotal = 0;
-    let mayoreoTotal = 0;
-    let pieceSaleTotal = 0;
     let comodatoError: any = null;
     let mayoreoError: any = null;
     let pieceSaleError: any = null;
@@ -88,7 +84,7 @@ export async function getCommercialCollections(
       .select('id, partner_id, movement_id, payment_date, amount, payment_method, reference, notes')
       .in('status', ['completed', 'paid'])
       .gte('payment_date', startISO)
-      .lte('payment_date', endISO);
+      .lt('payment_date', endISO);
 
     if (comodatoErr) {
       comodatoError = comodatoErr;
@@ -96,9 +92,8 @@ export async function getCommercialCollections(
     } else if (comodatoPayments) {
       for (const payment of comodatoPayments) {
         const amount = Number(payment.amount) || 0;
-        const method = (payment.payment_method || '').toLowerCase() as 'cash' | 'transfer';
+        const method = normalizePaymentMethod(payment.payment_method);
 
-        comodatoTotal += amount;
         result.bySource.comodato += amount;
 
         if (method === 'cash') {
@@ -129,7 +124,7 @@ export async function getCommercialCollections(
       .select('id, partner_id, payment_date, amount, payment_method')
       .in('status', ['completed', 'paid'])
       .gte('payment_date', startISO)
-      .lte('payment_date', endISO);
+      .lt('payment_date', endISO);
 
     if (mayoreoErr) {
       mayoreoError = mayoreoErr;
@@ -137,9 +132,8 @@ export async function getCommercialCollections(
     } else if (mayoreoPayments) {
       for (const payment of mayoreoPayments) {
         const amount = Number(payment.amount) || 0;
-        const method = (payment.payment_method || '').toLowerCase() as 'cash' | 'transfer';
+        const method = normalizePaymentMethod(payment.payment_method);
 
-        mayoreoTotal += amount;
         result.bySource.mayoreo += amount;
 
         if (method === 'cash') {
@@ -168,7 +162,7 @@ export async function getCommercialCollections(
       .select('id, seller_id, payment_date, amount, payment_method')
       .eq('status', 'completed')
       .gte('payment_date', startISO)
-      .lte('payment_date', endISO);
+      .lt('payment_date', endISO);
 
     if (pieceSaleErr) {
       pieceSaleError = pieceSaleErr;
@@ -176,9 +170,8 @@ export async function getCommercialCollections(
     } else if (pieceSalePayments) {
       for (const payment of pieceSalePayments) {
         const amount = Number(payment.amount) || 0;
-        const method = (payment.payment_method || '').toLowerCase() as 'cash' | 'transfer';
+        const method = normalizePaymentMethod(payment.payment_method);
 
-        pieceSaleTotal += amount;
         result.bySource.pieceSale += amount;
 
         if (method === 'cash') {
@@ -214,8 +207,27 @@ export async function getCommercialCollections(
       return result;
     }
 
-    // All sources succeeded - calculate totals
-    result.total = comodatoTotal + mayoreoTotal + pieceSaleTotal;
+    // A payment can only be counted once per physical source row. This is a
+    // defensive invariant in case a future query is expanded or joined.
+    const uniqueBreakdown = new Map<string, CommercialCollectionItem>();
+    for (const item of result.breakdown) {
+      uniqueBreakdown.set(`${item.source_type}:${item.id}`, item);
+    }
+    result.breakdown = [...uniqueBreakdown.values()];
+
+    result.cash = 0;
+    result.transfer = 0;
+    result.bySource = { comodato: 0, mayoreo: 0, pieceSale: 0 };
+    for (const payment of result.breakdown) {
+      if (payment.source_type === 'comodato') result.bySource.comodato += payment.amount;
+      if (payment.source_type === 'mayoreo') result.bySource.mayoreo += payment.amount;
+      if (payment.source_type === 'venta_pieza') result.bySource.pieceSale += payment.amount;
+      if (payment.payment_method === 'cash') result.cash += payment.amount;
+      if (payment.payment_method === 'transfer') result.transfer += payment.amount;
+    }
+
+    // All sources succeeded - calculate totals from the deduplicated payments.
+    result.total = result.bySource.comodato + result.bySource.mayoreo + result.bySource.pieceSale;
 
     // Round all money values to 2 decimals
     result.total = Math.round(result.total * 100) / 100;
@@ -236,6 +248,37 @@ export async function getCommercialCollections(
 
   return result;
 }
+
+/** Returns the Mexico City business day of a real payment timestamp. */
+export const getMexicoCityPaymentDate = (value: string | Date): string => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(value));
+  const year = parts.find(part => part.type === 'year')?.value;
+  const month = parts.find(part => part.type === 'month')?.value;
+  const day = parts.find(part => part.type === 'day')?.value;
+  if (!year || !month || !day) throw new Error('No se pudo resolver la fecha de pago en México.');
+  return `${year}-${month}-${day}`;
+};
+
+/** Formats a definitive payment timestamp as a Mexico City accounting instant. */
+export const formatMexicoCityPaymentDateTime = (value: string): string => new Intl.DateTimeFormat('es-MX', {
+  timeZone: 'America/Mexico_City', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+}).format(new Date(value));
+
+const normalizePaymentMethod = (value: unknown): 'cash' | 'transfer' => {
+  const method = String(value ?? '').toLowerCase();
+  if (method === 'cash' || method === 'transfer') return method;
+  throw new Error(`Método de pago confirmado no reconocido: ${String(value ?? '')}`);
+};
+
+const mexicoCityBoundary = (calendarDate: Date): Date => {
+  const year = calendarDate.getUTCFullYear();
+  const month = String(calendarDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(calendarDate.getUTCDate()).padStart(2, '0');
+  // Mexico City does not observe DST; this represents its business midnight.
+  return new Date(`${year}-${month}-${day}T00:00:00-06:00`);
+};
 
 /**
  * Format a CommercialCollections object for display
@@ -261,27 +304,25 @@ export function formatCommercialCollections(collections: CommercialCollections):
 }
 
 /**
- * Get today's commercial collections (payment_date in UTC calendar)
+ * Get today's commercial collections using the current Mexico City business day.
  * @returns CommercialCollections for today
  */
 export async function getTodayCommercialCollections(): Promise<CommercialCollections> {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-
-  const tomorrow = new Date(today);
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const [year, month, day] = getMexicoCityPaymentDate(new Date()).split('-').map(Number);
+  const today = new Date(Date.UTC(year, month - 1, day));
+  const tomorrow = new Date(Date.UTC(year, month - 1, day + 1));
 
   return getCommercialCollections(today, tomorrow);
 }
 
 /**
- * Get this month's commercial collections (payment_date in UTC calendar)
+ * Get this month's commercial collections using the current Mexico City month.
  * @returns CommercialCollections for current month
  */
 export async function getMonthCommercialCollections(): Promise<CommercialCollections> {
-  const today = new Date();
-  const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
-  const monthEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
+  const [year, month] = getMexicoCityPaymentDate(new Date()).split('-').map(Number);
+  const monthStart = new Date(Date.UTC(year, month - 1, 1));
+  const monthEnd = new Date(Date.UTC(year, month, 1));
 
   return getCommercialCollections(monthStart, monthEnd);
 }
@@ -465,8 +506,8 @@ export async function getPieceSaleSummary(
   }
 
   try {
-    const startISO = startDate.toISOString();
-    const endISO = endDate.toISOString();
+    const startISO = mexicoCityBoundary(startDate).toISOString();
+    const endISO = mexicoCityBoundary(endDate).toISOString();
 
     // Confirmed sales drive sold amount, units, and distinct sellers.
     // Draft and pending_review sales drive the actionable pending amount.

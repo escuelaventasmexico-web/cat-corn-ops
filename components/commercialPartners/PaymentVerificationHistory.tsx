@@ -72,7 +72,13 @@ const PaymentVerificationHistory: React.FC<Props> = ({ partnerId, vendorId }) =>
 
   const formatCurrency = (val: number) =>
     val.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
-  const formatDate = (date: string) => new Date(date).toLocaleDateString('es-MX');
+  const formatReportedDate = (value: string) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : '—';
+  };
+  const formatReviewedAt = (value: string) => new Intl.DateTimeFormat('es-MX', {
+    timeZone: 'America/Mexico_City', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(value));
 
   if (loading) {
     return (
@@ -131,8 +137,8 @@ const PaymentVerificationHistory: React.FC<Props> = ({ partnerId, vendorId }) =>
                   </p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Fecha:</span>
-                  <p className="font-semibold text-gray-900">{formatDate(item.payment_date)}</p>
+                  <span className="text-gray-500">Fecha reportada:</span>
+                  <p className="font-semibold text-gray-900">{formatReportedDate(item.payment_date)}</p>
                 </div>
                 <div>
                   <span className="text-gray-500">Estado:</span>
@@ -156,7 +162,7 @@ const PaymentVerificationHistory: React.FC<Props> = ({ partnerId, vendorId }) =>
 
               {item.reviewed_at && (
                 <div className="text-xs text-gray-500">
-                  Revisado por {item.reviewed_by_name} el {formatDate(item.reviewed_at)}
+                  {item.status === 'approved' ? 'Ingreso confirmado' : 'Revisado'} por {item.reviewed_by_name} el {formatReviewedAt(item.reviewed_at)}
                 </div>
               )}
             </div>

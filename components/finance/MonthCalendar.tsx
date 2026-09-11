@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Calendar, Loader2, TrendingUp, TrendingDown, X, ChevronLeft, ChevronRight, Store, ShoppingBag, Banknote, CreditCard, Landmark } from 'lucide-react';
 import { supabase } from '../../supabase';
-import { getCommercialCollections, type CommercialCollectionItem } from '../../services/commercialCollectionsService';
+import { getCommercialCollections, getMexicoCityPaymentDate, type CommercialCollectionItem } from '../../services/commercialCollectionsService';
 import { CommercialCollectionsDetailModal } from './CommercialCollectionsDetailModal';
 
 interface CalendarDay {
@@ -109,8 +109,8 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
 
   // Navigate months
   const goMonth = (delta: number) => {
-    const d = new Date(year, month - 1 + delta, 1);
-    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+    const d = new Date(Date.UTC(year, month - 1 + delta, 1));
+    const iso = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
     setMonthStartISO(iso);
     setSelectedDay(null);
     setDayDetail(null);
@@ -206,8 +206,9 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       });
 
       // 3) Commercial collections (Comodato + Mayoreo + Venta por Pieza) for this specific day
-      const dateStart = new Date(day.sale_date + 'T00:00:00Z'); // Start of day in UTC
-      const dateEnd = new Date(new Date(day.sale_date + 'T23:59:59Z').getTime() + 1000); // End of day in UTC
+      const [dayYear, dayMonth, dayNumber] = day.sale_date.split('-').map(Number);
+      const dateStart = new Date(Date.UTC(dayYear, dayMonth - 1, dayNumber));
+      const dateEnd = new Date(Date.UTC(dayYear, dayMonth - 1, dayNumber + 1));
       const commercialData = await getCommercialCollections(dateStart, dateEnd);
 
       let commercialTotal = 0;
@@ -291,7 +292,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
           p_month_start: monthStartISO,
         });
         if (rpcErr) throw rpcErr;
-        
+
         let calendarDays = (data as CalendarDay[]) || [];
 
         // Load commercial collections (Comodato + Mayoreo + Venta por Pieza)
@@ -302,29 +303,19 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
 
         const commercialData = await getCommercialCollections(monthStart, monthEnd);
 
-        // Group commercial collections by date (payment_date format: "2026-08-07 00:00:00+00" or "2026-08-07T00:00:00Z")
+        // Group the definitive payment timestamp by its Mexico City business day.
         const commercialByDate: Record<string, number> = {};
         
-        console.log('[MonthCalendar] Loading commercial collections:', {
-          month: monthStartISO,
-          monthStart: monthStart.toISOString(),
-          monthEnd: monthEnd.toISOString(),
-        });
-        
-        if (!commercialData.error && commercialData.breakdown && commercialData.breakdown.length > 0) {
+        if (commercialData.error) {
+          throw new Error(commercialData.error);
+        }
+
+        if (commercialData.breakdown.length > 0) {
           for (const item of commercialData.breakdown) {
-            // Extract YYYY-MM-DD from payment_date (handle both formats)
-            const dateStr = item.payment_date.slice(0, 10);
+            const dateStr = getMexicoCityPaymentDate(item.payment_date);
             const amount = Number(item.amount) || 0;
             commercialByDate[dateStr] = (commercialByDate[dateStr] || 0) + amount;
           }
-          console.log('[MonthCalendar] Commercial collections loaded:', {
-            total: commercialData.total,
-            itemCount: commercialData.breakdown.length,
-            byDateMap: commercialByDate,
-          });
-        } else if (commercialData.error) {
-          console.warn('[MonthCalendar] Commercial data error:', commercialData.error);
         }
 
         // Merge: Add commercial collections to each calendar day
@@ -337,16 +328,6 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
           };
         });
 
-        // Validate merge for days 19 and 20 (test days)
-        const test19 = calendarDays.find(d => d.sale_date === '2026-08-19');
-        const test20 = calendarDays.find(d => d.sale_date === '2026-08-20');
-        console.log('[MonthCalendar] TEST DAYS (must be 675 and 815):', {
-          day19_total_sales: test19?.total_sales,
-          day20_total_sales: test20?.total_sales,
-          day19_commercial: commercialByDate['2026-08-19'],
-          day20_commercial: commercialByDate['2026-08-20'],
-        });
-
         setDays(calendarDays);
       } catch (e: any) {
         setError(e.message || 'Error al cargar calendario');
@@ -357,7 +338,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
   }, [monthStartISO]);
 
   // Today string for highlighting
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = getMexicoCityPaymentDate(new Date());
 
   // Build calendar grid — offset first day to correct weekday (Monday-first)
   const firstDate = new Date(year, month - 1, 1);

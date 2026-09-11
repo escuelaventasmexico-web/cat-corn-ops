@@ -48,7 +48,10 @@ const AdminPaymentVerificationsSection: React.FC<Props> = () => {
   const formatCurrency = (val: number) =>
     val.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 
-  const formatDate = (date: string) => new Date(date).toLocaleDateString('es-MX');
+  const formatDate = (value: string) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+    return match ? `${match[3]}/${match[2]}/${match[1]}` : '—';
+  };
 
   const getWaitTime = (submittedAt: string) => {
     const submitted = new Date(submittedAt).getTime();
@@ -147,7 +150,7 @@ const AdminPaymentVerificationsSection: React.FC<Props> = () => {
                   </div>
 
                   <div className="text-xs text-gray-600">
-                    Operación: {verification.source_folio} • Fecha:{' '}
+                    Operación: {verification.source_folio} • Fecha reportada:{' '}
                     {formatDate(verification.payment_date)}
                   </div>
                 </div>

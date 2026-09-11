@@ -341,7 +341,10 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
                 <div>
                   <label className="text-xs font-semibold text-cc-text-muted">Fecha de pago reportado</label>
                   <p className="text-cc-cream mt-1">
-                    {new Date(selectedVerification.payment_date).toLocaleDateString('es-MX')}
+                    {(() => {
+                      const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(selectedVerification.payment_date);
+                      return match ? `${match[3]}/${match[2]}/${match[1]}` : '—';
+                    })()}
                   </p>
                 </div>
 

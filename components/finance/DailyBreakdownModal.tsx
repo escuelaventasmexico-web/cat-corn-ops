@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Loader2, Banknote, CreditCard, Repeat2, Hash, BarChart3 } from 'lucide-react';
 import { supabase } from '../../supabase';
+import { getCommercialCollections, getMexicoCityPaymentDate } from '../../services/commercialCollectionsService';
 
 interface DailyRow {
   sale_date: string;
@@ -11,10 +12,11 @@ interface DailyRow {
   mixed_count: number;
   ticket_count: number;
   avg_ticket: number;
+  commercial_collections?: number;
 }
 
 interface Props {
-  monthStartISO: string;  // e.g. "2026-04-01"
+  monthStartISO: string;
   onClose: () => void;
 }
 
@@ -22,9 +24,21 @@ const fmt = (n: number) =>
   new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n);
 
 const fmtDate = (iso: string) => {
-  const d = new Date(iso + 'T12:00:00');
+  const d = new Date(`${iso}T12:00:00`);
   return d.toLocaleDateString('es-MX', { weekday: 'short', day: '2-digit', month: '2-digit' });
 };
+
+const emptyDailyRow = (saleDate: string): DailyRow => ({
+  sale_date: saleDate,
+  total_sales: 0,
+  cash_sales: 0,
+  card_sales: 0,
+  transfer_sales: 0,
+  mixed_count: 0,
+  ticket_count: 0,
+  avg_ticket: 0,
+  commercial_collections: 0,
+});
 
 export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
   const [rows, setRows] = useState<DailyRow[]>([]);
@@ -32,7 +46,7 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    (async () => {
+    void (async () => {
       try {
         setLoading(true);
         setError('');
@@ -42,9 +56,44 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
           p_month_start: monthStartISO,
         });
         if (rpcErr) throw rpcErr;
-        setRows((data as DailyRow[]) || []);
+        const [year, month] = monthStartISO.split('-').map(Number);
+        const commercial = await getCommercialCollections(
+          new Date(Date.UTC(year, month - 1, 1)),
+          new Date(Date.UTC(year, month, 1)),
+        );
+        if (commercial.error) throw new Error(commercial.error);
+
+        const rowsByDate = new Map<string, DailyRow>();
+        for (const sourceRow of ((data ?? []) as DailyRow[])) {
+          rowsByDate.set(sourceRow.sale_date, {
+            ...sourceRow,
+            total_sales: Number(sourceRow.total_sales ?? 0),
+            cash_sales: Number(sourceRow.cash_sales ?? 0),
+            card_sales: Number(sourceRow.card_sales ?? 0),
+            transfer_sales: Number(sourceRow.transfer_sales ?? 0),
+            mixed_count: Number(sourceRow.mixed_count ?? 0),
+            ticket_count: Number(sourceRow.ticket_count ?? 0),
+            avg_ticket: Number(sourceRow.avg_ticket ?? 0),
+            commercial_collections: 0,
+          });
+        }
+
+        for (const payment of commercial.breakdown) {
+          const day = getMexicoCityPaymentDate(payment.payment_date);
+          const row = rowsByDate.get(day) ?? emptyDailyRow(day);
+          row.commercial_collections = (row.commercial_collections ?? 0) + payment.amount;
+          rowsByDate.set(day, row);
+        }
+        setRows(
+          [...rowsByDate.values()]
+            .map(row => ({
+              ...row,
+              total_sales: row.total_sales + (row.commercial_collections ?? 0),
+            }))
+            .sort((a, b) => a.sale_date.localeCompare(b.sale_date)),
+        );
       } catch (e: any) {
-        setError(e.message || 'Error al cargar historial');
+        setError(e?.message || 'Error al cargar historial');
       } finally {
         setLoading(false);
       }
@@ -58,9 +107,10 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
       cash: acc.cash + r.cash_sales,
       card: acc.card + r.card_sales,
       transfer: acc.transfer + r.transfer_sales,
+      commercial: acc.commercial + (r.commercial_collections ?? 0),
       tickets: acc.tickets + r.ticket_count,
     }),
-    { total: 0, cash: 0, card: 0, transfer: 0, tickets: 0 },
+    { total: 0, cash: 0, card: 0, transfer: 0, commercial: 0, tickets: 0 },
   );
 
   return (
@@ -115,11 +165,15 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
                 </div>
 
                 {hasSales && (
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-xs">
                     <div className="flex items-center gap-1.5 text-cc-text-muted">
                       <Banknote size={14} className="text-green-400" />
                       <span>Efectivo:</span>
                       <span className="text-cc-cream font-medium">{fmt(r.cash_sales)}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-cc-text-muted">
+                      <Repeat2 size={14} className="text-violet-400" />
+                      <span>Socios: <b className="text-cc-cream">{fmt(r.commercial_collections ?? 0)}</b></span>
                     </div>
                     <div className="flex items-center gap-1.5 text-cc-text-muted">
                       <CreditCard size={14} className="text-blue-400" />
@@ -151,7 +205,7 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
         {/* Footer totals */}
         {!loading && rows.length > 0 && (
           <div className="border-t border-white/10 p-5">
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
+            <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 text-sm">
               <div>
                 <p className="text-cc-text-muted text-xs">Total Mes</p>
                 <p className="text-green-400 font-bold">{fmt(totals.total)}</p>
@@ -167,6 +221,10 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
               <div>
                 <p className="text-cc-text-muted text-xs">Transferencia</p>
                 <p className="text-cc-cream font-semibold">{fmt(totals.transfer)}</p>
+              </div>
+              <div>
+                <p className="text-cc-text-muted text-xs">Socios Comerciales</p>
+                <p className="text-violet-300 font-semibold">{fmt(totals.commercial)}</p>
               </div>
               <div>
                 <p className="text-cc-text-muted text-xs">Tickets</p>
