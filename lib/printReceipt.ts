@@ -404,7 +404,7 @@ export interface CommercialDeliveryLabelData {
 }
 
 /**
- * Build ESC/POS commands for a single product label.
+ * Legacy direct-ESC/POS builder. Imprimir Etiquetas does not invoke it.
  *
  * Layout (centered on 58 mm / 32-char thermal paper):
  *   ─ Product name (bold)
@@ -414,7 +414,7 @@ export interface CommercialDeliveryLabelData {
  *   ─ Price (bold, double size)
  *   ─ Separator + cut
  */
-function buildLabelCommands(label: LabelPrintData): string[] {
+export function buildLabelCommands(label: LabelPrintData): string[] {
   const cmds: string[] = [];
 
   // ── Init ──
@@ -500,26 +500,29 @@ export async function printLabelViaQZ(
   label: LabelPrintData,
   quantity: number,
 ): Promise<void> {
-  const printerName = getSavedPrinterName();
-
-  console.info(TAG, `🏷️ Imprimiendo ${quantity} etiqueta(s) — ${label.productName}`);
-
+  const printerName = getSavedCommercialDeliveryLabelPrinterName();
   if (!printerName) {
-    console.error(TAG, '❌ No hay impresora configurada.');
-    throw new Error('No hay impresora configurada. Configura tu impresora en el POS.');
+    throw new Error('Configura primero la impresora de etiquetas YICHIP en Socios Comerciales.');
+  }
+  if (!Number.isInteger(quantity) || quantity < 1) {
+    throw new Error('La cantidad de etiquetas debe ser un entero mayor que cero.');
   }
 
-  // Build commands: N copies of the same label
-  const allCmds: string[] = [];
-  for (let i = 0; i < quantity; i++) {
-    allCmds.push(...buildLabelCommands(label));
+  const rendered = renderProductLabel(label);
+  if (rendered.previewWidth !== LABEL_WIDTH || rendered.previewHeight !== LABEL_HEIGHT
+    || rendered.printWidth !== LABEL_PRINT_WIDTH || rendered.printHeight !== LABEL_HEIGHT) {
+    throw new Error('No se pudo renderizar la etiqueta de producto en 400 × 240 px y 384 × 240 px.');
   }
 
-  console.info(TAG, `🖨️ Impresora: "${printerName}"`);
-  console.info(TAG, `📦 ${allCmds.length} fragmentos ESC/POS para ${quantity} etiqueta(s)`);
+  // One entry per requested copy: QZ converts every PNG independently and
+  // applies the calibrated 24-dot feed after each image, including the last.
+  const images = Array.from({ length: quantity }, () => rendered.printImageDataUrl);
+  if (images.length !== quantity) throw new Error('No se pudo preparar la cantidad solicitada de etiquetas.');
 
-  await printRaw(printerName, allCmds);
-  console.info(TAG, `✅ ${quantity} etiqueta(s) enviada(s) — ${label.productName}`);
+  await ensurePrinterAvailable(printerName);
+  console.info(TAG, `🏷️ Etiqueta producto × ${images.length} → "${label.barcodeValue}" en "${printerName}"`);
+  await printCommercialDeliveryLabelImages(printerName, images);
+  console.info(TAG, `✅ ${images.length} etiqueta(s) de producto enviada(s)`);
 }
 
 const SCAN_CODE_PATTERN = /^\d{16}$/;
@@ -582,6 +585,93 @@ const createYichipPrintImage = (canvas: HTMLCanvasElement): HTMLCanvasElement =>
   );
   return printCanvas;
 };
+
+interface RenderedProductLabel {
+  previewWidth: number;
+  previewHeight: number;
+  printWidth: number;
+  printHeight: number;
+  printImageDataUrl: string;
+}
+
+const drawFullBarcodeValue = (
+  context: CanvasRenderingContext2D,
+  value: string,
+  y: number,
+) => {
+  let fontSize = 18;
+  const maxWidth = LABEL_PRINT_WIDTH - 16;
+  while (fontSize >= 11) {
+    context.font = `600 ${fontSize}px Arial, sans-serif`;
+    if (context.measureText(value).width <= maxWidth) {
+      context.fillText(value, LABEL_WIDTH / 2, y);
+      return;
+    }
+    fontSize -= 1;
+  }
+  throw new Error('El valor legible del código de barras no cabe completo en la etiqueta.');
+};
+
+/**
+ * Renders the product label used exclusively by Imprimir Etiquetas.
+ * Its 400 × 240 logical canvas deliberately leaves eight blank dots on each
+ * side; only that blank gutter is cropped for the 384 × 240 YICHIP image.
+ */
+export function renderProductLabel(label: LabelPrintData): RenderedProductLabel {
+  const barcodeValue = label.barcodeValue.trim();
+  if (!barcodeValue) throw new Error('El producto no tiene un código de barras para imprimir.');
+  if (!Number.isFinite(label.price)) throw new Error('El producto no tiene un precio de venta válido para imprimir.');
+
+  const canvas = document.createElement('canvas');
+  canvas.width = LABEL_WIDTH;
+  canvas.height = LABEL_HEIGHT;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('El navegador no pudo preparar el lienzo de la etiqueta.');
+
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, LABEL_WIDTH, LABEL_HEIGHT);
+  context.fillStyle = '#000000';
+  context.textAlign = 'center';
+  context.textBaseline = 'alphabetic';
+
+  // Price: the same products.price value selected by PrintLabels.
+  const price = `$${label.price.toFixed(2)}`;
+  drawFittedText(context, price, 49, {
+    maxFontSize: 48,
+    minFontSize: 32,
+    weight: 700,
+  });
+
+  const barcodeCanvas = document.createElement('canvas');
+  JsBarcode(barcodeCanvas, barcodeValue, {
+    format: 'CODE128',
+    displayValue: false,
+    width: 2,
+    height: 112,
+    margin: 0,
+    marginLeft: 12,
+    marginRight: 12,
+    background: '#ffffff',
+    lineColor: '#000000',
+  });
+  if (barcodeCanvas.width > LABEL_PRINT_WIDTH - 16 || barcodeCanvas.height > 112) {
+    throw new Error('El código de barras no cabe completo en el área segura de la etiqueta.');
+  }
+
+  context.drawImage(barcodeCanvas, Math.round((LABEL_WIDTH - barcodeCanvas.width) / 2), 66);
+  // The legacy label showed its HRI value below the bars. Keep that exact
+  // barcode value readable; it is never regenerated or reformatted.
+  drawFullBarcodeValue(context, barcodeValue, 211);
+
+  const printCanvas = createYichipPrintImage(canvas);
+  return {
+    previewWidth: canvas.width,
+    previewHeight: canvas.height,
+    printWidth: printCanvas.width,
+    printHeight: printCanvas.height,
+    printImageDataUrl: printCanvas.toDataURL('image/png'),
+  };
+}
 
 export interface RenderedCommercialDeliveryLabel {
   unitId: string;
@@ -856,85 +946,36 @@ export async function printOrderLabel(label: OrderLabelData): Promise<void> {
 
 // ─── Generic / manual label ──────────────────────────────────────────
 
-/**
- * Print simple informational labels for manually-priced products.
- * No SKU, no barcode — just name, price, and a "Venta genérica" tag.
- *
- * Layout (centered, 58 mm thermal):
- *   CAT CORN
- *   ────────────────
- *   <Product Name>
- *   (wrapped if long)
- *   ────────────────
- *   Precio: $XX.XX
- *   Venta genérica
- *   DD/MM/YYYY
- *   ════════════════  + cut
- */
+/** Prints manual labels through the same dedicated YICHIP image path. */
 export async function printGenericLabelViaQZ(
   productName: string,
   price: number,
   quantity: number,
 ): Promise<void> {
-  const printerName = getSavedPrinterName();
+  const printerName = getSavedCommercialDeliveryLabelPrinterName();
   if (!printerName) {
-    throw new Error('No hay impresora configurada. Configura tu impresora en el POS.');
+    throw new Error('Configura primero la impresora de etiquetas YICHIP en Socios Comerciales.');
   }
+  if (!Number.isFinite(price) || price <= 0) throw new Error('El precio debe ser mayor a $0.');
+  if (!Number.isInteger(quantity) || quantity < 1) throw new Error('La cantidad de etiquetas debe ser un entero mayor que cero.');
 
   const name = productName.trim();
+  const canvas = document.createElement('canvas');
+  canvas.width = LABEL_WIDTH;
+  canvas.height = LABEL_HEIGHT;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('El navegador no pudo preparar el lienzo de la etiqueta.');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, LABEL_WIDTH, LABEL_HEIGHT);
+  context.fillStyle = '#000000';
+  context.textAlign = 'center';
+  context.textBaseline = 'alphabetic';
+  drawFittedText(context, `$${price.toFixed(2)}`, 134, { maxFontSize: 60, minFontSize: 36, weight: 700 });
 
-  // Date string in Mexico format
-  const now = new Date();
-  const dateStr = now.toLocaleDateString('es-MX', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    timeZone: 'America/Mexico_City',
-  });
-
-  // Build one label's ESC/POS commands
-  const buildOne = (): string[] => {
-    const c: string[] = [];
-    c.push(INIT);
-    c.push(LF);
-
-    // Header: brand
-    c.push(CENTER + BOLD_ON + DOUBLE_SIZE);
-    c.push('CAT CORN' + LF);
-    c.push(NORMAL_SIZE + BOLD_OFF);
-    c.push('-'.repeat(LINE_W) + LF);
-
-    // Product name (centered, bold, auto-wrap)
-    c.push(CENTER + BOLD_ON);
-    for (let i = 0; i < name.length; i += LINE_W) {
-      c.push(name.slice(i, i + LINE_W) + LF);
-    }
-    c.push(BOLD_OFF);
-    c.push('-'.repeat(LINE_W) + LF);
-
-    // Price (large)
-    c.push(CENTER + BOLD_ON + DOUBLE_SIZE);
-    c.push('$' + price.toFixed(2) + LF);
-    c.push(NORMAL_SIZE + BOLD_OFF);
-
-    // Tag line
-    c.push(CENTER);
-    c.push('Venta generica' + LF);
-
-    // Date
-    c.push(dateStr + LF);
-
-    // Footer
-    c.push(LF + LF + LF);
-    c.push(CUT);
-
-    return c;
-  };
-
-  const allCmds: string[] = [];
-  for (let i = 0; i < quantity; i++) {
-    allCmds.push(...buildOne());
-  }
-
-  console.info(TAG, `🏷️ Etiqueta genérica × ${quantity} → "${name}" $${price} en "${printerName}"`);
-  await printRaw(printerName, allCmds);
-  console.info(TAG, `✅ ${quantity} etiqueta(s) genérica(s) impresa(s) — ${name}`);
+  const printCanvas = createYichipPrintImage(canvas);
+  const images = Array.from({ length: quantity }, () => printCanvas.toDataURL('image/png'));
+  await ensurePrinterAvailable(printerName);
+  console.info(TAG, `🏷️ Etiqueta genérica × ${images.length} → "${name}" $${price} en "${printerName}"`);
+  await printCommercialDeliveryLabelImages(printerName, images);
+  console.info(TAG, `✅ ${images.length} etiqueta(s) genérica(s) enviada(s) — ${name}`);
 }
