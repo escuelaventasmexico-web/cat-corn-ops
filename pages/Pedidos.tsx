@@ -832,7 +832,13 @@ export const Pedidos = () => {
                             <button
                               onClick={async () => {
                                 try {
-                                  await printOrderLabel(o.customer_name);
+                                  await printOrderLabel({
+                                    customerName: o.customer_name,
+                                    productName: o.products?.name ?? o.product_type ?? 'Producto no especificado',
+                                    quantity: o.quantity,
+                                    notes: o.notes,
+                                    deliveryDate: o.delivery_date,
+                                  });
                                   if (!o.label_printed && supabase) {
                                     const { error: updateErr } = await supabase
                                       .from('orders')
@@ -850,7 +856,7 @@ export const Pedidos = () => {
                                   alert(err.message || 'Error al imprimir etiqueta');
                                 }
                               }}
-                              title="Imprimir etiqueta con nombre del cliente"
+                              title="Imprimir etiqueta del pedido"
                               className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all ${
                                 o.label_printed
                                   ? 'bg-violet-500/25 border-violet-400/50 text-violet-300'

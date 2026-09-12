@@ -564,6 +564,25 @@ const formatDeliveryDate = (date: string) => {
   return new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(parsed);
 };
 
+/**
+ * Removes only the blank eight-dot gutters from a 400 × 240 logical label.
+ * The resulting 384 × 240 PNG keeps its original 1:1 dot geometry for the
+ * YICHIP RAW-image path; it is never scaled or otherwise transformed.
+ */
+const createYichipPrintImage = (canvas: HTMLCanvasElement): HTMLCanvasElement => {
+  const printCanvas = document.createElement('canvas');
+  printCanvas.width = LABEL_PRINT_WIDTH;
+  printCanvas.height = LABEL_HEIGHT;
+  const printContext = printCanvas.getContext('2d');
+  if (!printContext) throw new Error('El navegador no pudo preparar la imagen física de la etiqueta.');
+  printContext.drawImage(
+    canvas,
+    LABEL_SAFE_MARGIN, 0, LABEL_PRINT_WIDTH, LABEL_HEIGHT,
+    0, 0, LABEL_PRINT_WIDTH, LABEL_HEIGHT,
+  );
+  return printCanvas;
+};
+
 export interface RenderedCommercialDeliveryLabel {
   unitId: string;
   previewWidth: number;
@@ -623,16 +642,7 @@ export function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData
 
   // YICHIP prints 384 dots across. This crops only the intentionally blank
   // eight-pixel gutters and preserves the 1:1 dot geometry of the 400 px view.
-  const printCanvas = document.createElement('canvas');
-  printCanvas.width = LABEL_PRINT_WIDTH;
-  printCanvas.height = LABEL_HEIGHT;
-  const printContext = printCanvas.getContext('2d');
-  if (!printContext) throw new Error('El navegador no pudo preparar la imagen física de la etiqueta.');
-  printContext.drawImage(
-    canvas,
-    LABEL_SAFE_MARGIN, 0, LABEL_PRINT_WIDTH, LABEL_HEIGHT,
-    0, 0, LABEL_PRINT_WIDTH, LABEL_HEIGHT,
-  );
+  const printCanvas = createYichipPrintImage(canvas);
 
   return {
     unitId: label.unitId,
@@ -691,44 +701,157 @@ export async function printCommercialDeliveryLabelTest(): Promise<void> {
   await printCommercialDeliveryLabelImages(printerName, [rendered.printImageDataUrl]);
 }
 
-// ─── Order bag label (customer name only) ────────────────────────────
+// ─── Order bag label ─────────────────────────────────────────────────
+
+export interface OrderLabelData {
+  customerName: string;
+  productName: string;
+  quantity: number;
+  notes?: string | null;
+  deliveryDate?: string | null;
+}
+
+const orderLabelLines = (
+  context: CanvasRenderingContext2D,
+  value: string,
+  maxWidth: number,
+): string[] => {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+
+  const lines: string[] = [];
+  let line = '';
+  for (const rawWord of words) {
+    const wordParts: string[] = [];
+    let wordPart = '';
+    for (const character of rawWord) {
+      const candidatePart = wordPart + character;
+      if (wordPart && context.measureText(candidatePart).width > maxWidth) {
+        wordParts.push(wordPart);
+        wordPart = character;
+      } else {
+        wordPart = candidatePart;
+      }
+    }
+    if (wordPart) wordParts.push(wordPart);
+
+    for (const word of wordParts) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (!line || context.measureText(candidate).width <= maxWidth) {
+        line = candidate;
+        continue;
+      }
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+};
+
+const drawOrderLabelText = (
+  context: CanvasRenderingContext2D,
+  value: string,
+  y: number,
+  options: { maxWidth: number; fontSize: number; lineHeight: number; weight?: number },
+) => {
+  context.font = `${options.weight ?? 400} ${options.fontSize}px Arial, sans-serif`;
+  const lines = orderLabelLines(context, value, options.maxWidth);
+  lines.forEach((line, index) => context.fillText(line, LABEL_WIDTH / 2, y + index * options.lineHeight));
+  return lines.length;
+};
 
 /**
- * Print a minimal thermal label with the customer name.
- * Used to identify order bags — NOT a full receipt.
- *
- * Uses the same QZ Tray / ESC-POS infrastructure and saved printer
- * as ticket printing, re-printing and cash register cuts.
+ * Renders the selected order only as a 50 × 30 mm bag label. Unlike the B2B
+ * delivery label it contains no barcode and has no database side effects.
  */
-export async function printOrderLabel(customerName: string): Promise<void> {
-  const name = (customerName || '').trim().toUpperCase();
-  if (!name) {
-    throw new Error('No hay nombre de cliente para imprimir la etiqueta.');
+export function renderOrderLabel(label: OrderLabelData): RenderedCommercialDeliveryLabel {
+  const customerName = label.customerName.trim().toUpperCase();
+  if (!customerName) throw new Error('No hay nombre de cliente para imprimir la etiqueta.');
+
+  const canvas = document.createElement('canvas');
+  canvas.width = LABEL_WIDTH;
+  canvas.height = LABEL_HEIGHT;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('El navegador no pudo preparar el lienzo de la etiqueta.');
+
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, LABEL_WIDTH, LABEL_HEIGHT);
+  context.fillStyle = '#000000';
+  context.textAlign = 'center';
+  context.textBaseline = 'alphabetic';
+
+  const contentWidth = LABEL_PRINT_WIDTH;
+  context.font = '700 15px Arial, sans-serif';
+  context.fillText('PEDIDO', LABEL_WIDTH / 2, 19);
+  context.font = '400 9px Arial, sans-serif';
+  context.fillText('CLIENTE', LABEL_WIDTH / 2, 33);
+
+  let y = 57;
+  const customerLines = drawOrderLabelText(context, customerName, y, {
+    maxWidth: contentWidth,
+    fontSize: 22,
+    lineHeight: 23,
+    weight: 700,
+  });
+  y += Math.max(customerLines, 1) * 23 + 6;
+  context.fillRect(LABEL_SAFE_MARGIN, y, LABEL_PRINT_WIDTH, 1);
+  y += 16;
+
+  const productLines = drawOrderLabelText(context, label.productName.trim() || 'Producto no especificado', y, {
+    maxWidth: contentWidth,
+    fontSize: 14,
+    lineHeight: 16,
+    weight: 700,
+  });
+  y += Math.max(productLines, 1) * 16 + 13;
+
+  const deliveryDate = label.deliveryDate?.trim() ? formatDeliveryDate(label.deliveryDate) : '—';
+  context.font = '700 12px Arial, sans-serif';
+  context.fillText(`CANTIDAD: ${label.quantity}   ·   ENTREGA: ${deliveryDate}`, LABEL_WIDTH / 2, y);
+  y += 16;
+
+  const notes = label.notes?.trim();
+  if (notes) {
+    context.font = '700 10px Arial, sans-serif';
+    context.fillText('NOTAS / SABOR', LABEL_WIDTH / 2, y);
+    y += 13;
+    drawOrderLabelText(context, notes, y, {
+      maxWidth: contentWidth,
+      fontSize: 10,
+      lineHeight: 12,
+    });
   }
 
-  const printerName = getSavedPrinterName();
+  const printCanvas = createYichipPrintImage(canvas);
+  return {
+    unitId: 'pedido',
+    previewWidth: canvas.width,
+    previewHeight: canvas.height,
+    printWidth: printCanvas.width,
+    printHeight: printCanvas.height,
+    previewImageDataUrl: canvas.toDataURL('image/png'),
+    printImageDataUrl: printCanvas.toDataURL('image/png'),
+  };
+}
+
+/** Sends one selected order label through the dedicated YICHIP/B2B printer. */
+export async function printOrderLabel(label: OrderLabelData): Promise<void> {
+  const printerName = getSavedCommercialDeliveryLabelPrinterName();
   if (!printerName) {
-    throw new Error('No hay impresora configurada. Configura tu impresora en el POS.');
+    throw new Error('Configura primero la impresora de etiquetas YICHIP en Socios Comerciales.');
   }
 
-  const cmds: string[] = [
-    INIT,
-    LF + LF,                             // feed before
-    CENTER,
-    BOLD_ON,
-    'PEDIDO' + LF,
-    DOUBLE_SIZE,
-    name + LF,
-    NORMAL_SIZE,
-    BOLD_OFF,
-    divider(),
-    LF + LF + LF,                        // feed for easy cutting
-    CUT,
-  ];
+  const rendered = renderOrderLabel(label);
+  if (rendered.previewWidth !== LABEL_WIDTH || rendered.previewHeight !== LABEL_HEIGHT
+    || rendered.printWidth !== LABEL_PRINT_WIDTH || rendered.printHeight !== LABEL_HEIGHT) {
+    throw new Error('No se pudo renderizar la etiqueta de pedido en 400 × 240 px y 384 × 240 px.');
+  }
 
-  console.info(TAG, `🏷️ Etiqueta pedido → "${name}" en "${printerName}"`);
-  await printRaw(printerName, cmds);
-  console.info(TAG, `✅ Etiqueta impresa — ${name}`);
+  await ensurePrinterAvailable(printerName);
+  console.info(TAG, `🏷️ Etiqueta pedido → "${label.customerName}" en la impresora de etiquetas B2B "${printerName}"`);
+  await printCommercialDeliveryLabelImages(printerName, [rendered.printImageDataUrl]);
+  console.info(TAG, `✅ Etiqueta de pedido enviada — ${label.customerName}`);
 }
 
 // ─── Generic / manual label ──────────────────────────────────────────
