@@ -21,6 +21,7 @@ export interface CashRegisterStatus {
 /** Shape returned by the view v_cash_register_sessions_summary */
 export interface CashSessionSummary {
   session_id: string;
+  branch_id: string;
   status: string;
   opened_at: string;
   closed_at: string | null;
@@ -89,61 +90,22 @@ export const EMPTY_CASH_STATUS: CashRegisterStatus = {
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
-/**
- * Fetch the current open cash-register status from the Supabase view.
- * Falls back to a direct table query when the view returns nothing
- * (e.g. RLS / opened_by filter mismatch).
- * Returns EMPTY_CASH_STATUS when no session is open.
- */
-export async function fetchCashStatus(): Promise<CashRegisterStatus> {
+/** Fetch the current open session strictly for one authorized branch. */
+export async function fetchCashStatus(branchId: string): Promise<CashRegisterStatus> {
   if (!supabase) return EMPTY_CASH_STATUS;
-
-  /* ── 1) Try the pre-built view ─────────────────────────── */
-  const { data, error } = await supabase
-    .from('v_open_cash_register_status')
-    .select('*')
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    console.error('[CASH] Error fetching status from view:', error.message);
-  }
-
-  if (data && data.session_id) {
-    const status: CashRegisterStatus = {
-      session_id: data.session_id ?? null,
-      opening_cash: Number(data.opening_cash ?? 0),
-      cash_sales_total: Number(data.cash_sales_total ?? 0),
-      card_sales_total: Number(data.card_sales_total ?? 0),
-      withdrawals_total: Number(data.withdrawals_total ?? 0),
-      current_cash: Number(data.current_cash ?? 0),
-      needs_withdrawal: Boolean(data.needs_withdrawal),
-      opened_at: data.opened_at ?? null,
-      opened_by: data.opened_by ?? null,
-      notes: data.notes ?? null,
-    };
-    console.log('[CASH] open status (view)', status);
-    return status;
-  }
-
-  /* ── 2) Fallback: query the table directly ─────────────── */
-  console.log('[CASH] View returned nothing, trying direct table query…');
 
   const { data: sessionRow, error: sessionErr } = await supabase
     .from('cash_register_sessions')
     .select('*')
+    .eq('branch_id', branchId)
     .is('closed_at', null)
-    .order('opened_at', { ascending: false })
-    .limit(1)
     .maybeSingle();
 
   if (sessionErr) {
-    console.error('[CASH] Error fetching open session from table:', sessionErr.message);
-    return EMPTY_CASH_STATUS;
+    throw new Error(`No se pudo consultar la caja de la sucursal: ${sessionErr.message}`);
   }
 
   if (!sessionRow) {
-    console.log('[CASH] No open session found');
     return EMPTY_CASH_STATUS;
   }
 
@@ -154,6 +116,7 @@ export async function fetchCashStatus(): Promise<CashRegisterStatus> {
   const { data: salesRows } = await supabase
     .from('sales')
     .select('payment_method, total, cash_amount, card_amount')
+    .eq('branch_id', branchId)
     .eq('cash_session_id', sessionId)
     .eq('is_refunded', false)
     .eq('sale_origin', 'pos');
@@ -214,7 +177,8 @@ export async function fetchCashStatus(): Promise<CashRegisterStatus> {
  * Open a new cash register session via the Supabase RPC.
  * Throws on error (e.g. a session is already open).
  */
-export async function openCashRegister(
+export async function openCashRegisterForBranch(
+  branchId: string,
   openingCash: number,
   notes?: string,
 ): Promise<void> {
@@ -225,7 +189,8 @@ export async function openCashRegister(
   } = await supabase.auth.getUser();
   if (!user) throw new Error('No hay usuario autenticado');
 
-  const { error } = await supabase.rpc('open_cash_register_session', {
+  const { error } = await supabase.rpc('open_cash_register_session_for_branch', {
+    p_branch_id: branchId,
     p_opening_cash: openingCash,
     p_opened_by: user.id,
     p_notes: notes || null,
@@ -238,42 +203,25 @@ export async function openCashRegister(
 }
 
 /**
- * Fetch the open session id (lightweight call used right before inserting a sale).
- * Falls back to a direct table query when the RPC returns nothing.
+ * Fetch the open session id for one branch immediately before a POS insert.
+ * No global-table fallback is allowed: a missing result means that branch has
+ * no open session.
  * Returns null when no session is open.
  */
-export async function getOpenSessionId(): Promise<string | null> {
+export async function getOpenSessionIdForBranch(branchId: string): Promise<string | null> {
   if (!supabase) return null;
 
-  const { data, error } = await supabase.rpc('get_open_cash_register_session');
+  const { data, error } = await supabase.rpc('get_open_cash_register_session_for_branch', {
+    p_branch_id: branchId,
+  });
 
   if (error) {
-    console.error('[CASH] Error getting open session via RPC:', error.message);
+    throw new Error(`No se pudo consultar la caja de la sucursal: ${error.message}`);
   }
 
   // The RPC may return a UUID string or an object with an id field
   if (typeof data === 'string' && data) return data;
   if (data && typeof data === 'object' && 'id' in data) return (data as { id: string }).id;
-
-  // Fallback: query table directly
-  console.log('[CASH] RPC returned nothing, trying direct table query…');
-  const { data: sessionRow, error: sessionErr } = await supabase
-    .from('cash_register_sessions')
-    .select('id')
-    .is('closed_at', null)
-    .order('opened_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (sessionErr) {
-    console.error('[CASH] Error getting open session from table:', sessionErr.message);
-    return null;
-  }
-
-  if (sessionRow && typeof sessionRow === 'object' && 'id' in sessionRow) {
-    console.log('[CASH] Found open session via direct query:', (sessionRow as { id: string }).id);
-    return (sessionRow as { id: string }).id;
-  }
 
   return null;
 }
@@ -283,7 +231,8 @@ export async function getOpenSessionId(): Promise<string | null> {
 /**
  * Register a cash withdrawal for the currently open session.
  */
-export async function registerWithdrawal(
+export async function registerWithdrawalForBranch(
+  branchId: string,
   sessionId: string,
   amount: number,
   reason: string,
@@ -291,18 +240,16 @@ export async function registerWithdrawal(
 ): Promise<void> {
   if (!supabase) throw new Error('Supabase no configurado');
 
-  let userId: string | null = null;
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    userId = user?.id ?? null;
-  } catch { /* auth optional per spec */ }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('No hay usuario autenticado');
 
-  const { error } = await supabase.rpc('register_cash_withdrawal', {
+  const { error } = await supabase.rpc('register_cash_withdrawal_for_branch', {
+    p_branch_id: branchId,
     p_session_id: sessionId,
     p_amount: amount,
     p_reason: reason,
     p_trigger_type: 'manual',
-    p_created_by: userId,
+    p_created_by: user.id,
     p_notes: notes || null,
   });
 
@@ -318,23 +265,22 @@ export async function registerWithdrawal(
  * Close the currently open cash register session.
  * Returns the close result with expected / counted / difference.
  */
-export async function closeCashRegister(
+export async function closeCashRegisterForBranch(
+  branchId: string,
   sessionId: string,
   countedCash: number,
   notes?: string,
 ): Promise<CloseResult> {
   if (!supabase) throw new Error('Supabase no configurado');
 
-  let userId: string | null = null;
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    userId = user?.id ?? null;
-  } catch { /* ok */ }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('No hay usuario autenticado');
 
-  const { data, error } = await supabase.rpc('close_cash_register_session', {
+  const { data, error } = await supabase.rpc('close_cash_register_session_for_branch', {
+    p_branch_id: branchId,
     p_session_id: sessionId,
     p_counted_cash: countedCash,
-    p_closed_by: userId,
+    p_closed_by: user.id,
     p_notes: notes || null,
   });
 
@@ -362,12 +308,13 @@ export async function closeCashRegister(
 /**
  * Fetch the sessions summary from the view, most recent first.
  */
-export async function fetchSessionsHistory(): Promise<CashSessionSummary[]> {
+export async function fetchSessionsHistory(branchId: string): Promise<CashSessionSummary[]> {
   if (!supabase) return [];
 
   const { data, error } = await supabase
     .from('v_cash_register_sessions_summary')
     .select('*')
+    .eq('branch_id', branchId)
     .order('opened_at', { ascending: false })
     .limit(50);
 
@@ -391,6 +338,7 @@ export async function fetchSessionsHistory(): Promise<CashSessionSummary[]> {
 
     return {
       session_id: String(d.session_id ?? d.id ?? ''),
+      branch_id: String(d.branch_id ?? branchId),
       status: String(d.status ?? ''),
       opened_at: String(d.opened_at ?? ''),
       closed_at: d.closed_at ? String(d.closed_at) : null,
@@ -418,7 +366,7 @@ export async function fetchSessionsHistory(): Promise<CashSessionSummary[]> {
  * Uses the v_cash_register_session_sales view; falls back to the sales table
  * only when the view query errors.
  */
-export async function fetchSessionSales(sessionId: string): Promise<CashSessionSale[]> {
+export async function fetchSessionSales(sessionId: string, branchId: string): Promise<CashSessionSale[]> {
   if (!supabase) return [];
 
   console.log('[CASH] Fetching sales for session', sessionId);
@@ -428,6 +376,7 @@ export async function fetchSessionSales(sessionId: string): Promise<CashSessionS
     .from('v_cash_register_session_sales')
     .select('*')
     .eq('session_id', sessionId)
+    .eq('branch_id', branchId)
     .order('created_at', { ascending: false });
 
   if (!viewErr) {
@@ -451,6 +400,7 @@ export async function fetchSessionSales(sessionId: string): Promise<CashSessionS
   const { data: tableData, error: tableErr } = await supabase
     .from('sales')
     .select('id, created_at, payment_method, total, customer_id, promotion_code, loyalty_reward_applied, loyalty_discount_amount')
+    .eq('branch_id', branchId)
     .eq('cash_session_id', sessionId)
     .eq('is_refunded', false)
     .eq('sale_origin', 'pos')
@@ -561,7 +511,7 @@ export async function fetchAndPrintCorteDeCaja(
   console.info('[CORTE PRINT] Fetching data for session', sessionId);
 
   // 1. Fetch sales for this session (view already excludes refunded; filter here as safety net)
-  const allSales = await fetchSessionSales(sessionId);
+  const allSales = await fetchSessionSales(sessionId, session.branch_id);
   const sales = allSales.filter(s => !(s as unknown as Record<string,unknown>).is_refunded);
 
   // 2. Fetch sale_items with product names for all sales

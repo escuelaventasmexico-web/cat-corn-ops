@@ -6,7 +6,7 @@ import { exportCustomersToExcel } from '../lib/exportCustomers';
 import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion, isTodayWeekday } from '../lib/promotions';
 import type { PromotionCode } from '../lib/promotions';
 import { Search, Plus, Minus, CreditCard, Banknote, Landmark, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings, Package, Truck } from 'lucide-react';
-import { fetchCashStatus, getOpenSessionId, EMPTY_CASH_STATUS } from '../lib/cashRegister';
+import { fetchCashStatus, getOpenSessionIdForBranch, EMPTY_CASH_STATUS } from '../lib/cashRegister';
 import type { CashRegisterStatus } from '../lib/cashRegister';
 import { CashRegisterStatusPanel } from '../components/CashRegisterStatus';
 import { printSaleReceipt } from '../lib/printReceipt';
@@ -17,8 +17,11 @@ import { OpenCashRegisterModal } from '../components/OpenCashRegisterModal';
 import { WithdrawalModal } from '../components/WithdrawalModal';
 import { CloseCashRegisterModal } from '../components/CloseCashRegisterModal';
 import { GenericSaleModal } from '../components/GenericSaleModal';
+import { BranchSelector } from '../components/BranchSelector';
+import { useBranch } from '../contexts/BranchContext';
 
 export const POS = () => {
+  const { selectedBranch, loading: branchLoading, error: branchError } = useBranch();
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [, setLoading] = useState(true);
@@ -82,23 +85,69 @@ export const POS = () => {
   const [showCloseCashModal, setShowCloseCashModal] = useState(false);
   const [showGenericModal, setShowGenericModal] = useState(false);
   const [deliveryPlatform, setDeliveryPlatform] = useState<'uber_eats' | 'didi_food' | 'rappi' | null>(null);
+  const cashRequestBranchRef = useRef<string | null>(null);
   const cashRegisterOpen = !!cashStatus.session_id;
 
-  useEffect(() => {
-    fetchProducts();
-    loadCashStatus();
-  }, []);
+  useEffect(() => { fetchProducts(); }, []);
 
-  const loadCashStatus = async () => {
+  useEffect(() => {
+    if (!selectedBranch) {
+      cashRequestBranchRef.current = null;
+      setCashStatus(EMPTY_CASH_STATUS);
+      setCashLoading(false);
+      return;
+    }
+    void loadCashStatus(selectedBranch.id);
+  }, [selectedBranch?.id]);
+
+  const loadCashStatus = async (branchId = selectedBranch?.id) => {
+    if (!branchId) return;
+    cashRequestBranchRef.current = branchId;
     setCashLoading(true);
     try {
-      const status = await fetchCashStatus();
-      setCashStatus(status);
+      const status = await fetchCashStatus(branchId);
+      if (cashRequestBranchRef.current === branchId) setCashStatus(status);
     } catch (err) {
       console.error('[CASH] Failed to load status:', err);
     } finally {
-      setCashLoading(false);
+      if (cashRequestBranchRef.current === branchId) setCashLoading(false);
     }
+  };
+
+  const resetBranchSensitiveState = () => {
+    setCart([]);
+    setCashInput(0);
+    setCardInput(0);
+    setTransferInput(0);
+    setCustomer(null);
+    setLoyaltyPhone('');
+    setLoyaltyMsg(null);
+    setActivePromoCode(null);
+    setInstagramPromoActive(false);
+    setDeliveryPlatform(null);
+    setRewardSelectedItem(null);
+    setShowRewardModal(false);
+    setShowGenericModal(false);
+    setShowCustomersList(false);
+    setShowOpenCashModal(false);
+    setShowWithdrawalModal(false);
+    setShowCloseCashModal(false);
+    setPendingReceipt(null);
+    cashRequestBranchRef.current = null;
+    setCashStatus(EMPTY_CASH_STATUS);
+  };
+
+  const handleBeforeBranchChange = (nextBranchId: string): boolean => {
+    if (nextBranchId === selectedBranch?.id) return true;
+    if (processing) {
+      alert('Espera a que termine la operación actual antes de cambiar de sucursal.');
+      return false;
+    }
+    if (cart.length > 0 && !window.confirm('Cambiar de sucursal eliminará el carrito y los datos temporales de esta venta. ¿Deseas continuar?')) {
+      return false;
+    }
+    resetBranchSensitiveState();
+    return true;
   };
 
   /** Add a manually-entered generic product (no SKU, no inventory) to the cart */
@@ -325,6 +374,10 @@ export const POS = () => {
 
   const handleCheckout = async () => {
     if (cart.length === 0 || !supabase) return;
+    if (!selectedBranch) {
+      alert(branchError || 'Selecciona una sucursal autorizada antes de registrar una venta.');
+      return;
+    }
     if (!deliveryPlatform && !isPaymentSufficient) return;
 
     // Block if no cash register is open (delivery is allowed without an open session)
@@ -363,7 +416,10 @@ export const POS = () => {
         if (!user) throw new Error('No auth user');
 
         // Fetch the current open session id to link the sale
-        const cashSessionId = await getOpenSessionId();
+        const cashSessionId = await getOpenSessionIdForBranch(selectedBranch.id);
+        if (!deliveryPlatform && !cashSessionId) {
+          throw new Error(`No hay una caja abierta en ${selectedBranch.name}.`);
+        }
         console.log('[CASH] sale linked to session', cashSessionId);
 
         const rewardApplied = cart.some(i => i.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM');
@@ -386,7 +442,8 @@ export const POS = () => {
             customer_id: customer?.id || null,
             loyalty_reward_applied: rewardApplied,
             loyalty_discount_amount: discountTotal,
-            promotion_code: activePromoCode || (instagramPromoActive ? 'PROMO_INSTAGRAM_15' : null),
+          promotion_code: activePromoCode || (instagramPromoActive ? 'PROMO_INSTAGRAM_15' : null),
+          branch_id: selectedBranch.id,
         };
         if (cashSessionId) {
           salePayload.cash_session_id = cashSessionId;
@@ -489,6 +546,7 @@ export const POS = () => {
       const { data: sale, error: saleErr } = await supabase
         .from('sales')
         .select('id, total, payment_method, cash_amount, card_amount, created_at, customer_id')
+        .eq('branch_id', selectedBranch?.id || '')
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
@@ -813,6 +871,15 @@ export const POS = () => {
     <div className="flex h-[calc(100vh-140px)] gap-4">
       {/* Product Grid — left 58% */}
       <div className="flex-[58] min-w-0 flex flex-col">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h1 className="text-lg font-bold text-cc-cream">Punto de Venta</h1>
+          <BranchSelector onBeforeChange={handleBeforeBranchChange} disabled={processing} />
+        </div>
+        {!selectedBranch && !branchLoading && (
+          <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+            {branchError || 'No tienes una sucursal autorizada; no puedes operar el punto de venta.'}
+          </div>
+        )}
         {/* Barcode Scanner + Search */}
         <div className="mb-4 space-y-2">
           {/* Barcode input */}
@@ -1033,6 +1100,7 @@ export const POS = () => {
           <CashRegisterStatusPanel
             status={cashStatus}
             loading={cashLoading}
+            branchName={selectedBranch?.name}
             onOpenRegister={() => setShowOpenCashModal(true)}
             onWithdrawal={cashRegisterOpen ? () => setShowWithdrawalModal(true) : undefined}
             onCloseRegister={cashRegisterOpen ? () => setShowCloseCashModal(true) : undefined}
@@ -1631,8 +1699,9 @@ export const POS = () => {
       )}
 
       {/* Open Cash Register Modal */}
-      {showOpenCashModal && (
+      {showOpenCashModal && selectedBranch && (
         <OpenCashRegisterModal
+          branch={selectedBranch}
           onClose={() => setShowOpenCashModal(false)}
           onSuccess={() => {
             setShowOpenCashModal(false);
@@ -1642,8 +1711,9 @@ export const POS = () => {
       )}
 
       {/* Withdrawal Modal */}
-      {showWithdrawalModal && cashStatus.session_id && (
+      {showWithdrawalModal && selectedBranch && cashStatus.session_id && (
         <WithdrawalModal
+          branch={selectedBranch}
           sessionId={cashStatus.session_id}
           currentCash={cashStatus.current_cash}
           onClose={() => setShowWithdrawalModal(false)}
@@ -1655,8 +1725,9 @@ export const POS = () => {
       )}
 
       {/* Close Cash Register Modal */}
-      {showCloseCashModal && cashStatus.session_id && (
+      {showCloseCashModal && selectedBranch && cashStatus.session_id && (
         <CloseCashRegisterModal
+          branch={selectedBranch}
           status={cashStatus}
           onClose={() => setShowCloseCashModal(false)}
           onSuccess={() => {

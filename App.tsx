@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { SUPABASE_CONFIGURED } from './supabase';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { BranchProvider } from './contexts/BranchContext';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
 import { ProtectedRoute, AccessDenied } from './components/ProtectedRoute';
@@ -149,7 +150,9 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <BranchProvider>
+          <AppRoutes />
+        </BranchProvider>
       </AuthProvider>
     </BrowserRouter>
   );

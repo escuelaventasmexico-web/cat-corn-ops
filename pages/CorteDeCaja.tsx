@@ -5,21 +5,33 @@ import type { CashSessionSummary, CashRegisterStatus } from '../lib/cashRegister
 import { formatDateTimeMX } from '../lib/datetime';
 import { CashSessionDetailModal } from '../components/CashSessionDetailModal';
 import { CloseCashRegisterModal } from '../components/CloseCashRegisterModal';
+import { BranchSelector } from '../components/BranchSelector';
+import { useBranch } from '../contexts/BranchContext';
 
 export const CorteDeCaja = () => {
+  const { selectedBranch, loading: branchLoading, error: branchError } = useBranch();
   const [sessions, setSessions] = useState<CashSessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSession, setSelectedSession] = useState<CashSessionSummary | null>(null);
   const [closeStatus, setCloseStatus] = useState<CashRegisterStatus | null>(null);
 
-  const load = async () => {
+  const load = async (branchId = selectedBranch?.id) => {
+    if (!branchId) {
+      setSessions([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    const data = await fetchSessionsHistory();
+    const data = await fetchSessionsHistory(branchId);
     setSessions(data);
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    setSelectedSession(null);
+    setCloseStatus(null);
+    void load(selectedBranch?.id);
+  }, [selectedBranch?.id]);
 
   /** Build a CashRegisterStatus from a summary so CloseCashRegisterModal can work */
   const handleCloseRegister = (summary: CashSessionSummary) => {
@@ -48,19 +60,31 @@ export const CorteDeCaja = () => {
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
       <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold text-cc-cream flex items-center gap-3">
-          <Wallet size={32} className="text-cc-primary" />
-          Corte de Caja
-        </h2>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 bg-cc-primary text-cc-bg rounded-lg hover:bg-cc-primary/90 transition-colors font-medium text-sm disabled:opacity-50"
-        >
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          Actualizar
-        </button>
+        <div>
+          <h2 className="text-3xl font-bold text-cc-cream flex items-center gap-3">
+            <Wallet size={32} className="text-cc-primary" />
+            Corte de Caja
+          </h2>
+          {selectedBranch && <p className="mt-1 text-sm text-cc-primary">Sucursal: <span className="font-semibold">{selectedBranch.name}</span></p>}
+        </div>
+        <div className="flex items-center gap-3">
+          <BranchSelector />
+          <button
+            onClick={() => void load()}
+            disabled={loading || !selectedBranch}
+            className="flex items-center gap-2 px-4 py-2 bg-cc-primary text-cc-bg rounded-lg hover:bg-cc-primary/90 transition-colors font-medium text-sm disabled:opacity-50"
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            Actualizar
+          </button>
+        </div>
       </div>
+
+      {!selectedBranch && !branchLoading && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {branchError || 'No tienes una sucursal autorizada para consultar o cerrar caja.'}
+        </div>
+      )}
 
       {/* Table */}
       {loading ? (
@@ -188,8 +212,9 @@ export const CorteDeCaja = () => {
       )}
 
       {/* Close cash register modal (triggered from detail) */}
-      {closeStatus && (
+      {closeStatus && selectedBranch && (
         <CloseCashRegisterModal
+          branch={selectedBranch}
           status={closeStatus}
           onClose={() => setCloseStatus(null)}
           onSuccess={handleCloseSuccess}

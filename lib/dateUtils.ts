@@ -59,6 +59,37 @@ export function getBusinessDateString(dateParam?: Date | string): string {
   return `${year}-${month}-${day}`;
 }
 
+export interface BusinessDayBounds {
+  businessDate: string;
+  start: Date;
+  end: Date;
+}
+
+/**
+ * Get the half-open UTC range for one Mexico City business date.
+ *
+ * `created_at` is a TIMESTAMPTZ, so queries must use the actual instant of
+ * Mexico City's midnight rather than browser-local midnight or a UTC date
+ * string. Mexico City does not observe DST, hence its business offset is
+ * consistently -06:00.
+ */
+export function getBusinessDayBounds(dateParam?: Date | string): BusinessDayBounds {
+  const businessDate = getBusinessDateString(dateParam);
+  const [year, month, day] = businessDate.split('-').map(Number);
+  const nextCalendarDay = new Date(Date.UTC(year, month - 1, day + 1));
+  const nextBusinessDate = [
+    nextCalendarDay.getUTCFullYear(),
+    String(nextCalendarDay.getUTCMonth() + 1).padStart(2, '0'),
+    String(nextCalendarDay.getUTCDate()).padStart(2, '0'),
+  ].join('-');
+
+  return {
+    businessDate,
+    start: new Date(`${businessDate}T00:00:00-06:00`),
+    end: new Date(`${nextBusinessDate}T00:00:00-06:00`),
+  };
+}
+
 /**
  * Get business date as Date object at midnight America/Mexico_City
  * 

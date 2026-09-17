@@ -5,6 +5,7 @@ import type { CashRegisterStatus } from '../lib/cashRegister';
 interface Props {
   status: CashRegisterStatus;
   loading: boolean;
+  branchName?: string;
   onOpenRegister: () => void;
   onWithdrawal?: () => void;
   onCloseRegister?: () => void;
@@ -13,7 +14,7 @@ interface Props {
 /**
  * Compact cash-register status widget shown at the top of the POS sidebar.
  */
-export const CashRegisterStatusPanel: React.FC<Props> = ({ status, loading, onOpenRegister, onWithdrawal, onCloseRegister }) => {
+export const CashRegisterStatusPanel: React.FC<Props> = ({ status, loading, branchName, onOpenRegister, onWithdrawal, onCloseRegister }) => {
   const isOpen = !!status.session_id;
 
   if (loading) {
@@ -35,7 +36,7 @@ export const CashRegisterStatusPanel: React.FC<Props> = ({ status, loading, onOp
           </div>
         </div>
         <p className="text-[11px] text-red-300/70 mb-2.5">
-          Debes abrir una caja antes de registrar ventas.
+          {branchName ? `No hay una caja abierta en ${branchName}.` : 'Debes abrir una caja antes de registrar ventas.'}
         </p>
         <button
           onClick={onOpenRegister}

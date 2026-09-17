@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { X, Lock, DollarSign, Banknote, CreditCard, ArrowDownCircle, CheckCircle, AlertTriangle, Printer, Loader2 } from 'lucide-react';
-import { closeCashRegister, fetchAndPrintCorteDeCaja } from '../lib/cashRegister';
+import { closeCashRegisterForBranch, fetchAndPrintCorteDeCaja } from '../lib/cashRegister';
 import type { CashRegisterStatus, CloseResult, CashSessionSummary } from '../lib/cashRegister';
+import type { Branch } from '../contexts/BranchContext';
 
 interface Props {
+  branch: Branch;
   status: CashRegisterStatus;
   onClose: () => void;
   onSuccess: () => void;
@@ -13,7 +15,7 @@ interface Props {
  * Modal to close the current cash register session.
  * Shows a pre-close summary, asks for counted cash, then shows the result.
  */
-export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuccess }) => {
+export const CloseCashRegisterModal: React.FC<Props> = ({ branch, status, onClose, onSuccess }) => {
   const [countedCash, setCountedCash] = useState<number>(0);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -25,6 +27,7 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
   /** Build a CashSessionSummary from the status (and optional close result) so we can print */
   const buildSessionForPrint = (result?: CloseResult | null): CashSessionSummary => ({
     session_id: status.session_id || '',
+    branch_id: branch.id,
     status: result ? 'closed' : 'open',
     opened_at: status.opened_at || new Date().toISOString(),
     closed_at: result ? new Date().toISOString() : null,
@@ -65,7 +68,8 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
     setSaving(true);
     setError(null);
     try {
-      const result = await closeCashRegister(
+      const result = await closeCashRegisterForBranch(
+        branch.id,
         status.session_id,
         countedCash,
         notes.trim() || undefined,
@@ -173,6 +177,8 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ status, onClose, onSuc
             <X size={16} />
           </button>
         </div>
+
+        <p className="mb-4 text-xs text-cc-primary">Sucursal: <span className="font-bold">{branch.name}</span></p>
 
         {/* Pre-close summary */}
         <div className="space-y-2 mb-5">

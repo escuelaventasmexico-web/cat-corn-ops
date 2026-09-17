@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { X, Wallet, DollarSign } from 'lucide-react';
-import { openCashRegister } from '../lib/cashRegister';
+import { openCashRegisterForBranch } from '../lib/cashRegister';
+import type { Branch } from '../contexts/BranchContext';
 
 interface Props {
+  branch: Branch;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -10,7 +12,7 @@ interface Props {
 /**
  * Modal to open a new cash register session.
  */
-export const OpenCashRegisterModal: React.FC<Props> = ({ onClose, onSuccess }) => {
+export const OpenCashRegisterModal: React.FC<Props> = ({ branch, onClose, onSuccess }) => {
   const [openingCash, setOpeningCash] = useState<number>(500);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -24,7 +26,7 @@ export const OpenCashRegisterModal: React.FC<Props> = ({ onClose, onSuccess }) =
     setSaving(true);
     setError(null);
     try {
-      await openCashRegister(openingCash, notes.trim() || undefined);
+      await openCashRegisterForBranch(branch.id, openingCash, notes.trim() || undefined);
       onSuccess();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error desconocido';
@@ -58,6 +60,8 @@ export const OpenCashRegisterModal: React.FC<Props> = ({ onClose, onSuccess }) =
             <X size={16} />
           </button>
         </div>
+
+        <p className="mb-4 text-xs text-cc-primary">Sucursal: <span className="font-bold">{branch.name}</span></p>
 
         <div className="space-y-4">
           {/* Opening cash */}

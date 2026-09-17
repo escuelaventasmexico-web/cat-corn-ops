@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
-import { DollarSign, ShoppingBag, AlertTriangle, TrendingUp, TrendingDown, Banknote, CreditCard, Landmark, Store, Receipt, Truck } from 'lucide-react';
+import { DollarSign, ShoppingBag, TrendingUp, TrendingDown, Banknote, CreditCard, Landmark, Store, Receipt, Truck } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { getCommercialCollections } from '../services/commercialCollectionsService';
-import { getBusinessDateString } from '../lib/dateUtils';
+import { getBusinessDayBounds } from '../lib/dateUtils';
+import { useBranch } from '../contexts/BranchContext';
 
 interface TopProduct {
   id: string;
@@ -14,50 +15,86 @@ interface TopProduct {
   units: number;
 }
 
+interface BranchCajaBreakdown {
+  branchId: string;
+  branchName: string;
+  total: number;
+  cash: number;
+  card: number;
+  transfer: number;
+  other: number;
+}
+
+interface DashboardBreakdown {
+  cajaTotal: number;
+  cajaByBranch: BranchCajaBreakdown[];
+  pedidosTotal: number;
+  pedidosCash: number;
+  pedidosCard: number;
+  pedidosTransfer: number;
+  deliveryTotal: number;
+  deliveryUber: number;
+  deliveryDidi: number;
+  deliveryRappi: number;
+  sociosComerciales: { total: number; cash: number; transfer: number };
+}
+
+const emptyBreakdown: DashboardBreakdown = {
+  cajaTotal: 0,
+  cajaByBranch: [],
+  pedidosTotal: 0,
+  pedidosCash: 0,
+  pedidosCard: 0,
+  pedidosTransfer: 0,
+  deliveryTotal: 0,
+  deliveryUber: 0,
+  deliveryDidi: 0,
+  deliveryRappi: 0,
+  sociosComerciales: { total: 0, cash: 0, transfer: 0 },
+};
+
 export const Dashboard = () => {
+  const { branches, loading: branchesLoading } = useBranch();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     salesToday: 0,
     cajaTotal: 0,
     ordersToday: 0,
-    lowStockCount: 0,
     percentageChange: '—'
   });
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [topMonthProducts, setTopMonthProducts] = useState<TopProduct[]>([]);
   const [topMode, setTopMode] = useState<'day' | 'month'>('day');
   const [chartData, setChartData] = useState<any[]>([]);
-  const [breakdown, setBreakdown] = useState<any>({ cajaTotal: 0, cajaCash: 0, cajaCard: 0, cajaMixed: 0, pedidosTotal: 0, pedidosCash: 0, pedidosCard: 0, pedidosTransfer: 0, deliveryTotal: 0, deliveryUber: 0, deliveryDidi: 0, deliveryRappi: 0, sociosComerciales: { total: 0, cash: 0, transfer: 0 } });
+  const [breakdown, setBreakdown] = useState<DashboardBreakdown>(emptyBreakdown);
 
   useEffect(() => {
-    loadDashboardData();
-  }, []);
+    if (!branchesLoading) {
+      void loadDashboardData();
+    }
+  }, [branches, branchesLoading]);
 
   const loadDashboardData = async () => {
     setLoading(true);
     try {
-      // Get today's date range
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayStr = today.toISOString();
-      
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const tomorrowStr = tomorrow.toISOString();
-
-      // Get yesterday's date range
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString();
+      const todayRange = getBusinessDayBounds();
+      const [businessYear, businessMonth, businessDay] = todayRange.businessDate.split('-').map(Number);
+      const yesterdayCalendarDate = new Date(Date.UTC(businessYear, businessMonth - 1, businessDay - 1));
+      const yesterdayRange = getBusinessDayBounds([
+        yesterdayCalendarDate.getUTCFullYear(),
+        String(yesterdayCalendarDate.getUTCMonth() + 1).padStart(2, '0'),
+        String(yesterdayCalendarDate.getUTCDate()).padStart(2, '0'),
+      ].join('-'));
+      const monthStartRange = getBusinessDayBounds(`${businessYear}-${String(businessMonth).padStart(2, '0')}-01`);
 
       if (!supabase) return;
 
       // 1. Sales Today - total and count (also get payment_method + promotion_code for breakdown)
       const { data: salesToday } = await supabase
         .from('sales')
-        .select('total, payment_method, promotion_code, sale_origin, delivery_platform, cash_amount, card_amount')
-        .gte('created_at', todayStr)
-        .lt('created_at', tomorrowStr)
+        .select('total, payment_method, promotion_code, sale_origin, delivery_platform, cash_amount, card_amount, branch_id')
+        .gte('created_at', todayRange.start.toISOString())
+        .lt('created_at', todayRange.end.toISOString())
         .eq('is_refunded', false);
       
       // Separate POS direct sales from orders
@@ -71,21 +108,19 @@ export const Dashboard = () => {
       // Load commercial collections for today (cobros reales de Socios Comerciales)
       let sociosComerciales = { total: 0, cash: 0, transfer: 0 };
       try {
-        // Use getBusinessDateString() to get business date in Mexico City timezone
-        // Then convert to UTC midnight for consistent querying
-        const businessDateStr = getBusinessDateString();
-        const [year, month, day] = businessDateStr.split('-').map(Number);
-        const todayUTC = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-        const tomorrowUTC = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0));
+        // The commercial service receives calendar-date Date values and applies
+        // its own Mexico City midnight, inclusive/exclusive boundaries.
+        const todayUTC = new Date(Date.UTC(businessYear, businessMonth - 1, businessDay));
+        const tomorrowUTC = new Date(Date.UTC(businessYear, businessMonth - 1, businessDay + 1));
 
         const collections = await getCommercialCollections(todayUTC, tomorrowUTC);
         if (!collections.error) {
           sociosComerciales = { total: collections.total, cash: collections.cash, transfer: collections.transfer };
           // Log for validation
           console.log('Commercial collections validation', {
-            businessDate: businessDateStr,
-            startUTC: todayUTC.toISOString(),
-            endUTC: tomorrowUTC.toISOString(),
+            businessDate: todayRange.businessDate,
+            start: todayRange.start.toISOString(),
+            end: todayRange.end.toISOString(),
             total: collections.total,
             bySource: collections.bySource,
             cash: collections.cash,
@@ -100,29 +135,67 @@ export const Dashboard = () => {
 
       // Split by origin
       const normPM = (m: string) => (m || '').toUpperCase().trim();
-      // Backward compat: ORDER_CHECKOUT promotion_code OR sale_origin = 'order'
-      const isOrder    = (s: any) => s.sale_origin === 'order' || s.promotion_code === 'ORDER_CHECKOUT';
       const isDelivery = (s: any) => s.sale_origin === 'delivery';
+      // Backward compat: ORDER_CHECKOUT promotion_code OR sale_origin = 'order'.
+      // Delivery has priority so one sales row can never appear in both groups.
+      const isOrder    = (s: any) => !isDelivery(s) && (s.sale_origin === 'order' || s.promotion_code === 'ORDER_CHECKOUT');
       // Positive logic: sale_origin='pos', OR legacy NULL that is NOT a pedido/delivery
       const isCaja     = (s: any) => s.sale_origin === 'pos' || (!s.sale_origin && !isOrder(s) && !isDelivery(s));
 
-      // Caja directa (POS)
-      // MIXED sales are split: cash_amount goes to cash drawer, card_amount to terminal
-      const cajaCash = salesToday?.filter(s => isCaja(s)).reduce((sum, s) => {
-        const method = normPM(s.payment_method);
-        if (method === 'CASH')  return sum + Number(s.total);
-        if (method === 'MIXED') return sum + Number(s.cash_amount ?? 0);
-        return sum;
-      }, 0) || 0;
-      const cajaCard = salesToday?.filter(s => isCaja(s)).reduce((sum, s) => {
-        const method = normPM(s.payment_method);
-        if (method === 'CARD')  return sum + Number(s.total);
-        if (method === 'MIXED') return sum + Number(s.card_amount ?? 0);
-        return sum;
-      }, 0) || 0;
-      const cajaMixed = 0; // MIXED is split into cash+card above — no separate bucket
-      // cajaTotal = cajaCash + cajaCard — single source of truth, matches the desglose exactly
-      const cajaTotal = cajaCash + cajaCard;
+      // Caja directa (POS), grouped from the same sales result. This deliberately
+      // never consults cash_register_sessions: opening funds, counted cash,
+      // withdrawals and close differences are not sales.
+      const cajasByBranch = new Map<string, BranchCajaBreakdown>(
+        branches.map(branch => [branch.id, {
+          branchId: branch.id,
+          branchName: branch.name,
+          total: 0,
+          cash: 0,
+          card: 0,
+          transfer: 0,
+          other: 0,
+        }])
+      );
+
+      for (const sale of salesToday || []) {
+        if (!isCaja(sale)) continue;
+
+        const branch = cajasByBranch.get(sale.branch_id);
+        if (!branch) {
+          // A sale always has a valid branch_id after Phase 1B. If the current
+          // user cannot read that branch, do not silently present its money as
+          // another branch's POS sale.
+          console.warn('Direct POS sale belongs to a branch unavailable to this dashboard', sale.branch_id);
+          continue;
+        }
+
+        const amount = Number(sale.total) || 0;
+        branch.total += amount;
+
+        const method = normPM(sale.payment_method);
+        if (method === 'CASH') {
+          branch.cash += amount;
+        } else if (method === 'CARD') {
+          branch.card += amount;
+        } else if (method === 'TRANSFER') {
+          branch.transfer += amount;
+        } else if (method === 'MIXED') {
+          const cash = Number(sale.cash_amount ?? 0);
+          const card = Number(sale.card_amount ?? 0);
+          branch.cash += cash;
+          branch.card += card;
+          // Preserve the total even if a historic mixed row did not persist a
+          // complete split; it is shown as "Otro" instead of being dropped.
+          branch.other += amount - cash - card;
+        } else {
+          branch.other += amount;
+        }
+      }
+
+      const cajaByBranch = Array.from(cajasByBranch.values());
+      // This is the only combined direct-POS total: every branch card and the
+      // breakdown derive from these exact rows, so no amount is added twice.
+      const cajaTotal = cajaByBranch.reduce((sum, branch) => sum + branch.total, 0);
 
       // Pedidos (orders)
       const pedidosCash     = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
@@ -136,9 +209,21 @@ export const Dashboard = () => {
       const deliveryRappi = salesToday?.filter(s => isDelivery(s) && s.delivery_platform === 'rappi').reduce((sum, s) => sum + Number(s.total), 0) || 0;
       const deliveryTotal = deliveryUber + deliveryDidi + deliveryRappi;
 
+      const branchColors = [
+        { cash: '#4CAF50', card: '#2196F3', transfer: '#8B5CF6', other: '#94A3B8' },
+        { cash: '#22C55E', card: '#38BDF8', transfer: '#A78BFA', other: '#CBD5E1' },
+        { cash: '#86EFAC', card: '#60A5FA', transfer: '#C4B5FD', other: '#E2E8F0' },
+      ];
       const paymentMethodChart = [
-        { name: 'Caja Efectivo',   amount: cajaCash,        color: '#4CAF50' },
-        { name: 'Caja Tarjeta',    amount: cajaCard,        color: '#2196F3' },
+        ...cajaByBranch.flatMap((branch, index) => {
+          const colors = branchColors[index % branchColors.length];
+          return [
+            { name: `${branch.branchName} efectivo`, amount: branch.cash, color: colors.cash },
+            { name: `${branch.branchName} tarjeta`, amount: branch.card, color: colors.card },
+            { name: `${branch.branchName} transferencia`, amount: branch.transfer, color: colors.transfer },
+            { name: `${branch.branchName} otros`, amount: branch.other, color: colors.other },
+          ];
+        }),
         { name: 'Pedidos Efectivo',amount: pedidosCash,     color: '#F59E0B' },
         { name: 'Pedidos Tarjeta', amount: pedidosCard,     color: '#06B6D4' },
         { name: 'Pedidos Transf.', amount: pedidosTransfer, color: '#8B5CF6' },
@@ -148,14 +233,26 @@ export const Dashboard = () => {
       ].filter(d => d.amount > 0);
 
       // Breakdown summary for the panel
-      const breakdownSummary = { cajaTotal, cajaCash, cajaCard, cajaMixed, pedidosTotal, pedidosCash, pedidosCard, pedidosTransfer, deliveryTotal, deliveryUber, deliveryDidi, deliveryRappi, sociosComerciales: { total: sociosComerciales.total, cash: sociosComerciales.cash, transfer: sociosComerciales.transfer } };
+      const breakdownSummary: DashboardBreakdown = {
+        cajaTotal,
+        cajaByBranch,
+        pedidosTotal,
+        pedidosCash,
+        pedidosCard,
+        pedidosTransfer,
+        deliveryTotal,
+        deliveryUber,
+        deliveryDidi,
+        deliveryRappi,
+        sociosComerciales: { total: sociosComerciales.total, cash: sociosComerciales.cash, transfer: sociosComerciales.transfer },
+      };
 
       // 2. Sales Yesterday - for percentage calculation
       const { data: salesYesterday } = await supabase
         .from('sales')
         .select('total')
-        .gte('created_at', yesterdayStr)
-        .lt('created_at', todayStr)
+        .gte('created_at', yesterdayRange.start.toISOString())
+        .lt('created_at', yesterdayRange.end.toISOString())
         .eq('is_refunded', false);
       
       const totalYesterday = salesYesterday?.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
@@ -169,19 +266,13 @@ export const Dashboard = () => {
         percentageChange = '+100%';
       }
 
-      // 3. Low Stock Count
-      const { count } = await supabase
-        .from('view_ingredient_stock')
-        .select('*', { count: 'exact', head: true })
-        .lt('current_stock', 100);
-
-      // 4. Top Products Today - fetch sale_items joined with sales and products
+      // 3. Top Products Today - fetch sale_items joined with sales and products
       // First get today's sale IDs
       const { data: todaysSales } = await supabase
         .from('sales')
         .select('id')
-        .gte('created_at', todayStr)
-        .lt('created_at', tomorrowStr)
+        .gte('created_at', todayRange.start.toISOString())
+        .lt('created_at', todayRange.end.toISOString())
         .eq('is_refunded', false);
       
       const todaySaleIds = todaysSales?.map(s => s.id) || [];
@@ -250,15 +341,13 @@ export const Dashboard = () => {
           .slice(0, 4);
       }
 
-      // 5. Top Products This Month
-      const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-      const monthStartStr = monthStart.toISOString();
+      // 4. Top Products This Month
 
       const { data: monthSales } = await supabase
         .from('sales')
         .select('id')
-        .gte('created_at', monthStartStr)
-        .lt('created_at', tomorrowStr)
+        .gte('created_at', monthStartRange.start.toISOString())
+        .lt('created_at', todayRange.end.toISOString())
         .eq('is_refunded', false);
 
       const monthSaleIds = monthSales?.map(s => s.id) || [];
@@ -317,7 +406,6 @@ export const Dashboard = () => {
         salesToday: totalToday + sociosComerciales.total,
         cajaTotal: posTotalToday,
         ordersToday: posCountToday,
-        lowStockCount: count || 0,
         percentageChange
       });
       setTopProducts(topProductsList);
@@ -369,18 +457,21 @@ export const Dashboard = () => {
         <div className="flex justify-between items-center">
             <h2 className="text-3xl font-bold text-cc-cream">Dashboard Operativo</h2>
             <div className="text-sm text-cc-text-muted">
-                {new Date().toLocaleDateString('es-MX', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                {new Date().toLocaleDateString('es-MX', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Mexico_City' })}
             </div>
         </div>
 
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
-            <StatCard 
-                title="Venta Caja" 
-                value={`$${breakdown.cajaTotal.toFixed(2)}`} 
-                icon={Store} 
-                color="bg-cc-primary"
-            />
+            {breakdown.cajaByBranch.map((branch, index) => (
+                <StatCard
+                    key={branch.branchId}
+                    title={`Venta Caja ${branch.branchName}`}
+                    value={`$${branch.total.toFixed(2)}`}
+                    icon={Store}
+                    color={index % 2 === 0 ? 'bg-cc-primary' : 'bg-sky-400'}
+                />
+            ))}
             <StatCard 
                 title="Venta Pedidos" 
                 value={`$${breakdown.pedidosTotal.toFixed(2)}`} 
@@ -413,14 +504,8 @@ export const Dashboard = () => {
                 color="bg-cc-accent"
                 subtitle={{
                   label: 'Ticket Promedio',
-                  value: `$${stats.ordersToday > 0 ? (stats.cajaTotal / stats.ordersToday).toFixed(2) : '0.00'}`
+                    value: `$${stats.ordersToday > 0 ? (stats.cajaTotal / stats.ordersToday).toFixed(2) : '0.00'}`
                 }}
-            />
-            <StatCard 
-                title="Alerta Inventario" 
-                value={stats.lowStockCount} 
-                icon={AlertTriangle} 
-                color="bg-red-400"
             />
         </div>
 
@@ -433,35 +518,53 @@ export const Dashboard = () => {
                 </div>
 
                 {/* Summary breakdown panels */}
-                <div className="grid grid-cols-2 gap-4 mb-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
                     {/* Caja Directa */}
-                    <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800">
+                    <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800 md:col-span-2">
                         <div className="flex items-center gap-2 mb-3">
                             <Store size={16} className="text-cc-primary" />
                             <span className="text-sm font-bold text-cc-cream">Caja directa</span>
                             <span className="ml-auto text-lg font-bold text-cc-primary">${breakdown.cajaTotal.toFixed(2)}</span>
                         </div>
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="flex items-center gap-2 text-cc-text-muted">
-                                    <Banknote size={14} className="text-green-400" /> Efectivo
-                                </span>
-                                <span className="text-cc-cream font-medium">${breakdown.cajaCash.toFixed(2)}</span>
-                            </div>
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="flex items-center gap-2 text-cc-text-muted">
-                                    <CreditCard size={14} className="text-blue-400" /> Tarjeta
-                                </span>
-                                <span className="text-cc-cream font-medium">${breakdown.cajaCard.toFixed(2)}</span>
-                            </div>
-                            {breakdown.cajaMixed > 0 && (
-                                <div className="flex items-center justify-between text-sm">
-                                    <span className="flex items-center gap-2 text-cc-text-muted">
-                                        <Banknote size={14} className="text-orange-400" /> Mixto
-                                    </span>
-                                    <span className="text-cc-cream font-medium">${breakdown.cajaMixed.toFixed(2)}</span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {breakdown.cajaByBranch.map(branch => (
+                                <div key={branch.branchId} className="rounded-lg bg-white/5 p-3">
+                                    <div className="flex items-center justify-between gap-2 mb-2">
+                                        <span className="text-sm font-semibold text-cc-cream">{branch.branchName}</span>
+                                        <span className="text-cc-primary font-bold">${branch.total.toFixed(2)}</span>
+                                    </div>
+                                    {branch.total === 0 ? (
+                                        <p className="text-xs text-cc-text-muted">Sin ventas directas</p>
+                                    ) : (
+                                        <div className="space-y-1.5 text-sm">
+                                            {branch.cash > 0 && (
+                                                <div className="flex items-center justify-between">
+                                                    <span className="flex items-center gap-2 text-cc-text-muted"><Banknote size={14} className="text-green-400" /> Efectivo</span>
+                                                    <span className="text-cc-cream font-medium">${branch.cash.toFixed(2)}</span>
+                                                </div>
+                                            )}
+                                            {branch.card > 0 && (
+                                                <div className="flex items-center justify-between">
+                                                    <span className="flex items-center gap-2 text-cc-text-muted"><CreditCard size={14} className="text-blue-400" /> Tarjeta</span>
+                                                    <span className="text-cc-cream font-medium">${branch.card.toFixed(2)}</span>
+                                                </div>
+                                            )}
+                                            {branch.transfer > 0 && (
+                                                <div className="flex items-center justify-between">
+                                                    <span className="flex items-center gap-2 text-cc-text-muted"><Landmark size={14} className="text-violet-400" /> Transferencia</span>
+                                                    <span className="text-cc-cream font-medium">${branch.transfer.toFixed(2)}</span>
+                                                </div>
+                                            )}
+                                            {branch.other > 0 && (
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-cc-text-muted">Otro</span>
+                                                    <span className="text-cc-cream font-medium">${branch.other.toFixed(2)}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
-                            )}
+                            ))}
                         </div>
                     </div>
 
@@ -619,7 +722,7 @@ export const Dashboard = () => {
                 </div>
                 {topMode === 'month' && (
                     <p className="text-xs text-cc-text-muted mb-3">
-                        {new Date().toLocaleDateString('es-MX', { month: 'long', year: 'numeric' }).replace(/^./, c => c.toUpperCase())}
+                        {new Date().toLocaleDateString('es-MX', { month: 'long', year: 'numeric', timeZone: 'America/Mexico_City' }).replace(/^./, c => c.toUpperCase())}
                     </p>
                 )}
                 <div className="space-y-4">

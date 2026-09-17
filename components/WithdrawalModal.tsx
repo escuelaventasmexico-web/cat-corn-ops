@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { X, ArrowDownCircle, DollarSign } from 'lucide-react';
-import { registerWithdrawal } from '../lib/cashRegister';
+import { registerWithdrawalForBranch } from '../lib/cashRegister';
+import type { Branch } from '../contexts/BranchContext';
 
 interface Props {
+  branch: Branch;
   sessionId: string;
   currentCash: number;
   onClose: () => void;
@@ -12,7 +14,7 @@ interface Props {
 /**
  * Modal to register a cash withdrawal from the open register.
  */
-export const WithdrawalModal: React.FC<Props> = ({ sessionId, currentCash, onClose, onSuccess }) => {
+export const WithdrawalModal: React.FC<Props> = ({ branch, sessionId, currentCash, onClose, onSuccess }) => {
   const [amount, setAmount] = useState<number>(0);
   const [reason, setReason] = useState('Retiro de resguardo');
   const [notes, setNotes] = useState('');
@@ -36,7 +38,7 @@ export const WithdrawalModal: React.FC<Props> = ({ sessionId, currentCash, onClo
     setSaving(true);
     setError(null);
     try {
-      await registerWithdrawal(sessionId, amount, reason.trim(), notes.trim() || undefined);
+      await registerWithdrawalForBranch(branch.id, sessionId, amount, reason.trim(), notes.trim() || undefined);
       onSuccess();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error desconocido';
@@ -62,6 +64,8 @@ export const WithdrawalModal: React.FC<Props> = ({ sessionId, currentCash, onClo
             <X size={16} />
           </button>
         </div>
+
+        <p className="mb-4 text-xs text-cc-primary">Sucursal: <span className="font-bold">{branch.name}</span></p>
 
         {/* Current cash info */}
         <div className="mb-4 px-3 py-2 bg-black/30 rounded-lg border border-white/5 flex justify-between items-center text-xs">

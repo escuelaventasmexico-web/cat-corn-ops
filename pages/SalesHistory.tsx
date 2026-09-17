@@ -16,6 +16,8 @@ interface Sale {
   total: number;
   payment_method: string;
   created_at: string;
+  branch_id: string | null;
+  branch_name: string | null;
   is_refunded?: boolean;
   refunded_at?: string | null;
   refund_reason?: string | null;
@@ -277,7 +279,7 @@ export const SalesHistory = () => {
       
       let query = supabase
         .from('sales')
-        .select('id, total, payment_method, created_at, is_refunded, refunded_at, refund_reason, sale_origin, delivery_platform, promotion_code, sale_items(quantity, product_name, products(name))')
+        .select('id, total, payment_method, created_at, branch_id, is_refunded, refunded_at, refund_reason, sale_origin, delivery_platform, promotion_code, branches(name), sale_items(quantity, product_name, products(name))')
         .order('created_at', { ascending: false });
 
       // Si hay alguna fecha seleccionada, aplica filtros
@@ -304,6 +306,8 @@ export const SalesHistory = () => {
         total: s.total,
         payment_method: s.payment_method,
         created_at: s.created_at,
+        branch_id: s.branch_id ?? null,
+        branch_name: Array.isArray(s.branches) ? (s.branches[0]?.name ?? null) : (s.branches?.name ?? null),
         is_refunded: s.is_refunded ?? false,
         refunded_at: s.refunded_at ?? null,
         refund_reason: s.refund_reason ?? null,
@@ -934,6 +938,9 @@ export const SalesHistory = () => {
                           <div className="text-xs text-cc-text-muted">
                             {sale.is_refunded ? 'Devuelta' : 'Click para ver detalles'}
                           </div>
+                          <span className="mt-1 inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-cc-text-muted">
+                            {sale.branch_id && sale.branch_name ? sale.branch_name : 'Sucursal no identificada'}
+                          </span>
                         </div>
                         {!sale.is_refunded && (
                           <button

@@ -4,6 +4,7 @@ import { printCommercialDeliveryLabelTest, printCommercialDeliveryUnitLabels, re
 import { getSavedCommercialDeliveryLabelPrinterName } from '../../lib/qzService';
 import {
   adminCancelCommercialDelivery,
+  adminCancelWholesaleOrder,
   adminForceReleaseCommercialDelivery,
   CommercialDeliverySourceType,
   CommercialDeliveryUnit,
@@ -325,8 +326,8 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
     if (!adminAction || adminReason.trim().length < 10 || !adminConfirmed || !adminPassword) return;
     setAdminProcessing(true); setError(null); setMessage(null);
     try {
-      const verification = await verifyFinancialAccessPassword(adminPassword);
-      setAdminPassword('');
+      const password = adminPassword;
+      const verification = await verifyFinancialAccessPassword(password);
       if (verification.status !== 'verified') {
         throw new Error(verification.status === 'invalid'
           ? 'Contraseña administrativa incorrecta'
@@ -339,7 +340,13 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
       };
       const result = adminAction.kind === 'release'
         ? await adminForceReleaseCommercialDelivery(args)
-        : await adminCancelCommercialDelivery(args);
+        : adminAction.delivery.sourceType === 'mayoreo'
+          ? await adminCancelWholesaleOrder({
+            orderId: adminAction.delivery.id,
+            reason: adminReason,
+            adminPassword: password,
+          })
+          : await adminCancelCommercialDelivery(args);
       setMessage(adminAction.kind === 'release'
         ? `Entrega liberada administrativamente: ${result.released_units} bolsas.`
         : `Entrega cancelada: ${result.voided_units} etiquetas anuladas sin borrar historial.`);

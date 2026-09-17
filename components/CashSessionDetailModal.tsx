@@ -235,7 +235,8 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
           const { data: salesData, error: salesErr } = await supabase
             .from('v_cash_register_session_sales')
             .select('*')
-            .eq('session_id', resolvedSessionId);
+            .eq('session_id', resolvedSessionId)
+            .eq('branch_id', s.branch_id);
 
           console.log('[CORTE] sales view error:', salesErr?.message ?? 'none');
           console.log('[CORTE] sales view data:', salesData?.length ?? 0, 'rows');
@@ -257,6 +258,7 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
             const { data: fallback } = await supabase
               .from('sales')
               .select('id, created_at, payment_method, total, customer_id, promotion_code, loyalty_reward_applied, loyalty_discount_amount')
+              .eq('branch_id', s.branch_id)
               .eq('cash_session_id', resolvedSessionId)
               .eq('is_refunded', false);
             if (fallback) {

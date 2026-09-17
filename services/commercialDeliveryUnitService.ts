@@ -239,6 +239,18 @@ export const adminCancelCommercialDelivery = (args: {
   p_reason: args.reason.trim(),
 });
 
+/**
+ * Cancels an unreleased Mayoreo order without deleting its commercial labels.
+ * The password is verified again by the server inside the cancellation RPC.
+ */
+export const adminCancelWholesaleOrder = (args: {
+  orderId: string; reason: string; adminPassword: string;
+}) => rpc<AdminCommercialDeliveryResult>('admin_cancel_wholesale_order', {
+  p_order_id: args.orderId,
+  p_reason: args.reason.trim(),
+  p_admin_password: args.adminPassword,
+});
+
 export const listCommercialDeliveryUnits = async (partnerId: string, sourceType?: CommercialDeliverySourceType) => {
   if (!supabase) throw new Error('Supabase no configurado');
 
