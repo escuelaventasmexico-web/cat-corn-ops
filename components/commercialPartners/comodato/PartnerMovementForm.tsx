@@ -20,7 +20,7 @@ import {
   getProductSize,
   getProductPrice,
 } from '../../../lib/comodatoProducts';
-import { CommercialDeliveryUnit, createComodatoDeliveryWithUnits, findCommercialDeliveryUnitForPartner, getPartnerHistoricalUnlabelledStock, HistoricalUnlabelledStockItem, registerPartnerHistoricalSpoilageException, registerPartnerReturnByBarcode, registerPartnerReturnException, registerPartnerSpoilageByBarcode, resolveActiveComodatoProductIds } from '../../../services/commercialDeliveryUnitService';
+import { CommercialDeliveryUnit, createComodatoDeliveryWithUnits, findCommercialDeliveryUnitForPartner, getPartnerHistoricalUnlabelledStock, HistoricalUnlabelledStockItem, registerGlobalPartnerSpoilageByBarcode, registerPartnerHistoricalSpoilageException, registerPartnerReturnByBarcode, registerPartnerReturnException, resolveActiveComodatoProductIds, resolveCommercialDeliveryUnitByBarcode, ResolvedCommercialDeliveryUnit } from '../../../services/commercialDeliveryUnitService';
 import { useAuth } from '../../../contexts/AuthContext';
 
 // ── Internal types ────────────────────────────────────────────────────────────────────────────────
@@ -86,13 +86,20 @@ interface Props {
   movementType: MovementType;
   partnerStatus: string;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (result?: { affectedPartnerId: string; affectedPartnerName: string }) => void;
   onDeliveryCreated?: () => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────────────────────
 
 const num = (s: string) => parseFloat(s) || 0;
+const normalizeScanCode = (value: string) => value.replace(/\s+/g, '');
+const formatMexicoCityDateTime = (value: string | null | undefined) => value
+  ? new Intl.DateTimeFormat('es-MX', {
+    timeZone: 'America/Mexico_City',
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(value))
+  : '—';
 
 const emptyManualRow = (k: number): ManualRow => ({
   _key: k,
@@ -164,10 +171,14 @@ const PartnerMovementForm: React.FC<Props> = ({
   const [historicalSpoilageRows, setHistoricalSpoilageRows] = useState<HistoricalSpoilageRow[]>([]);
   const [historicalSpoilageQuantity, setHistoricalSpoilageQuantity] = useState('1');
   const [loadingHistoricalSpoilage, setLoadingHistoricalSpoilage] = useState(false);
+  const [spoilageUnit, setSpoilageUnit] = useState<ResolvedCommercialDeliveryUnit | null>(null);
+  const [resolvingSpoilage, setResolvingSpoilage] = useState(false);
   const [withdrawalBarcode, setWithdrawalBarcode] = useState('');
   const [withdrawalUnit, setWithdrawalUnit] = useState<CommercialDeliveryUnit | null>(null);
   const [withdrawalException, setWithdrawalException] = useState(false);
   const [withdrawalExceptionRowKey, setWithdrawalExceptionRowKey] = useState<number | null>(null);
+  const spoilageInputRef = useRef<HTMLInputElement>(null);
+  const spoilageRequestRef = useRef(0);
   const withdrawalInputRef = useRef<HTMLInputElement>(null);
 
   const typeLabel = MOVEMENT_TYPE_LABELS[movementType];
@@ -183,7 +194,7 @@ const PartnerMovementForm: React.FC<Props> = ({
   }, []);
 
   useEffect(() => {
-    if (!supabase || isDelivery) return;
+    if (!supabase || isDelivery || (isSpoilage && !spoilageException)) return;
     let active = true;
     setLoadingStock(true);
     setError(null);
@@ -209,7 +220,7 @@ const PartnerMovementForm: React.FC<Props> = ({
       });
 
     return () => { active = false; };
-  }, [isDelivery, partnerId]);
+  }, [isDelivery, isSpoilage, partnerId, spoilageException]);
 
   useEffect(() => {
     if (!isSpoilage || !spoilageException) return;
@@ -234,6 +245,38 @@ const PartnerMovementForm: React.FC<Props> = ({
   useEffect(() => {
     if (isWithdrawal && !withdrawalException) withdrawalInputRef.current?.focus();
   }, [isWithdrawal, withdrawalException]);
+
+  const resolveSpoilageUnit = async () => {
+    const scanCode = normalizeScanCode(spoilageBarcode);
+    if (!scanCode) {
+      setError('Escanea la etiqueta de la bolsa para consultar su origen.');
+      return;
+    }
+
+    const requestId = ++spoilageRequestRef.current;
+    setResolvingSpoilage(true);
+    setSpoilageUnit(null);
+    setError(null);
+    try {
+      const unit = await resolveCommercialDeliveryUnitByBarcode(scanCode);
+      if (requestId !== spoilageRequestRef.current) return;
+
+      setSpoilageBarcode(unit.scan_code);
+      setSpoilageUnit(unit);
+      if (unit.source_type === 'mayoreo') {
+        setError('Esta bolsa corresponde a Mayoreo; no puede registrarse como merma de Comodato.');
+      } else if (!unit.eligible_for_operational_spoilage) {
+        setError(`La etiqueta no está disponible para merma operativa (${unit.status}).`);
+      }
+    } catch (err: any) {
+      if (requestId === spoilageRequestRef.current) {
+        setError(err?.message || 'No se pudo consultar la etiqueta.');
+        spoilageInputRef.current?.focus();
+      }
+    } finally {
+      if (requestId === spoilageRequestRef.current) setResolvingSpoilage(false);
+    }
+  };
 
   const previewWithdrawalUnit = async () => {
     if (!withdrawalBarcode.trim()) return;
@@ -308,17 +351,27 @@ const PartnerMovementForm: React.FC<Props> = ({
   const handleSubmit = async () => {
     if (!supabase) return;
     setError(null);
-    if (!validateStatus()) return;
+    // Operational spoilage is validated against the partner resolved from the
+    // label by the server, rather than the partner whose sheet opened the modal.
+    if (!(isSpoilage && !spoilageException) && !validateStatus()) return;
     if (isSpoilage && !spoilageException) {
-      if (!spoilageBarcode.trim()) {
-        setError('Escanea la etiqueta de la bolsa para registrar merma.');
+      const scanCode = normalizeScanCode(spoilageBarcode);
+      if (!spoilageUnit || spoilageUnit.scan_code !== scanCode) {
+        setError('Escanea y consulta una etiqueta antes de registrar la merma.');
+        spoilageInputRef.current?.focus();
+        return;
+      }
+      if (!spoilageUnit.eligible_for_operational_spoilage || spoilageUnit.source_type !== 'comodato') {
+        setError(spoilageUnit.source_type === 'mayoreo'
+          ? 'Esta bolsa corresponde a Mayoreo; no puede registrarse como merma de Comodato.'
+          : `La etiqueta no está disponible para merma operativa (${spoilageUnit.status}).`);
         return;
       }
       setSaving(true);
       try {
-        await registerPartnerSpoilageByBarcode(spoilageBarcode, partnerId, generalNotes);
+        const result = await registerGlobalPartnerSpoilageByBarcode(scanCode, generalNotes);
         setSaving(false);
-        onSaved();
+        onSaved({ affectedPartnerId: result.partner_id, affectedPartnerName: result.partner_name });
       } catch (err: any) {
         setSaving(false);
         setError(err.message || 'No se pudo registrar la merma.');
@@ -577,8 +630,63 @@ const PartnerMovementForm: React.FC<Props> = ({
             <div className={`${CARD_CLS} border-red-300 bg-red-50`}>
               {!spoilageException ? <>
                 <label className={LABEL_CLS}>Escanear etiqueta de la bolsa *</label>
-                <input value={spoilageBarcode} onChange={e => setSpoilageBarcode(e.target.value)} autoFocus className={INPUT_CLS} placeholder="1234 5678 9012 3456" />
-                <p className="mt-1 text-xs text-red-700">La merma operativa sólo puede registrarse sobre una bolsa liberada.</p>
+                <div className="flex gap-2">
+                  <input
+                    ref={spoilageInputRef}
+                    value={spoilageBarcode}
+                    onChange={event => {
+                      spoilageRequestRef.current += 1;
+                      setSpoilageBarcode(event.target.value);
+                      setSpoilageUnit(null);
+                      setResolvingSpoilage(false);
+                      setError(null);
+                    }}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        void resolveSpoilageUnit();
+                      }
+                    }}
+                    autoFocus
+                    className={INPUT_CLS}
+                    placeholder="1234 5678 9012 3456"
+                  />
+                  <button type="button" onClick={() => void resolveSpoilageUnit()} disabled={resolvingSpoilage} className="rounded-lg bg-[#2d1a00] px-3 text-xs font-semibold text-[#F6E7C1] disabled:opacity-60">
+                    {resolvingSpoilage ? 'Consultando…' : 'Consultar'}
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-red-700">El lector funciona con Enter. La merma operativa sólo puede registrarse sobre una bolsa liberada de Comodato.</p>
+                {spoilageUnit && (
+                  <div className="mt-3 rounded-lg border border-red-300 bg-white p-3 text-sm text-[#4a2c0a]">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-[#111111]">{spoilageUnit.partner_name}</p>
+                        <p className="text-xs text-[#6b5c40]">Folio: {spoilageUnit.partner_folio || '—'} · {spoilageUnit.source_type === 'comodato' ? 'Comodato' : 'Mayoreo'}</p>
+                      </div>
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${spoilageUnit.status === 'released' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                        {spoilageUnit.status}
+                      </span>
+                    </div>
+                    <div className="mt-2 grid grid-cols-1 gap-1 text-xs text-[#4a2c0a] sm:grid-cols-2">
+                      <p><span className="font-semibold">Producto:</span> {spoilageUnit.product_name}</p>
+                      <p><span className="font-semibold">Variante:</span> {spoilageUnit.product_variant || '—'}</p>
+                      <p><span className="font-semibold">Tamaño:</span> {spoilageUnit.product_size || '—'}</p>
+                      <p><span className="font-semibold">Código:</span> <span className="font-mono">{spoilageUnit.scan_code}</span></p>
+                      <p><span className="font-semibold">Fecha de liberación:</span> {formatMexicoCityDateTime(spoilageUnit.released_at)}</p>
+                      <p><span className="font-semibold">Fecha de generación:</span> {formatMexicoCityDateTime(spoilageUnit.generated_at)}</p>
+                    </div>
+                    {spoilageUnit.partner_id !== partnerId && (
+                      <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-900">
+                        Esta bolsa pertenece a {spoilageUnit.partner_name}. La merma se descontará del inventario de ese socio, no de la ficha abierta.
+                      </p>
+                    )}
+                    {spoilageUnit.source_type === 'mayoreo' && (
+                      <p className="mt-3 rounded-md border border-red-300 bg-red-50 px-2 py-1.5 text-xs font-medium text-red-800">
+                        La etiqueta se identificó correctamente, pero Mayoreo no tiene un flujo de merma de Comodato disponible.
+                      </p>
+                    )}
+                  </div>
+                )}
                 {isAdmin && <button type="button" onClick={() => setSpoilageException(true)} className="mt-2 text-xs font-semibold text-red-800 underline">Registrar merma sin etiqueta</button>}
               </> : <>
                 <p className="text-xs font-bold text-red-800">Excepción administrativa auditada</p>
@@ -1025,7 +1133,9 @@ const PartnerMovementForm: React.FC<Props> = ({
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={saving || loadingStock || (!isWithdrawal && noStock)}
+              disabled={saving || (isSpoilage && !spoilageException
+                ? resolvingSpoilage || !spoilageUnit || !spoilageUnit.eligible_for_operational_spoilage || spoilageUnit.source_type !== 'comodato'
+                : loadingStock || (!isWithdrawal && noStock))}
               className="flex-1 py-2.5 rounded-xl bg-[#2d1a00] text-[#F6E7C1] font-semibold hover:bg-[#4a2c0a] transition-colors disabled:opacity-75"
             >
               {saving ? 'Guardando...' : isDelivery ? 'Guardar y generar etiquetas' : isWithdrawal && !withdrawalException ? 'Confirmar retiro de 1 bolsa' : `Guardar ${typeLabel}`}

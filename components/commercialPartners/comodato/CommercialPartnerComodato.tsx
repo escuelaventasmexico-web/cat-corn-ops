@@ -81,6 +81,7 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
   const [subTab, setSubTab] = useState<SubTab>('stock');
   const [partnerName, setPartnerName] = useState<string>('');
   const [partnerModel, setPartnerModel] = useState<string>('comodato');
+  const [spoilageNotice, setSpoilageNotice] = useState<string | null>(null);
 
   // Load partner name and model
   useEffect(() => {
@@ -107,13 +108,25 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
   const canOperate = ['activo', 'pausado', 'inactivo'].includes(partnerStatus);
   const isLimited  = ['pausado', 'inactivo'].includes(partnerStatus);
 
-  const handleSaved = () => {
+  const handleSaved = (result?: { affectedPartnerId: string; affectedPartnerName: string }) => {
     setActiveModal(null);
-    setRefreshKey(k => k + 1);
+    if (!result || result.affectedPartnerId === partnerId) {
+      setRefreshKey(k => k + 1);
+    }
+    if (result) {
+      setSpoilageNotice(result.affectedPartnerId === partnerId
+        ? `Merma registrada para ${result.affectedPartnerName}.`
+        : `Merma registrada para ${result.affectedPartnerName}. La ficha abierta corresponde a otro socio y conserva sus propios datos.`);
+    }
   };
 
   return (
     <div className="flex flex-col gap-5">
+      {spoilageNotice && (
+        <div className="rounded-xl border border-green-300 bg-green-50 p-3 text-sm text-green-900">
+          {spoilageNotice}
+        </div>
+      )}
       {/* Warning for pausado / inactivo */}
       {isLimited && (
         <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 flex items-start gap-2">

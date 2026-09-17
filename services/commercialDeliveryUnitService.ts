@@ -58,6 +58,41 @@ export interface HistoricalUnlabelledStockItem {
   historical_suggested_retail_price: number | null;
 }
 
+/** Server-resolved, immutable snapshot of a scanned commercial delivery label. */
+export interface ResolvedCommercialDeliveryUnit {
+  unit_id: string;
+  partner_id: string;
+  partner_name: string;
+  partner_folio: string | null;
+  source_type: CommercialDeliverySourceType;
+  movement_id: string | null;
+  wholesale_order_id: string | null;
+  product_id: string;
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  scan_code: string;
+  status: CommercialDeliveryUnitStatus;
+  released_at: string | null;
+  generated_at: string;
+  eligible_for_operational_spoilage: boolean;
+}
+
+export interface GlobalPartnerSpoilageResult {
+  unit_id: string;
+  movement_id: string;
+  movement_item_id: string;
+  partner_id: string;
+  partner_name: string;
+  partner_folio: string | null;
+  source_type: CommercialDeliverySourceType;
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  released_at: string | null;
+  status: 'spoiled';
+}
+
 interface B2BProductMappingRow {
   source_product_code: string;
   product_id: string | null;
@@ -81,6 +116,8 @@ const rpc = async <T>(name: string, args: Record<string, unknown>): Promise<T> =
   if (error) throw error;
   return data as T;
 };
+
+const normalizeCommercialDeliveryScanCode = (barcode: string) => barcode.replace(/\s+/g, '');
 
 /**
  * Resolves only the explicit B2B source codes selected by the commercial
@@ -157,6 +194,17 @@ export const scanCommercialDeliveryUnitForRelease = (barcode: string, partnerId:
 export const registerPartnerSpoilageByBarcode = (barcode: string, partnerId: string, reason?: string) =>
   rpc<{ movement_id: string; product_name: string; released_at: string; unit_cost?: number }>('register_partner_spoilage_by_barcode', {
     p_barcode_value: barcode.trim(), p_partner_id: partnerId, p_reason: reason || null,
+  });
+
+export const resolveCommercialDeliveryUnitByBarcode = (barcode: string) =>
+  rpc<ResolvedCommercialDeliveryUnit>('resolve_commercial_delivery_unit_by_barcode', {
+    p_barcode: normalizeCommercialDeliveryScanCode(barcode),
+  });
+
+export const registerGlobalPartnerSpoilageByBarcode = (barcode: string, reason?: string) =>
+  rpc<GlobalPartnerSpoilageResult>('register_global_partner_spoilage_by_barcode', {
+    p_barcode: normalizeCommercialDeliveryScanCode(barcode),
+    p_reason: reason || null,
   });
 
 export const registerPartnerSpoilageException = (partnerId: string, item: Record<string, unknown>, reason: string) =>
