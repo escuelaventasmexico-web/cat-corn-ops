@@ -102,8 +102,8 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
         ? unit.commercial_partner_movements?.status || 'unknown'
         : unit.wholesale_orders?.order_status || 'unknown';
       const deliveryDate = unit.source_type === 'comodato'
-        ? unit.commercial_partner_movements?.movement_date || unit.generated_at
-        : unit.wholesale_orders?.order_date || unit.generated_at;
+        ? unit.commercial_partner_movements?.movement_date || unit.generated_at || unit.created_at || ''
+        : unit.wholesale_orders?.order_date || unit.generated_at || unit.created_at || '';
       const key = `${unit.source_type}:${id}`;
       const current = groups.get(key);
       if (current) current.units.push(unit);
@@ -126,7 +126,8 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
     variant: unit.product_variant,
     size: unit.product_size,
     sourceLabel: unit.source_type === 'comodato' ? 'COMODATO' : 'MAYOREO',
-    deliveryDate: unit.generated_at,
+    generatedAt: unit.generated_at,
+    createdAt: unit.created_at,
   });
 
   const registerAcceptedPrints = async (unitIds: string[], reason?: string) => {
@@ -199,7 +200,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
           variant: '50 × 30 mm',
           size: '400 × 240 px',
           sourceLabel: 'COMODATO',
-          deliveryDate: new Date().toISOString().slice(0, 10),
+          generatedAt: '2026-09-19T12:00:00-06:00',
         });
       setError(null);
       setPreviewImage(rendered.previewImageDataUrl);

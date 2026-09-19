@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ChevronDown, Download, Loader2 } from 'lucide-react';
 import { supabase } from '../../../supabase';
-import { B2BMonthlyCollectionOperation, B2BMonthlyCollectionsReport, getB2BMonthlyCollectionsReport, getMexicoCityCurrentMonth } from '../../../services/b2bMonthlyCollectionsService';
+import { B2BMonthlyCollectionOperation, B2BMonthlyCollectionsReport, getB2BMonthlyCollectionsReport } from '../../../services/b2bMonthlyCollectionsService';
 import { B2BCollectionReport, B2BPendingBalance } from './b2bReportTypes';
 import { exportToCSV, formatCurrency, formatNumber } from './b2bReportHelpers';
 
-interface Props { refreshTrigger?: number; onPartnerSelect?: (partnerId: string) => void; }
+interface Props { refreshTrigger?: number; onPartnerSelect?: (partnerId: string) => void; month: string; }
 type Status = 'all' | 'pending' | 'partial' | 'paid';
 type Source = 'all' | 'comodato' | 'mayoreo';
 
@@ -25,8 +25,7 @@ const formatBusinessDate = (value: string | null | undefined) => {
     .format(new Date(Date.UTC(year, month - 1, day)));
 };
 
-export const B2BCollectionsReport = ({ refreshTrigger = 0, onPartnerSelect }: Props) => {
-  const [month, setMonth] = useState(getMexicoCityCurrentMonth);
+export const B2BCollectionsReport = ({ refreshTrigger = 0, onPartnerSelect, month }: Props) => {
   const [report, setReport] = useState<B2BMonthlyCollectionsReport | null>(null);
   const [balances, setBalances] = useState<B2BPendingBalance[]>([]);
   const [balanceSummary, setBalanceSummary] = useState<B2BCollectionReport | null>(null);
@@ -97,7 +96,6 @@ export const B2BCollectionsReport = ({ refreshTrigger = 0, onPartnerSelect }: Pr
   ];
   return <div className="space-y-6">
     <div className="flex flex-wrap gap-3 items-end p-4 rounded-2xl bg-cc-surface border border-white/5">
-      <label className="text-sm text-cc-text-muted">Mes<input type="month" value={month} onChange={e => setMonth(e.target.value)} className="block mt-1 rounded-lg bg-cc-bg border border-white/15 px-3 py-2 text-cc-cream" /></label>
       <label className="text-sm text-cc-text-muted">Estado<select value={status} onChange={e => setStatus(e.target.value as Status)} className="block mt-1 rounded-lg bg-cc-bg border border-white/15 px-3 py-2 text-cc-cream">{(['all', 'pending', 'partial', 'paid'] as Status[]).map(value => <option key={value} value={value}>{statusLabel[value]}</option>)}</select></label>
       <label className="text-sm text-cc-text-muted">Origen<select value={source} onChange={e => setSource(e.target.value as Source)} className="block mt-1 rounded-lg bg-cc-bg border border-white/15 px-3 py-2 text-cc-cream"><option value="all">Todos</option><option value="comodato">Comodato</option><option value="mayoreo">Mayoreo</option></select></label>
       <label className="text-sm text-cc-text-muted flex-1 min-w-[210px]">Buscar<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Socio, folio o producto" className="block mt-1 w-full rounded-lg bg-cc-bg border border-white/15 px-3 py-2 text-cc-cream" /></label>

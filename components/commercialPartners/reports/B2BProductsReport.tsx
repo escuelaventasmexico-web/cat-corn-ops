@@ -28,19 +28,15 @@ import type {
 } from './b2bReportTypes';
 import { formatCurrency, formatDate, formatNumber } from './b2bReportHelpers';
 import { exportB2BProductAnalytics } from './exportB2BProductAnalytics';
+import { getMonthBounds } from '../../../services/b2bMonthlyAnalysisService';
 
 interface B2BProductsReportProps {
   refreshTrigger?: number;
+  month: string;
 }
 
-type PeriodPreset = 'current' | 'previous' | 'last30' | 'custom';
 type ProductSort = 'units' | 'revenue' | 'liquidation' | 'spoilage' | 'spoilageCost';
 type SpoilageSort = 'units' | 'cost' | 'rate';
-
-interface DateRange {
-  start: string;
-  endExclusive: string;
-}
 
 const CHART_COLORS = ['#F4C542', '#F47BAA', '#06B6D4', '#A855F7', '#10B981', '#FB923C', '#60A5FA'];
 const QUALITY_LABELS: Record<string, string> = {
@@ -53,37 +49,6 @@ const QUALITY_LABELS: Record<string, string> = {
   amount_reconciliation_errors: 'Diferencias de importe',
   orders_without_items: 'Órdenes entregadas sin artículos',
   rows_without_unit_cost: 'Filas sin costo unitario vigente',
-};
-
-const getMexicoToday = (): string =>
-  new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Mexico_City',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
-
-const parseDate = (value: string): Date => new Date(`${value}T00:00:00Z`);
-const dateOnly = (value: Date): string => value.toISOString().slice(0, 10);
-
-const addDays = (value: string, amount: number): string => {
-  const date = parseDate(value);
-  date.setUTCDate(date.getUTCDate() + amount);
-  return dateOnly(date);
-};
-
-const monthRange = (monthOffset: number): DateRange => {
-  const today = parseDate(getMexicoToday());
-  const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + monthOffset, 1));
-  const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
-  return { start: dateOnly(start), endExclusive: dateOnly(end) };
-};
-
-const presetRange = (preset: Exclude<PeriodPreset, 'custom'>): DateRange => {
-  if (preset === 'current') return monthRange(0);
-  if (preset === 'previous') return monthRange(-1);
-  const today = getMexicoToday();
-  return { start: addDays(today, -29), endExclusive: addDays(today, 1) };
 };
 
 const productLabel = (product: {
@@ -140,9 +105,7 @@ const SpoilageTooltip = ({
   );
 };
 
-export const B2BProductsReport = ({ refreshTrigger = 0 }: B2BProductsReportProps) => {
-  const [preset, setPreset] = useState<PeriodPreset>('current');
-  const [range, setRange] = useState<DateRange>(() => presetRange('current'));
+export const B2BProductsReport = ({ refreshTrigger = 0, month }: B2BProductsReportProps) => {
   const [report, setReport] = useState<B2BProductAnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -151,14 +114,10 @@ export const B2BProductsReport = ({ refreshTrigger = 0 }: B2BProductsReportProps
   const [spoilageSort, setSpoilageSort] = useState<SpoilageSort>('units');
 
   const loadData = useCallback(async () => {
-    if (!range.start || !range.endExclusive || range.start >= range.endExclusive) {
-      setError('El inicio debe ser anterior al fin exclusivo del periodo.');
-      setLoading(false);
-      return;
-    }
     try {
       setLoading(true);
       setError(null);
+      const range = getMonthBounds(month);
       setReport(await getB2BProductAnalytics(range.start, range.endExclusive));
     } catch (caught: unknown) {
       console.error('Error loading B2B product analytics:', caught);
@@ -166,16 +125,11 @@ export const B2BProductsReport = ({ refreshTrigger = 0 }: B2BProductsReportProps
     } finally {
       setLoading(false);
     }
-  }, [range]);
+  }, [month]);
 
   useEffect(() => {
     void loadData();
   }, [loadData, refreshTrigger]);
-
-  const selectPreset = (next: PeriodPreset) => {
-    setPreset(next);
-    if (next !== 'custom') setRange(presetRange(next));
-  };
 
   const sortedProducts = useMemo(() => {
     if (!report) return [];
@@ -220,22 +174,7 @@ export const B2BProductsReport = ({ refreshTrigger = 0 }: B2BProductsReportProps
             <p className="mt-1 text-sm text-cc-text-muted">Ventas reconocidas de comodato y mayoreo; cobranza excluida del reconocimiento.</p>
           </div>
           <div className="flex flex-wrap items-end gap-2">
-            {([
-              ['current', 'Mes actual'],
-              ['previous', 'Mes anterior'],
-              ['last30', 'Últimos 30 días'],
-              ['custom', 'Rango personalizado'],
-            ] as Array<[PeriodPreset, string]>).map(([id, label]) => (
-              <button key={id} onClick={() => selectPreset(id)} className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${preset === id ? 'bg-cc-primary text-cc-bg' : 'bg-white/10 text-cc-text-main hover:bg-white/15'}`}>
-                {label}
-              </button>
-            ))}
-            {preset === 'custom' && (
-              <>
-                <label className="text-xs text-cc-text-muted">Inicio<input type="date" value={range.start} onChange={event => setRange(current => ({ ...current, start: event.target.value }))} className="ml-2 rounded-lg border border-white/10 bg-cc-bg px-2 py-2 text-cc-text-main" /></label>
-                <label className="text-xs text-cc-text-muted">Fin exclusivo<input type="date" value={range.endExclusive} onChange={event => setRange(current => ({ ...current, endExclusive: event.target.value }))} className="ml-2 rounded-lg border border-white/10 bg-cc-bg px-2 py-2 text-cc-text-main" /></label>
-              </>
-            )}
+            <p className="rounded-lg bg-white/10 px-3 py-2 text-xs font-semibold capitalize text-cc-text-main">{new Intl.DateTimeFormat('es-MX', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${month}-01T00:00:00Z`))}</p>
             <button onClick={() => void loadData()} disabled={loading} className="rounded-lg border border-white/10 bg-white/10 p-2 text-cc-text-main hover:bg-white/15 disabled:opacity-50" title="Actualizar"><RefreshCw size={17} className={loading ? 'animate-spin' : ''} /></button>
             <button onClick={() => void exportReport()} disabled={!report || exporting} className="flex items-center gap-2 rounded-lg border border-cc-primary/30 bg-cc-primary/15 px-3 py-2 text-xs font-semibold text-cc-primary hover:bg-cc-primary/25 disabled:opacity-50">
               {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Exportar XLSX

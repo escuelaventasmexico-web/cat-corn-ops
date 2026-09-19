@@ -4,6 +4,7 @@
  */
 import type { ReceiptData } from '../components/TicketReceipt';
 import JsBarcode from 'jsbarcode';
+import { resolveCommercialDeliveryLabelDates } from './commercialDeliveryLabelDate';
 import {
   COMMERCIAL_DELIVERY_LABEL_CALIBRATION,
   ensurePrinterAvailable,
@@ -400,7 +401,8 @@ export interface CommercialDeliveryLabelData {
   variant?: string | null;
   size?: string | null;
   sourceLabel: string;
-  deliveryDate: string;
+  generatedAt?: string | null;
+  createdAt?: string | null;
 }
 
 /**
@@ -704,13 +706,19 @@ export function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData
   context.fillStyle = '#000000';
   context.textAlign = 'center';
   context.textBaseline = 'alphabetic';
+  const labelDates = resolveCommercialDeliveryLabelDates(label);
 
-  drawFittedText(context, `CAT CORN · ${label.sourceLabel.toUpperCase()}`, 26, { maxFontSize: 18, minFontSize: 13, weight: 700 });
+  drawFittedText(context, `CAT CORN · ${label.sourceLabel.toUpperCase()}`, 26, { maxWidth: 280, maxFontSize: 18, minFontSize: 13, weight: 700 });
+  context.strokeStyle = '#000000';
+  context.lineWidth = 1;
+  context.strokeRect(342, 7, 42, 31);
+  context.font = '700 22px Arial, sans-serif';
+  context.fillText(labelDates.expirationDay, 363, 30);
   drawFittedText(context, 'SOCIOS COMERCIALES', 49, { maxFontSize: 16, minFontSize: 11, weight: 700 });
   drawFittedText(context, label.productName.trim(), 69, { maxFontSize: 14, minFontSize: 10, weight: 600 });
   const presentation = [label.variant, label.size].filter(Boolean).join(' · ') || 'Presentación no especificada';
   drawFittedText(context, presentation, 86, { maxFontSize: 12, minFontSize: 9 });
-  drawFittedText(context, formatDeliveryDate(label.deliveryDate), 103, { maxFontSize: 11, minFontSize: 9 });
+  drawFittedText(context, labelDates.elaborationDate, 103, { maxFontSize: 11, minFontSize: 9 });
 
   const barcodeCanvas = document.createElement('canvas');
   JsBarcode(barcodeCanvas, scanCode, {
@@ -781,7 +789,7 @@ export async function printCommercialDeliveryLabelTest(): Promise<void> {
     variant: '50 × 30 mm',
     size: '400 × 240 px',
     sourceLabel: 'COMODATO',
-    deliveryDate: new Date().toISOString().slice(0, 10),
+    generatedAt: '2026-09-19T12:00:00-06:00',
   });
   if (rendered.previewWidth !== LABEL_WIDTH || rendered.previewHeight !== LABEL_HEIGHT
     || rendered.printWidth !== LABEL_PRINT_WIDTH || rendered.printHeight !== LABEL_HEIGHT) {

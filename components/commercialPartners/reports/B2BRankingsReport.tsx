@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../../../supabase';
 import { Loader2, AlertCircle, Download } from 'lucide-react';
 import { B2BPartnerRanking } from './b2bReportTypes';
 import {
@@ -8,10 +7,12 @@ import {
   formatDate,
   exportToCSV,
 } from './b2bReportHelpers';
+import { getB2BMonthlyAnalysis } from '../../../services/b2bMonthlyAnalysisService';
 
 interface B2BRankingsReportProps {
   refreshTrigger?: number;
   onPartnerSelect?: (partnerId: string) => void;
+  month: string;
 }
 
 type SortKey = 'b2b_total_generated' | 'comodato_generated' | 'wholesale_purchased' | 'b2b_pending_balance';
@@ -19,6 +20,7 @@ type SortKey = 'b2b_total_generated' | 'comodato_generated' | 'wholesale_purchas
 export const B2BRankingsReport = ({
   refreshTrigger = 0,
   onPartnerSelect,
+  month,
 }: B2BRankingsReportProps) => {
   const [rankings, setRankings] = useState<B2BPartnerRanking[]>([]);
   const [sortBy, setSortBy] = useState<SortKey>('b2b_total_generated');
@@ -26,22 +28,11 @@ export const B2BRankingsReport = ({
   const [error, setError] = useState<string | null>(null);
 
   const loadData = async () => {
-    if (!supabase) {
-      setError('Supabase no está configurado');
-      setLoading(false);
-      return;
-    }
-
     try {
       setLoading(true);
       setError(null);
-
-      const { data, error: dbErr } = await supabase
-        .from('v_b2b_partner_ranking')
-        .select('*');
-
-      if (dbErr) throw dbErr;
-      setRankings((data as B2BPartnerRanking[]) ?? []);
+      const analysis = await getB2BMonthlyAnalysis(month);
+      setRankings(analysis.rankings ?? []);
     } catch (err: any) {
       console.error('Error loading rankings:', err);
       setError(err?.message || 'Error al cargar rankings');
@@ -51,8 +42,8 @@ export const B2BRankingsReport = ({
   };
 
   useEffect(() => {
-    loadData();
-  }, [refreshTrigger]);
+    void loadData();
+  }, [month, refreshTrigger]);
 
   useEffect(() => {
     if (rankings.length > 0) {
@@ -82,7 +73,7 @@ export const B2BRankingsReport = ({
       ultima_compra: r.last_purchase_date ? formatDate(r.last_purchase_date) : '—',
     }));
 
-    exportToCSV('rankings_b2b', data, [
+    exportToCSV(`rankings_b2b_${month}`, data, [
       { key: 'rank', label: 'Rank' },
       { key: 'folio', label: 'Folio' },
       { key: 'socio', label: 'Socio' },

@@ -22,7 +22,8 @@ export interface CommercialDeliveryUnit {
   unit_price: number;
   unit_cost?: number | null;
   status: CommercialDeliveryUnitStatus;
-  generated_at: string;
+  generated_at?: string | null;
+  created_at?: string | null;
   printed_at?: string | null;
   released_at?: string | null;
   returned_good_at?: string | null;
