@@ -12,6 +12,7 @@ interface TandaPosible {
 }
 
 interface RawMaterial {
+  material_code?: string;
   name: string;
   unit: string;
   current_stock: number;
@@ -53,6 +54,17 @@ interface PackRecommendation {
 // Helper: Obtener gramos por unidad de un producto
 function getProductGrams(product: Product): number {
   return product.weight_grams || product.grams || 0;
+}
+
+function formatMexicoCityDate(value: string): string {
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone: 'America/Mexico_City',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
 }
 
 // Helper: Verificar compatibilidad batch-producto por SKU
@@ -107,6 +119,15 @@ interface GiftAllocation {
   notes: string | null;
 }
 
+interface GummyProductionRun {
+  produced_at: string;
+  units_produced: number;
+  grams_consumed: number;
+  unit_cost: number;
+  notes: string | null;
+  produced_by: string;
+}
+
 export const Production = () => {
   const [selectedBatchType, setSelectedBatchType] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
@@ -137,6 +158,12 @@ export const Production = () => {
   const [rawMaterials, setRawMaterials] = useState<RawMaterial[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [maizQtyByBatchType, setMaizQtyByBatchType] = useState<Record<string, number>>({});
+  const [gummyUnitsInput, setGummyUnitsInput] = useState<string>('1');
+  const [gummyNotes, setGummyNotes] = useState<string>('');
+  const [gummyLoading, setGummyLoading] = useState<boolean>(false);
+  const [gummyError, setGummyError] = useState<string>('');
+  const [gummySuccess, setGummySuccess] = useState<string>('');
+  const [gummyProductionRuns, setGummyProductionRuns] = useState<GummyProductionRun[]>([]);
 
   // Gift allocation states (separated from pack section to avoid conflicts)
   const [selectedGiftBatchId, setSelectedGiftBatchId] = useState<string>('');
@@ -153,6 +180,7 @@ export const Production = () => {
   const [showSampleGiftHistory, setShowSampleGiftHistory] = useState<boolean>(false);
   const [showPackedLotsHistory, setShowPackedLotsHistory] = useState<boolean>(false);
   const [showProductionInventory, setShowProductionInventory] = useState<boolean>(false);
+  const [showGummyProductionHistory, setShowGummyProductionHistory] = useState<boolean>(false);
 
   useEffect(() => {
     loadData();
@@ -174,6 +202,19 @@ export const Production = () => {
     console.log('[PACK] filtered products', filtered);
     return filtered;
   }, [selectedBatch, availableProducts]);
+
+  const gummyMaterial = useMemo(
+    () => rawMaterials.find(material =>
+      material.material_code === 'GOMITAS-GREN-01'
+    ) ?? null,
+    [rawMaterials]
+  );
+  const gummyBagsPossible = Math.max(0, Math.floor(Number(gummyMaterial?.current_stock ?? 0) / 90));
+  const gummyUnits = Number(gummyUnitsInput);
+  const gummyUnitsAreValid = /^\d+$/.test(gummyUnitsInput)
+    && Number.isSafeInteger(gummyUnits)
+    && gummyUnits > 0;
+  const gummyGramsToConsume = gummyUnitsAreValid ? gummyUnits * 90 : 0;
 
   // Reset selectedProductId when batch changes and current product is not compatible
   useEffect(() => {
@@ -216,11 +257,23 @@ export const Production = () => {
       // D) Inventario de insumos
       const { data: materialsData } = await supabase
         .from('raw_materials')
-        .select('name, unit, current_stock')
+        .select('material_code, name, unit, current_stock')
         .order('name');
       setRawMaterials(materialsData || []);
 
-      // E) Load maíz qty per batch_type directly (independent of recipe cards system)
+      // E) Separate history for gummy production; never combine it with batches or lots.
+      const { data: gummyRunsData, error: gummyRunsError } = await supabase
+        .from('gummy_production_runs')
+        .select('produced_at, units_produced, grams_consumed, unit_cost, notes, produced_by')
+        .order('produced_at', { ascending: false })
+        .limit(25);
+      if (gummyRunsError) {
+        console.error('Error loading gummy production history:', gummyRunsError);
+      } else {
+        setGummyProductionRuns((gummyRunsData || []) as GummyProductionRun[]);
+      }
+
+      // F) Load maíz qty per batch_type directly (independent of recipe cards system)
       try {
         const { data: batchRecipeRows, error: brErr } = await supabase
           .from('batch_recipes')
@@ -244,7 +297,7 @@ export const Production = () => {
         console.error('[MAIZ] Exception loading maíz recipes:', e);
       }
 
-      // F) Historial de tandas
+      // G) Historial de tandas
       const { data: batchesData } = await supabase
         .from('batches')
         .select('*')
@@ -372,6 +425,37 @@ export const Production = () => {
       setErrorMessage(error.message || 'Error al producir tanda');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleProduceGummies = async () => {
+    setGummyLoading(true);
+    setGummyError('');
+    setGummySuccess('');
+
+    try {
+      if (!supabase) throw new Error('Supabase no está configurado');
+      if (!Number.isInteger(gummyUnits) || gummyUnits <= 0) {
+        throw new Error('La cantidad de bolsas debe ser un entero mayor a cero');
+      }
+
+      const { data, error } = await supabase.rpc('record_gummy_production', {
+        p_units: gummyUnits,
+        p_notes: gummyNotes || null,
+      });
+      if (error) throw error;
+
+      const result = data as { grams_consumed?: number; raw_material_stock_remaining?: number } | null;
+      setGummySuccess(
+        `Se registraron ${gummyUnits} bolsas. Se descontaron ${Number(result?.grams_consumed ?? gummyUnits * 90).toFixed(0)} g de gomitas; quedan ${Number(result?.raw_material_stock_remaining ?? 0).toFixed(0)} g.`
+      );
+      setGummyUnitsInput('1');
+      setGummyNotes('');
+      await loadData();
+    } catch (error: any) {
+      setGummyError(error.message || 'Error al registrar producción de gomitas');
+    } finally {
+      setGummyLoading(false);
     }
   };
 
@@ -764,6 +848,123 @@ export const Production = () => {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Direct gummy production: raw material only, no finished-goods lot. */}
+      <div className="bg-cc-surface p-6 rounded-xl border border-white/5">
+        <h3 className="text-lg font-semibold text-cc-cream mb-2 flex items-center gap-2">
+          <Package size={20} className="text-cc-primary" />
+          Producir Gomitas de Grenetina Mix 90 g
+        </h3>
+        <p className="text-sm text-cc-text-muted mb-4">
+          Cada bolsa consume 90 g de <span className="text-cc-text-main">Gomitas de grenetina a granel</span> del inventario global. No crea inventario de producto terminado.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 text-sm">
+          <div className="rounded-lg bg-black/20 p-3">
+            <p className="text-cc-text-muted text-xs">Insumo disponible</p>
+            <p className="text-cc-cream font-semibold">{Number(gummyMaterial?.current_stock ?? 0).toFixed(0)} g</p>
+          </div>
+          <div className="rounded-lg bg-black/20 p-3">
+            <p className="text-cc-text-muted text-xs">Bolsas posibles</p>
+            <p className="text-cc-cream font-semibold">{gummyBagsPossible}</p>
+          </div>
+          <div className="rounded-lg bg-black/20 p-3">
+            <p className="text-cc-text-muted text-xs">Costo directo / precio</p>
+            <p className="text-cc-cream font-semibold">$7.20 / $18.00</p>
+          </div>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-cc-text-muted mb-2">Bolsas a producir</label>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={gummyUnitsInput}
+              onChange={(event) => setGummyUnitsInput(event.target.value)}
+              className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
+              disabled={gummyLoading}
+            />
+            <p className="mt-2 text-xs text-cc-text-muted">
+              Consumo calculado: <span className="font-semibold text-cc-cream">{gummyGramsToConsume} g</span>
+              {' '}({gummyUnitsAreValid ? `${gummyUnits} × 90 g` : 'indica un entero positivo'})
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-cc-text-muted mb-2">Notas (opcional)</label>
+            <textarea
+              value={gummyNotes}
+              onChange={(event) => setGummyNotes(event.target.value)}
+              rows={2}
+              placeholder="Ej: Producción turno matutino"
+              className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none resize-none"
+              disabled={gummyLoading}
+            />
+          </div>
+          <button
+            onClick={handleProduceGummies}
+            disabled={gummyLoading || !gummyMaterial || !gummyUnitsAreValid || gummyUnits > gummyBagsPossible}
+            className="w-full px-6 py-3 bg-cc-primary text-cc-bg rounded-lg hover:bg-cc-primary/90 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            <ChefHat size={20} />
+            {gummyLoading ? 'Registrando...' : 'Registrar producción de gomitas'}
+          </button>
+          {gummyError && <p className="text-sm text-red-300">{gummyError}</p>}
+          {gummySuccess && <p className="text-sm text-green-300">{gummySuccess}</p>}
+        </div>
+      </div>
+
+      <div className="bg-cc-surface p-6 rounded-xl border border-white/5">
+        <button
+          onClick={() => setShowGummyProductionHistory(!showGummyProductionHistory)}
+          className="w-full flex items-center justify-between group"
+        >
+          <h3 className="text-lg font-semibold text-cc-cream flex items-center gap-2">
+            <Package size={20} className="text-cc-primary" />
+            Historial de Producción de Gomitas
+          </h3>
+          <div className="flex items-center gap-2">
+            {!showGummyProductionHistory && (
+              <span className="text-xs text-cc-text-muted">{gummyProductionRuns.length} registros</span>
+            )}
+            {showGummyProductionHistory ? (
+              <ChevronDown size={18} className="text-cc-text-muted group-hover:text-cc-cream transition-colors" />
+            ) : (
+              <ChevronRight size={18} className="text-cc-text-muted group-hover:text-cc-cream transition-colors" />
+            )}
+          </div>
+        </button>
+
+        {showGummyProductionHistory && (
+          gummyProductionRuns.length === 0 ? (
+            <p className="mt-4 text-sm text-cc-text-muted">No hay producciones de gomitas registradas.</p>
+          ) : (
+            <div className="overflow-x-auto mt-4">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 text-left text-xs text-cc-text-muted">
+                    <th className="pb-2 pr-4 font-medium">Fecha</th>
+                    <th className="pb-2 pr-4 font-medium">Bolsas</th>
+                    <th className="pb-2 pr-4 font-medium">Consumo</th>
+                    <th className="pb-2 pr-4 font-medium">Costo directo</th>
+                    <th className="pb-2 font-medium">Notas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gummyProductionRuns.map((run, index) => (
+                    <tr key={`${run.produced_at}-${run.produced_by}-${index}`} className="border-b border-white/5 text-cc-text-main">
+                      <td className="py-3 pr-4 whitespace-nowrap">{formatMexicoCityDate(run.produced_at)}</td>
+                      <td className="py-3 pr-4">{run.units_produced}</td>
+                      <td className="py-3 pr-4">{Number(run.grams_consumed).toFixed(0)} g</td>
+                      <td className="py-3 pr-4">${(Number(run.units_produced) * Number(run.unit_cost)).toFixed(2)}</td>
+                      <td className="py-3 text-cc-text-muted">{run.notes || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
       </div>
 
       {/* Producir Tanda Form */}

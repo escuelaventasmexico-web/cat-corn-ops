@@ -19,13 +19,15 @@ const CATEGORIES = [
   { key: 'salada',   label: 'SALADAS',  emoji: '🧂' },
   { key: 'caramelo', label: 'CARAMELO', emoji: '🍯' },
   { key: 'sabores',  label: 'SABORES',  emoji: '🍿' },
+  { key: 'gomitas',  label: 'GOMITAS',  emoji: '🍬' },
 ] as const;
 
-/** Map a product's flavor/category to one of the 3 buckets */
+/** Map a product's flavor/category to one of the visible catalog buckets. */
 function resolveCategory(p: Product): string {
-  const raw = (p.flavor || p.category || '').toLowerCase();
+  const raw = `${p.flavor || ''} ${p.category || ''}`.toLowerCase();
   if (raw.includes('salad'))   return 'salada';
   if (raw.includes('caramel')) return 'caramelo';
+  if (raw.includes('gomit'))   return 'gomitas';
   return 'sabores';
 }
 

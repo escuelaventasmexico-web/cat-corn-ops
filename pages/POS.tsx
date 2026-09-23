@@ -830,6 +830,7 @@ export const POS = () => {
   const filteredProducts = products.filter(p => {
     const displayName = p.product_name || p.name;
     const sku = p.sku_code || '';
+    const barcode = p.barcode_value || '';
     const search = searchTerm.toLowerCase();
     
     // FILTER OUT DELIVERY PRODUCTS
@@ -842,7 +843,9 @@ export const POS = () => {
     }
     
     // Apply search filter
-    return displayName.toLowerCase().includes(search) || sku.toLowerCase().includes(search);
+    return displayName.toLowerCase().includes(search)
+      || sku.toLowerCase().includes(search)
+      || barcode.toLowerCase().includes(search);
   });
 
   // Group products dynamically by flavor (loaded from DB)
@@ -864,6 +867,7 @@ export const POS = () => {
     if (f.includes('caramel')) return '🍯';
     if (f.includes('cheddar') || f.includes('queso')) return '🧀';
     if (f.includes('flam') || f.includes('hot')) return '🔥';
+    if (f.includes('gomit')) return '🍬';
     return '🍿';
   };
 
