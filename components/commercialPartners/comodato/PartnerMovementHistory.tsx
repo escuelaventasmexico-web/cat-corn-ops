@@ -30,7 +30,10 @@ const calculateMovementTotals = (items: PartnerMovementItem[]) => ({
   total_sold: items.reduce((sum, it) => sum + (it.quantity_sold ?? 0), 0),
   total_withdrawn: items.reduce((sum, it) => sum + (it.quantity_withdrawn ?? 0), 0),
   total_spoiled: items.reduce((sum, it) => sum + (it.quantity_spoiled ?? 0), 0),
+  total_adjusted: items.reduce((sum, it) => sum + (it.quantity_adjusted ?? 0), 0),
   total_due: items.reduce((sum, it) => sum + (it.amount_due ?? 0), 0),
+  total_amount_adjusted: items.reduce((sum, it) => sum + (it.amount_adjusted ?? 0), 0),
+  total_commission_adjusted: items.reduce((sum, it) => sum + (it.commission_amount_adjusted ?? 0), 0),
 });
 
 const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
@@ -365,6 +368,23 @@ const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
         };
 
       case 'adjustment':
+        return {
+          summary: `Piezas corregidas: ${totals.total_adjusted} · Importe descontado: ${fmtCurrency(totals.total_amount_adjusted)} · Comisión reducida: ${fmtCurrency(totals.total_commission_adjusted)}`,
+          details: (
+            <div className="space-y-3 text-xs text-[#374151]">
+              {mv.adjustment_folio && <p>Folio del ajuste: <b>{mv.adjustment_folio}</b></p>}
+              {mv.adjustment_reason && <p>Motivo: <b>{mv.adjustment_reason}</b></p>}
+              {mv.notes && <p>Notas: <span className="italic">{mv.notes}</span></p>}
+              {mv.created_by && <p>Usuario que realizó el ajuste: <b>{mv.created_by}</b></p>}
+              {items.map(it => (
+                <div key={it.id} className="border-t border-[#e8d5a0] pt-2">
+                  <p className="font-semibold text-[#111111]">{it.product_name}{it.product_variant ? ` — ${it.product_variant}` : ''}{it.product_size ? ` (${it.product_size})` : ''}</p>
+                  <p>Piezas corregidas: {it.quantity_adjusted ?? 0} · Importe descontado: {fmtCurrency(it.amount_adjusted)} · Comisión reducida: {fmtCurrency(it.commission_amount_adjusted)}</p>
+                </div>
+              ))}
+            </div>
+          ),
+        };
       case 'visit':
       default:
         return {
@@ -456,7 +476,7 @@ const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
                 {mv.total_amount_due > 0 && (
                   <p className="text-sm font-bold text-[#111111]">{fmtCurrency(mv.total_amount_due)}</p>
                 )}
-                <div className="relative">
+                {mv.movement_type === 'delivery' && <div className="relative">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -495,7 +515,7 @@ const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
                       </button>
                     </div>
                   )}
-                </div>
+                </div>}
                 {isOpen
                   ? <ChevronUp className="w-4 h-4 text-[#7a4a0a]" />
                   : <ChevronDown className="w-4 h-4 text-[#7a4a0a]" />

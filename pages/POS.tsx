@@ -3,7 +3,7 @@ import { supabase, Product, CartItem } from '../supabase';
 import type { Customer } from '../supabase';
 import { normalizePhone, fetchCustomerByPhoneNorm, fetchCustomerById, createCustomerRecord, fetchCustomersList } from '../lib/loyalty';
 import { exportCustomersToExcel } from '../lib/exportCustomers';
-import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion, isTodayWeekday } from '../lib/promotions';
+import { PROMOTIONS, clearPromoDiscounts, countEligible, countGummyCombos, getPromoEmoji, getPromotion, isGummyComboGummy, isGummyComboPopcorn, isTodayWeekday } from '../lib/promotions';
 import type { PromotionCode } from '../lib/promotions';
 import { Search, Plus, Minus, CreditCard, Banknote, Landmark, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings, Package, Truck } from 'lucide-react';
 import { fetchCashStatus, getOpenSessionIdForBranch, EMPTY_CASH_STATUS } from '../lib/cashRegister';
@@ -87,6 +87,15 @@ export const POS = () => {
   const [deliveryPlatform, setDeliveryPlatform] = useState<'uber_eats' | 'didi_food' | 'rappi' | null>(null);
   const cashRequestBranchRef = useRef<string | null>(null);
   const cashRegisterOpen = !!cashStatus.session_id;
+
+  const toggleDeliveryPlatform = (platform: 'uber_eats' | 'didi_food' | 'rappi') => {
+    const nextPlatform = deliveryPlatform === platform ? null : platform;
+    if (nextPlatform && activePromoCode === 'COMBO_PALOMITAS_GOMITAS') {
+      setActivePromoCode(null);
+      setCart(prev => clearPromoDiscounts(prev));
+    }
+    setDeliveryPlatform(nextPlatform);
+  };
 
   useEffect(() => { fetchProducts(); }, []);
 
@@ -340,6 +349,14 @@ export const POS = () => {
   const hasInstagramApplied = cart.some(item => item.discount_reason === 'PROMOCION_INSTAGRAM_15');
   const hasSaboresPromoApplied = cart.some(item => item.discount_reason === 'PROMO_SATURDAY_SABORES_50');
   const hasMantequillaPromoApplied = cart.some(item => item.discount_reason === 'PROMO_FRIDAY_MANTEQUILLA_2X1');
+  const hasGummyComboPromoApplied = cart.some(item => item.discount_reason === 'PROMO_COMBO_PALOMITAS_GOMITAS');
+  const gummyComboCount = useMemo(() => countGummyCombos(cart), [cart]);
+  const gummyComboStatus = useMemo(() => {
+    if (gummyComboCount > 0) return `${gummyComboCount} combo${gummyComboCount === 1 ? '' : 's'} completo${gummyComboCount === 1 ? '' : 's'}`;
+    if (!cart.some(isGummyComboPopcorn) && !cart.some(isGummyComboGummy)) return 'Agrega una palomita y una gomita';
+    if (!cart.some(isGummyComboPopcorn)) return 'Falta agregar una palomita';
+    return 'Falta agregar una gomita';
+  }, [cart, gummyComboCount]);
 
   // Instagram promo derived values
   const instagramDiscountInfo = useMemo(() => {
@@ -801,7 +818,7 @@ export const POS = () => {
   // --- Promotion helpers ---
 
   const activatePromo = (code: PromotionCode) => {
-    if (promoBlocked) return;
+    if (promoBlocked || (deliveryPlatform && code === 'COMBO_PALOMITAS_GOMITAS')) return;
     if (activePromoCode === code) {
       // Deactivate
       deactivatePromo();
@@ -822,7 +839,9 @@ export const POS = () => {
   const promoEligibleCounts = useMemo(() => {
     const map: Record<string, number> = {};
     for (const p of PROMOTIONS) {
-      map[p.code] = countEligible(cart, p.code);
+      map[p.code] = p.code === 'COMBO_PALOMITAS_GOMITAS'
+        ? countGummyCombos(cart)
+        : countEligible(cart, p.code);
     }
     return map;
   }, [cart]);
@@ -941,7 +960,7 @@ export const POS = () => {
             ] as const).map(p => (
               <button
                 key={p.key}
-                onClick={() => setDeliveryPlatform(prev => prev === p.key ? null : p.key)}
+                onClick={() => toggleDeliveryPlatform(p.key)}
                 className={`flex items-center gap-1 px-3 py-2 rounded-xl border text-xs font-bold transition-all ${
                   deliveryPlatform === p.key ? p.active : p.color
                 }`}
@@ -999,13 +1018,14 @@ export const POS = () => {
                   const eligible = promoEligibleCounts[p.code] || 0;
                   const blocked = promoBlocked;
                   const notToday = p.dayIndex !== undefined && !isTodayWeekday(p.dayIndex);
+                  const isGummyComboPromo = p.code === 'COMBO_PALOMITAS_GOMITAS';
                   const isSaboresPromo = p.code === 'SATURDAY_SABORES_50';
                   const isMantequillaPromo = p.code === 'FRIDAY_MANTEQUILLA_2X1';
                   return (
                     <button
                       key={p.code}
                       onClick={() => activatePromo(p.code)}
-                      disabled={(blocked && !isActive) || notToday}
+                      disabled={(blocked && !isActive) || notToday || (isGummyComboPromo && !!deliveryPlatform && !isActive)}
                       className={`relative text-left p-4 rounded-xl border transition-all group ${
                         isActive
                           ? isSaboresPromo
@@ -1013,7 +1033,7 @@ export const POS = () => {
                             : isMantequillaPromo
                               ? 'bg-amber-500/10 border-amber-400/40 ring-1 ring-amber-400/30'
                               : 'bg-cc-accent/10 border-cc-accent/40 ring-1 ring-cc-accent/30'
-                          : blocked || notToday
+                          : blocked || notToday || (isGummyComboPromo && !!deliveryPlatform)
                             ? 'bg-cc-surface border-white/5 opacity-40 cursor-not-allowed'
                             : isSaboresPromo
                               ? 'bg-cc-surface border-orange-400/20 hover:border-orange-400/40 hover:bg-orange-500/5'
@@ -1071,10 +1091,16 @@ export const POS = () => {
                             : isMantequillaPromo ? 'text-amber-300 bg-amber-400/10'
                             : 'text-cc-accent bg-cc-accent/10'
                           }`}>
-                            {eligible} en carrito
+                            {isGummyComboPromo ? `${eligible} combo${eligible === 1 ? '' : 's'}` : `${eligible} en carrito`}
                           </span>
                         )}
                       </div>
+
+                      {isGummyComboPromo && (
+                        <p className="text-[10px] text-cc-text-muted/70 mt-1.5">
+                          {gummyComboStatus}
+                        </p>
+                      )}
 
                       {/* Note */}
                       {p.note && (
@@ -1229,7 +1255,10 @@ export const POS = () => {
                         {item.discount_reason === 'PROMOCION_INSTAGRAM_15' && (
                           <div className="text-[10px] text-pink-300 mt-0.5 flex items-center gap-1"><Sparkles size={10} /> -15% Instagram</div>
                         )}
-                        {item.discount_reason?.startsWith('PROMO_') && item.discount_reason !== 'PROMOCION_INSTAGRAM_15' && item.discount_reason !== 'PROMO_SATURDAY_SABORES_50' && item.discount_reason !== 'PROMO_FRIDAY_MANTEQUILLA_2X1' && (
+                        {item.discount_reason === 'PROMO_COMBO_PALOMITAS_GOMITAS' && (
+                          <div className="text-[10px] text-cc-accent mt-0.5 flex items-center gap-1"><Tag size={10} /> Combo Palomitas + Gomitas</div>
+                        )}
+                        {item.discount_reason?.startsWith('PROMO_') && item.discount_reason !== 'PROMO_COMBO_PALOMITAS_GOMITAS' && item.discount_reason !== 'PROMOCION_INSTAGRAM_15' && item.discount_reason !== 'PROMO_SATURDAY_SABORES_50' && item.discount_reason !== 'PROMO_FRIDAY_MANTEQUILLA_2X1' && (
                           <div className="text-[10px] text-cc-accent mt-0.5 flex items-center gap-1"><Tag size={10} /> Promo</div>
                         )}
                         {item.discount_reason === 'PROMO_SATURDAY_SABORES_50' && (
@@ -1290,10 +1319,16 @@ export const POS = () => {
                     <span className="text-green-400">-${cart.filter(i => i.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
                   </div>
                 )}
-                {hasPromoApplied && !hasInstagramApplied && !hasSaboresPromoApplied && !hasMantequillaPromoApplied && (
+                {hasPromoApplied && !hasInstagramApplied && !hasSaboresPromoApplied && !hasMantequillaPromoApplied && !hasGummyComboPromoApplied && (
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-cc-accent">Desc. Promoción</span>
                     <span className="text-cc-accent">-${cart.filter(i => i.discount_reason?.startsWith('PROMO_') && i.discount_reason !== 'PROMOCION_INSTAGRAM_15' && i.discount_reason !== 'PROMO_SATURDAY_SABORES_50' && i.discount_reason !== 'PROMO_FRIDAY_MANTEQUILLA_2X1').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
+                  </div>
+                )}
+                {hasGummyComboPromoApplied && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-cc-accent">Combo Palomitas + Gomitas</span>
+                    <span className="text-cc-accent">-${cart.filter(i => i.discount_reason === 'PROMO_COMBO_PALOMITAS_GOMITAS').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
                   </div>
                 )}
                 {hasMantequillaPromoApplied && (

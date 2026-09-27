@@ -282,8 +282,11 @@ export async function getCurrentStockComodato(
       lastDelivery?.movement_date
     );
 
-    // 4. Fetch financial summary (in parallel)
+    // 4. Fetch the fresh authoritative financial summary used by the partner card
     const financialSummary = await getComodatoFinancialSummary(partnerId);
+    if (!financialSummary) {
+      throw new Error('Unable to load the authoritative Comodato financial summary');
+    }
 
     return {
       partner: {
@@ -639,40 +642,27 @@ export async function getMermaAndWithdrawalAfterLastDelivery(
 
 /**
  * Get financial summary for a comodato partner.
- * Uses the existing RPC or fallback query to get:
- * - total_generated (sum of settlements with quantity_sold > 0)
- * - total_paid (sum of payments)
- * - pending_balance (total_generated - total_paid)
+ * Uses v_commercial_partner_operational_summary, the same authoritative source
+ * as the partner balance card. Its Comodato totals already subtract completed
+ * append-only administrative adjustments from the original settlement amount.
  */
 export async function getComodatoFinancialSummary(partnerId: string) {
   if (!supabase) return null;
   try {
-    let totalGenerated = 0;
-    let totalPaid = 0;
     let piecesWithPendingBalance = 0;
 
-    // Query 1: Get total generated from ALL movement items
-    const { data: settlementData, error: settlementErr } = await supabase
-      .from('commercial_partner_movement_items')
-      .select('amount_due, quantity_sold')
-      .eq('partner_id', partnerId);
-
-    if (!settlementErr && settlementData) {
-      totalGenerated = settlementData.reduce((sum, row: any) => sum + (row.amount_due ?? 0), 0);
-    }
-
-    // Query 2: Get total paid from payments
-    const { data: paymentData, error: paymentErr } = await supabase
-      .from('commercial_partner_payments')
-      .select('amount')
+    const { data: financialData, error: financialError } = await supabase
+      .from('v_commercial_partner_operational_summary')
+      .select('total_due, total_paid, pending_balance')
       .eq('partner_id', partnerId)
-      .in('status', ['completed', 'paid']);
+      .maybeSingle();
 
-    if (!paymentErr && paymentData) {
-      totalPaid = paymentData.reduce((sum, row: any) => sum + (row.amount ?? 0), 0);
+    if (financialError) {
+      throw financialError;
     }
 
-    // Query 3: Get pieces from settlements that have pending balance
+    // Keep the existing informational piece count independent from current stock.
+    // Administrative balance adjustments must not alter physical inventory here.
     // For now, we'll count quantity_sold from settlement movements with unpaid amounts
     const { data: settlementsWithPending, error: settPendErr } = await supabase
       .from('commercial_partner_movements')
@@ -699,22 +689,15 @@ export async function getComodatoFinancialSummary(partnerId: string) {
       }
     }
 
-    const pendingBalance = Math.max(0, totalGenerated - totalPaid);
-
     return {
-      total_generated: totalGenerated,
-      total_paid: totalPaid,
-      pending_balance: pendingBalance,
+      total_generated: Number(financialData?.total_due ?? 0),
+      total_paid: Number(financialData?.total_paid ?? 0),
+      pending_balance: Number(financialData?.pending_balance ?? 0),
       piecesWithPendingBalance: piecesWithPendingBalance,
     };
   } catch (err) {
     console.error('[Print] Exception in getComodatoFinancialSummary:', err);
-    return {
-      total_generated: 0,
-      total_paid: 0,
-      pending_balance: 0,
-      piecesWithPendingBalance: 0,
-    };
+    return null;
   }
 }
 

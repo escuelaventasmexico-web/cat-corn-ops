@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { X, AlertCircle, CreditCard } from 'lucide-react';
 import { supabase } from '../../../supabase';
 import {
@@ -25,6 +25,24 @@ interface Props {
 
 type Step = 'form' | 'proof' | 'success';
 
+interface PendingSettlement {
+  id: string;
+  date: string;
+  pending: number;
+  hasActiveRequest: boolean;
+}
+
+interface PaymentOptionsResponse {
+  partner_id?: string;
+  pending_balance?: number | string | null;
+  settlements?: Array<{
+    movement_id: string;
+    movement_date: string;
+    pending_balance: number | string;
+    has_active_request?: boolean;
+  }>;
+}
+
 const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) => {
   const [summary, setSummary] = useState<PartnerOperationalSummary | null>(null);
   const [date, setDate] = useState(todayISO());
@@ -38,136 +56,91 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
   const [successData, setSuccessData] = useState<{ folio: string; amount: number } | null>(null);
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [selectedMovementId, setSelectedMovementId] = useState<string | null>(null);
-  const [movements, setMovements] = useState<Array<{ id: string; date: string; pending: number; totalDue: number; totalPaid: number }>>([]);
+  const [movements, setMovements] = useState<PendingSettlement[]>([]);
+
+  const loadPaymentOptions = useCallback(async (): Promise<{
+    movements: PendingSettlement[];
+    pendingBalance: number;
+    reconciled: boolean;
+  } | null> => {
+    if (!supabase) return null;
+
+    const { data, error: optionsError } = await supabase.rpc(
+      'get_partner_comodato_payment_options',
+      { p_partner_id: partnerId },
+    );
+
+    if (optionsError) throw optionsError;
+
+    const response = (data ?? {}) as PaymentOptionsResponse;
+    if (response.partner_id && response.partner_id !== partnerId) {
+      throw new Error('La información de adeudos no corresponde al socio seleccionado.');
+    }
+
+    const pendingBalance = Number(response.pending_balance ?? 0) || 0;
+    const freshMovements = (response.settlements ?? []).map(settlement => ({
+      id: settlement.movement_id,
+      date: settlement.movement_date,
+      pending: Number(settlement.pending_balance ?? 0) || 0,
+      hasActiveRequest: Boolean(settlement.has_active_request),
+    })).filter(settlement => settlement.pending > 0.005);
+    const settlementsTotal = freshMovements.reduce(
+      (total, settlement) => total + settlement.pending,
+      0,
+    );
+    const reconciled = Math.abs(settlementsTotal - pendingBalance) <= 0.01;
+
+    if (!reconciled) {
+      console.error('[Comodato payment] Pending balance reconciliation failed', {
+        partnerId,
+        partnerPendingBalance: pendingBalance,
+        settlementsPendingBalance: settlementsTotal,
+        settlements: freshMovements,
+      });
+    }
+
+    setSummary({
+      partner_id: partnerId,
+      total_due: 0,
+      total_paid: 0,
+      pending_balance: pendingBalance,
+    });
+    setMovements(freshMovements);
+    setSelectedMovementId(current => {
+      if (!current) return freshMovements.length === 1
+        && !freshMovements[0].hasActiveRequest ? freshMovements[0].id : null;
+      const selected = freshMovements.find(settlement => settlement.id === current);
+      return selected && !selected.hasActiveRequest ? current : null;
+    });
+
+    return { movements: freshMovements, pendingBalance, reconciled };
+  }, [partnerId]);
 
   // Load current balance and movements
   useEffect(() => {
     if (!supabase) return;
+    let cancelled = false;
     (async () => {
       try {
-        // Load overall balance summary
-        const { data } = await supabase!
-          .from('v_commercial_partner_operational_summary')
-          .select('pending_balance, total_due, total_paid')
-          .eq('partner_id', partnerId)
-          .maybeSingle();
-
-        if (data) {
-          setSummary(data as PartnerOperationalSummary);
-        } else {
-          // Fallback: sum from items table (more reliable)
-          const [movItemRes, payRes] = await Promise.all([
-            supabase!
-            .from('commercial_partner_movement_items')
-            .select('amount_due, movement:commercial_partner_movements!inner(partner_id,status)')
-            .eq('commercial_partner_movements.partner_id', partnerId)
-            .eq('commercial_partner_movements.status', 'completed'),
-            supabase!
-              .from('commercial_partner_payments')
-              .select('amount')
-              .eq('partner_id', partnerId),
-          ]);
-          const totalGenerated = (movItemRes.data ?? []).reduce((s: number, r: any) => s + (r.amount_due ?? 0), 0);
-          const totalPaid = (payRes.data ?? []).reduce((s: number, r: any) => s + (r.amount ?? 0), 0);
-          setSummary({ partner_id: partnerId, total_due: totalGenerated, total_paid: totalPaid, pending_balance: totalGenerated - totalPaid });
-        }
-
-        // Load settlement movements for comodato using SEPARATE QUERIES (no complex embeds)
-        console.log('CURRENT PARTNER ID', partnerId);
-
-        // Step 1: Get all settlement movements for this partner
-        const { data: movData, error: movError } = await supabase!
-          .from('commercial_partner_movements')
-          .select('id, movement_date')
-          .eq('partner_id', partnerId)
-          .eq('movement_type', 'settlement')
-          .eq('status', 'completed')
-          .order('movement_date', { ascending: false });
-
-        console.log('SETTLEMENT MOVEMENTS', movData);
-        if (movError) {
-          console.error('LOAD SETTLEMENT MOVEMENTS ERROR', movError);
-          setError('No se pudieron cargar los adeudos. Revisa la conexión o los permisos.');
-          setMovements([]);
+        setError(null);
+        const result = await loadPaymentOptions();
+        if (cancelled || !result) return;
+        if (!result.reconciled) {
+          setError('Los adeudos no coinciden con el saldo general. No se puede reportar el cobro hasta actualizar la información.');
           return;
         }
-
-        if (!movData || movData.length === 0) {
-          console.log('No settlement movements found for partner', partnerId);
-          setMovements([]);
-          return;
-        }
-
-        const movementIds = movData.map((m: any) => m.id);
-        console.log('SETTLEMENT MOVEMENT IDS', movementIds);
-
-        // Step 2: Get all items for these movements (with quantity_sold > 0)
-        const { data: items, error: itemError } = await supabase!
-          .from('commercial_partner_movement_items')
-          .select('movement_id, amount_due, quantity_sold')
-          .in('movement_id', movementIds)
-          .gt('quantity_sold', 0);
-
-        console.log('SETTLEMENT ITEMS', items);
-        if (itemError) {
-          console.error('LOAD SETTLEMENT ITEMS ERROR', itemError);
-          setError('No se pudieron cargar los detalles de adeudos. Revisa los permisos.');
-          setMovements([]);
-          return;
-        }
-
-        // Step 3: Get all payments for these movements (completed or paid)
-        const { data: payments, error: payError } = await supabase!
-          .from('commercial_partner_payments')
-          .select('movement_id, amount, status')
-          .in('movement_id', movementIds)
-          .in('status', ['completed', 'paid']);
-
-        console.log('SETTLEMENT PAYMENTS', payments);
-        if (payError) {
-          console.error('LOAD SETTLEMENT PAYMENTS ERROR', payError);
-          setError('No se pudieron cargar los pagos registrados. Revisa los permisos.');
-          setMovements([]);
-          return;
-        }
-
-        // Step 4: Calculate pending balance in TypeScript
-        const movWithBalance = movData.map((mov: any) => {
-          const movItems = items?.filter((item: any) => item.movement_id === mov.id) ?? [];
-          const movPayments = payments?.filter((pay: any) => pay.movement_id === mov.id) ?? [];
-
-          const totalDue = movItems.reduce((s: number, item: any) => s + (parseFloat(item.amount_due) || 0), 0);
-          const totalPaid = movPayments.reduce((s: number, pay: any) => s + (parseFloat(pay.amount) || 0), 0);
-          const pending = totalDue - totalPaid;
-
-          return {
-            id: mov.id,
-            date: mov.movement_date,
-            pending: pending,
-            totalDue: totalDue,
-            totalPaid: totalPaid,
-          };
-        });
-
-        console.log('CALCULATED PENDING SETTLEMENTS', movWithBalance);
-
-        // Filter to show only movements with pending balance > 0.005
-        const pendingSettlements = movWithBalance.filter((m: any) => m.pending > 0.005);
-        console.log('FILTERED PENDING SETTLEMENTS', pendingSettlements);
-        setMovements(pendingSettlements);
-
-        // Auto-select if only one pending settlement
-        if (pendingSettlements.length === 1 && !selectedMovementId) {
-          setSelectedMovementId(pendingSettlements[0].id);
-          setAmount(pendingSettlements[0].pending.toFixed(2));
-          console.log('AUTO-SELECTED SETTLEMENT', pendingSettlements[0]);
+        if (result.movements.length === 1 && !result.movements[0].hasActiveRequest) {
+          setAmount(result.movements[0].pending.toFixed(2));
         }
       } catch (err) {
-        console.error('Error loading movements:', err);
-        setError('Error al cargar liquidaciones');
+        if (cancelled) return;
+        console.error('[Comodato payment] Error loading effective balances:', err);
+        setMovements([]);
+        setError('No se pudieron cargar los saldos efectivos de las liquidaciones.');
       }
     })();
-  }, [partnerId]);
+    return () => { cancelled = true; };
+  }, [loadPaymentOptions]);
 
   // Handle payment submission using RPC workflow
   const handleSubmit = async (e: React.FormEvent) => {
@@ -183,8 +156,13 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
       return;
     }
 
-    if (summary && amountNum > (summary.pending_balance || 0)) {
-      setError(`Monto no puede exceder saldo pendiente (${fmtCurrency(summary.pending_balance || 0)})`);
+    const selectedSnapshot = movements.find(movement => movement.id === selectedMovementId);
+    if (!selectedSnapshot || selectedSnapshot.hasActiveRequest) {
+      setError('La liquidación ya no está disponible para reportar un cobro.');
+      return;
+    }
+    if (amountNum > selectedSnapshot.pending + 0.005) {
+      setError(`Monto no puede exceder el saldo de la liquidación (${fmtCurrency(selectedSnapshot.pending)})`);
       return;
     }
 
@@ -192,6 +170,24 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
     setError(null);
 
     try {
+      const freshState = await loadPaymentOptions();
+      const freshSelected = freshState?.movements.find(
+        movement => movement.id === selectedMovementId,
+      );
+      if (!freshState?.reconciled || !freshSelected || freshSelected.hasActiveRequest) {
+        setError('El saldo cambió o la liquidación ya tiene una solicitud activa. Revisa los datos actualizados.');
+        return;
+      }
+      if (Math.abs(freshSelected.pending - selectedSnapshot.pending) > 0.01) {
+        setAmount(freshSelected.pending.toFixed(2));
+        setError(`El saldo de la liquidación cambió a ${fmtCurrency(freshSelected.pending)}. Revisa el monto antes de continuar.`);
+        return;
+      }
+      if (amountNum > freshSelected.pending + 0.005) {
+        setError(`Monto no puede exceder el saldo actualizado de la liquidación (${fmtCurrency(freshSelected.pending)}).`);
+        return;
+      }
+
       // Get current user
       const { data: { user } } = await supabase!.auth.getUser();
       if (!user) throw new Error('No authenticated user');
@@ -367,6 +363,18 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
         <form onSubmit={(e) => {
           if (method === 'transfer') {
             e.preventDefault();
+            const selected = movements.find(movement => movement.id === selectedMovementId);
+            const amountNumber = Number(amount);
+            if (!selected || selected.hasActiveRequest) {
+              setError('Selecciona una liquidación disponible.');
+              return;
+            }
+            if (!Number.isFinite(amountNumber) || amountNumber <= 0
+              || amountNumber > selected.pending + 0.005) {
+              setError(`El monto debe estar entre $0.01 y ${fmtCurrency(selected.pending)}.`);
+              return;
+            }
+            setError(null);
             setStep('proof');
           } else {
             handleSubmit(e);
@@ -405,8 +413,8 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
               >
                 <option value="">Selecciona liquidación</option>
                 {movements.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    Liquidación del {new Date(m.date).toLocaleDateString('es-MX')} — saldo pendiente {fmtCurrency(m.pending)}
+                  <option key={m.id} value={m.id} disabled={m.hasActiveRequest}>
+                    Liquidación del {new Date(m.date).toLocaleDateString('es-MX')} — saldo pendiente {fmtCurrency(m.pending)}{m.hasActiveRequest ? ' — solicitud activa' : ''}
                   </option>
                 ))}
               </select>
@@ -432,7 +440,8 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
               <input
                 type="number"
                 step="0.01"
-                min="0"
+                min="0.01"
+                max={movements.find(movement => movement.id === selectedMovementId)?.pending}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 className={INPUT_CLS}

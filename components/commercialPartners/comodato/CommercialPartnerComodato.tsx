@@ -9,6 +9,8 @@ import PartnerMovementForm from './PartnerMovementForm';
 import PartnerPaymentForm from './PartnerPaymentForm';
 import { CommercialPartnerPrintModal } from '../CommercialPartnerPrintModal';
 import CommercialDeliveryUnitsPanel from '../CommercialDeliveryUnitsPanel';
+import { useAuth } from '../../../contexts/AuthContext';
+import AdminComodatoBalanceAdjustmentModal from './AdminComodatoBalanceAdjustmentModal';
 
 interface Props {
   partnerId: string;
@@ -19,6 +21,7 @@ type ActiveModal =
   | { kind: 'movement'; type: MovementType }
   | { kind: 'payment' }
   | { kind: 'print' }
+  | { kind: 'adjustment' }
   | null;
 
 const ACTION_BUTTON_DEFS: Array<{
@@ -80,8 +83,11 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
   const [refreshKey, setRefreshKey] = useState(0);
   const [subTab, setSubTab] = useState<SubTab>('stock');
   const [partnerName, setPartnerName] = useState<string>('');
+  const [partnerFolio, setPartnerFolio] = useState<string | null>(null);
   const [partnerModel, setPartnerModel] = useState<string>('comodato');
+  const [pendingBalance, setPendingBalance] = useState(0);
   const [spoilageNotice, setSpoilageNotice] = useState<string | null>(null);
+  const { profile } = useAuth();
 
   // Load partner name and model
   useEffect(() => {
@@ -90,11 +96,12 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
       try {
         const { data } = await supabase
           .from('commercial_partners')
-          .select('business_name, partner_model')
+          .select('business_name, folio, partner_model')
           .eq('id', partnerId)
           .single();
         if (data) {
           setPartnerName(data.business_name || '');
+          setPartnerFolio(data.folio || null);
           setPartnerModel(data.partner_model || 'comodato');
         }
       } catch (err) {
@@ -103,10 +110,24 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
     })();
   }, [partnerId]);
 
+  useEffect(() => {
+    if (!supabase) return;
+    (async () => {
+      const { data } = await supabase
+        .from('v_commercial_partner_operational_summary')
+        .select('pending_balance')
+        .eq('partner_id', partnerId)
+        .maybeSingle();
+      setPendingBalance(Number(data?.pending_balance ?? 0) || 0);
+    })();
+  }, [partnerId, refreshKey]);
+
   // ── Permission rules ──────────────────────────────────────────────────────
   const canDeliver = partnerStatus === 'activo';
   const canOperate = ['activo', 'pausado', 'inactivo'].includes(partnerStatus);
   const isLimited  = ['pausado', 'inactivo'].includes(partnerStatus);
+  const canAdjustBalance = profile?.role === 'admin' && profile.is_active
+    && partnerModel === 'comodato' && pendingBalance > 0;
 
   const handleSaved = (result?: { affectedPartnerId: string; affectedPartnerName: string }) => {
     setActiveModal(null);
@@ -174,6 +195,19 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
         </div>
       </div>
 
+      {canAdjustBalance && (
+        <div>
+          <p className="text-xs font-semibold text-[#4a2c0a] uppercase tracking-wider mb-2">Administración</p>
+          <button
+            type="button"
+            onClick={() => setActiveModal({ kind: 'adjustment' })}
+            className="flex items-center gap-1.5 rounded-lg border border-purple-400 bg-purple-100 px-3 py-1.5 text-xs font-semibold text-purple-900 transition-colors hover:bg-purple-200"
+          >
+            <AlertTriangle className="h-4 w-4" /> Ajustar saldo pendiente
+          </button>
+        </div>
+      )}
+
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-[#c49330]">
         {([
@@ -232,6 +266,16 @@ const CommercialPartnerComodato: React.FC<Props> = ({ partnerId, partnerStatus }
           partnerId={partnerId}
           partnerName={partnerName}
           partnerModel={partnerModel}
+        />
+      )}
+      {activeModal?.kind === 'adjustment' && (
+        <AdminComodatoBalanceAdjustmentModal
+          partnerId={partnerId}
+          partnerName={partnerName}
+          partnerFolio={partnerFolio}
+          pendingBalance={pendingBalance}
+          onClose={() => setActiveModal(null)}
+          onSuccess={() => setRefreshKey(key => key + 1)}
         />
       )}
     </div>

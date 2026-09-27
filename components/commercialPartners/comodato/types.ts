@@ -7,7 +7,7 @@ export const MOVEMENT_TYPE_LABELS: Record<MovementType, string> = {
   settlement: 'Liquidación',
   withdrawal: 'Retiro',
   spoilage:   'Merma',
-  adjustment: 'Ajuste',
+  adjustment: 'Ajuste administrativo',
   visit:      'Visita',
 };
 
@@ -32,9 +32,14 @@ export interface PartnerMovementItem {
   quantity_sold: number;
   quantity_withdrawn: number;
   quantity_spoiled: number;
+  quantity_adjusted?: number | null;
   price_to_catcorn: number;
   suggested_retail_price?: number | null;
   amount_due: number;
+  amount_adjusted?: number | null;
+  commission_amount_adjusted?: number | null;
+  adjusts_movement_item_id?: string | null;
+  adjusts_commission_event_id?: string | null;
   spoilage_absorbed_by?: string | null;
   notes?: string | null;
 }
@@ -50,6 +55,8 @@ export interface PartnerMovement {
   next_visit_reason?: string | null;
   notes?: string | null;
   created_by?: string | null;
+  adjustment_folio?: string | null;
+  adjustment_reason?: string | null;
   created_at: string;
   commercial_partner_movement_items?: PartnerMovementItem[];
 }
