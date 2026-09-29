@@ -56,7 +56,7 @@ const emptyBreakdown: DashboardBreakdown = {
 
 export const Dashboard = () => {
   const { branches, loading: branchesLoading } = useBranch();
-  const { role } = useAuth();
+  const { role, profile } = useAuth();
   const isRestrictedSeller = role === 'vendedora';
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
@@ -503,8 +503,13 @@ export const Dashboard = () => {
     <div className="space-y-8 animate-fade-in">
         <div className="flex justify-between items-center">
             <h2 className="text-3xl font-bold text-cc-cream">Dashboard Operativo</h2>
-            <div className="text-sm text-cc-text-muted">
-                {new Date().toLocaleDateString('es-MX', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Mexico_City' })}
+            <div className="text-right">
+                <div className="text-sm text-cc-text-muted">
+                    {new Date().toLocaleDateString('es-MX', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Mexico_City' })}
+                </div>
+                {profile?.full_name && (
+                    <div className="text-xs text-cc-text-muted">Usuario: {profile.full_name}</div>
+                )}
             </div>
         </div>
 
