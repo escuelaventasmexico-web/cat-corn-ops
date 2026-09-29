@@ -165,10 +165,24 @@ interface AccessDeniedProps {
 }
 
 export const AccessDenied: React.FC<AccessDeniedProps> = ({ module, logout }) => {
+  const { canAccessModule, logout: contextLogout } = useAuth();
+  const returnPath = canAccessModule('dashboard')
+    ? '/'
+    : canAccessModule('socios_comerciales')
+      ? '/socios-comerciales'
+      : canAccessModule('pos')
+        ? '/pos'
+        : '/login';
+  const returnLabel = returnPath === '/'
+    ? 'Ir al Dashboard'
+    : returnPath === '/socios-comerciales'
+      ? 'Ir a Socios Comerciales'
+      : returnPath === '/pos'
+        ? 'Ir al Punto de Venta'
+        : 'Ir al inicio de sesión';
+
   const handleLogout = async () => {
-    if (logout) {
-      await logout();
-    }
+    await (logout || contextLogout)();
     window.location.href = '/login';
   };
 
@@ -186,10 +200,10 @@ export const AccessDenied: React.FC<AccessDeniedProps> = ({ module, logout }) =>
         </p>
         <div className="flex gap-3">
           <a
-            href="/socios-comerciales"
+            href={returnPath}
             className="flex-1 bg-cc-primary hover:bg-cc-primary-dark text-cc-bg font-bold py-2 px-4 rounded-lg transition-colors text-center"
           >
-            Ir a Socios Comerciales
+            {returnLabel}
           </a>
           <button
             onClick={handleLogout}

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, ReactNode } from
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 
-export type UserRole = 'admin' | 'socios_comerciales';
+export type UserRole = 'admin' | 'socios_comerciales' | 'vendedora';
 
 export interface UserProfile {
   id: string;
@@ -305,12 +305,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       'etiquetas',
       'socios_comerciales',
     ],
+    vendedora: [
+      'dashboard',
+      'pos',
+      'etiquetas',
+    ],
   };
 
   const canAccessModule = (moduleName: string): boolean => {
     if (!profile || !profile.role) return false;
     const allowedModules = moduleAccessMap[profile.role];
-    return allowedModules.includes(moduleName);
+    return Array.isArray(allowedModules) && allowedModules.includes(moduleName);
   };
 
   const value: AuthContextType = {

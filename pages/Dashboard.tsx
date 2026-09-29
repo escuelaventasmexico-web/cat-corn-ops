@@ -5,6 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import { getCommercialCollections } from '../services/commercialCollectionsService';
 import { getBusinessDayBounds } from '../lib/dateUtils';
 import { useBranch } from '../contexts/BranchContext';
+import { useAuth } from '../contexts/AuthContext';
 
 interface TopProduct {
   id: string;
@@ -55,6 +56,8 @@ const emptyBreakdown: DashboardBreakdown = {
 
 export const Dashboard = () => {
   const { branches, loading: branchesLoading } = useBranch();
+  const { role } = useAuth();
+  const isRestrictedSeller = role === 'vendedora';
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     salesToday: 0,
@@ -72,7 +75,7 @@ export const Dashboard = () => {
     if (!branchesLoading) {
       void loadDashboardData();
     }
-  }, [branches, branchesLoading]);
+  }, [branches, branchesLoading, role]);
 
   const loadDashboardData = async () => {
     setLoading(true);
@@ -89,25 +92,51 @@ export const Dashboard = () => {
 
       if (!supabase) return;
 
+      const authorizedBranchIds = branches.map(branch => branch.id);
+      if (isRestrictedSeller && authorizedBranchIds.length === 0) {
+        setStats({ salesToday: 0, cajaTotal: 0, ordersToday: 0, percentageChange: '—' });
+        setTopProducts([]);
+        setTopMonthProducts([]);
+        setChartData([]);
+        setBreakdown(emptyBreakdown);
+        return;
+      }
+
       // 1. Sales Today - total and count (also get payment_method + promotion_code for breakdown)
-      const { data: salesToday } = await supabase
+      let salesTodayQuery = supabase
         .from('sales')
         .select('total, payment_method, promotion_code, sale_origin, delivery_platform, cash_amount, card_amount, branch_id')
         .gte('created_at', todayRange.start.toISOString())
         .lt('created_at', todayRange.end.toISOString())
         .eq('is_refunded', false);
+
+      if (isRestrictedSeller) {
+        salesTodayQuery = salesTodayQuery.in('branch_id', authorizedBranchIds);
+      }
+
+      const { data: rawSalesToday } = await salesTodayQuery;
+
+      // Split by origin before any aggregate is calculated. Orders remain out
+      // of the restricted dashboard until their own branch contract exists.
+      const normPM = (m: string) => (m || '').toUpperCase().trim();
+      const isDelivery = (s: any) => s.sale_origin === 'delivery';
+      const isOrder = (s: any) => !isDelivery(s) && (s.sale_origin === 'order' || s.promotion_code === 'ORDER_CHECKOUT');
+      const isCaja = (s: any) => s.sale_origin === 'pos' || (!s.sale_origin && !isOrder(s) && !isDelivery(s));
+      const salesToday = isRestrictedSeller
+        ? (rawSalesToday || []).filter(sale => isCaja(sale) || isDelivery(sale))
+        : (rawSalesToday || []);
       
       // Separate POS direct sales from orders
-      const posSalesOnly = salesToday?.filter(s => s.promotion_code !== 'ORDER_CHECKOUT') || [];
+      const posSalesOnly = salesToday.filter(s => s.promotion_code !== 'ORDER_CHECKOUT');
       const posTotalToday = posSalesOnly.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
       const posCountToday = posSalesOnly.length || 0;
       
       // Total sales including orders (for other metrics)
-      const totalToday = salesToday?.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
+      const totalToday = salesToday.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
 
       // Load commercial collections for today (cobros reales de Socios Comerciales)
       let sociosComerciales = { total: 0, cash: 0, transfer: 0 };
-      try {
+      if (!isRestrictedSeller) try {
         // The commercial service receives calendar-date Date values and applies
         // its own Mexico City midnight, inclusive/exclusive boundaries.
         const todayUTC = new Date(Date.UTC(businessYear, businessMonth - 1, businessDay));
@@ -132,15 +161,6 @@ export const Dashboard = () => {
       } catch (err) {
         console.error('Exception loading commercial collections:', err);
       }
-
-      // Split by origin
-      const normPM = (m: string) => (m || '').toUpperCase().trim();
-      const isDelivery = (s: any) => s.sale_origin === 'delivery';
-      // Backward compat: ORDER_CHECKOUT promotion_code OR sale_origin = 'order'.
-      // Delivery has priority so one sales row can never appear in both groups.
-      const isOrder    = (s: any) => !isDelivery(s) && (s.sale_origin === 'order' || s.promotion_code === 'ORDER_CHECKOUT');
-      // Positive logic: sale_origin='pos', OR legacy NULL that is NOT a pedido/delivery
-      const isCaja     = (s: any) => s.sale_origin === 'pos' || (!s.sale_origin && !isOrder(s) && !isDelivery(s));
 
       // Caja directa (POS), grouped from the same sales result. This deliberately
       // never consults cash_register_sessions: opening funds, counted cash,
@@ -198,15 +218,15 @@ export const Dashboard = () => {
       const cajaTotal = cajaByBranch.reduce((sum, branch) => sum + branch.total, 0);
 
       // Pedidos (orders)
-      const pedidosCash     = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const pedidosCard     = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'CARD').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const pedidosTransfer = salesToday?.filter(s => isOrder(s) && normPM(s.payment_method) === 'TRANSFER').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const pedidosCash     = salesToday.filter(s => isOrder(s) && normPM(s.payment_method) === 'CASH').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const pedidosCard     = salesToday.filter(s => isOrder(s) && normPM(s.payment_method) === 'CARD').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const pedidosTransfer = salesToday.filter(s => isOrder(s) && normPM(s.payment_method) === 'TRANSFER').reduce((sum, s) => sum + Number(s.total), 0) || 0;
       const pedidosTotal    = pedidosCash + pedidosCard + pedidosTransfer;
 
       // Delivery platforms
-      const deliveryUber  = salesToday?.filter(s => isDelivery(s) && s.delivery_platform === 'uber_eats').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const deliveryDidi  = salesToday?.filter(s => isDelivery(s) && s.delivery_platform === 'didi_food').reduce((sum, s) => sum + Number(s.total), 0) || 0;
-      const deliveryRappi = salesToday?.filter(s => isDelivery(s) && s.delivery_platform === 'rappi').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const deliveryUber  = salesToday.filter(s => isDelivery(s) && s.delivery_platform === 'uber_eats').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const deliveryDidi  = salesToday.filter(s => isDelivery(s) && s.delivery_platform === 'didi_food').reduce((sum, s) => sum + Number(s.total), 0) || 0;
+      const deliveryRappi = salesToday.filter(s => isDelivery(s) && s.delivery_platform === 'rappi').reduce((sum, s) => sum + Number(s.total), 0) || 0;
       const deliveryTotal = deliveryUber + deliveryDidi + deliveryRappi;
 
       const branchColors = [
@@ -248,14 +268,23 @@ export const Dashboard = () => {
       };
 
       // 2. Sales Yesterday - for percentage calculation
-      const { data: salesYesterday } = await supabase
+      let salesYesterdayQuery = supabase
         .from('sales')
-        .select('total')
+        .select('total, promotion_code, sale_origin, delivery_platform')
         .gte('created_at', yesterdayRange.start.toISOString())
         .lt('created_at', yesterdayRange.end.toISOString())
         .eq('is_refunded', false);
+
+      if (isRestrictedSeller) {
+        salesYesterdayQuery = salesYesterdayQuery.in('branch_id', authorizedBranchIds);
+      }
+
+      const { data: rawSalesYesterday } = await salesYesterdayQuery;
+      const salesYesterday = isRestrictedSeller
+        ? (rawSalesYesterday || []).filter(sale => isCaja(sale) || isDelivery(sale))
+        : (rawSalesYesterday || []);
       
-      const totalYesterday = salesYesterday?.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
+      const totalYesterday = salesYesterday.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
 
       // Calculate percentage change
       let percentageChange = '—';
@@ -268,14 +297,23 @@ export const Dashboard = () => {
 
       // 3. Top Products Today - fetch sale_items joined with sales and products
       // First get today's sale IDs
-      const { data: todaysSales } = await supabase
+      let todaysSalesQuery = supabase
         .from('sales')
-        .select('id')
+        .select('id, promotion_code, sale_origin, delivery_platform')
         .gte('created_at', todayRange.start.toISOString())
         .lt('created_at', todayRange.end.toISOString())
         .eq('is_refunded', false);
+
+      if (isRestrictedSeller) {
+        todaysSalesQuery = todaysSalesQuery.in('branch_id', authorizedBranchIds);
+      }
+
+      const { data: rawTodaysSales } = await todaysSalesQuery;
+      const todaysSales = isRestrictedSeller
+        ? (rawTodaysSales || []).filter(sale => isCaja(sale) || isDelivery(sale))
+        : (rawTodaysSales || []);
       
-      const todaySaleIds = todaysSales?.map(s => s.id) || [];
+      const todaySaleIds = todaysSales.map(s => s.id);
 
       let topProductsList: TopProduct[] = [];
 
@@ -343,14 +381,23 @@ export const Dashboard = () => {
 
       // 4. Top Products This Month
 
-      const { data: monthSales } = await supabase
+      let monthSalesQuery = supabase
         .from('sales')
-        .select('id')
+        .select('id, promotion_code, sale_origin, delivery_platform')
         .gte('created_at', monthStartRange.start.toISOString())
         .lt('created_at', todayRange.end.toISOString())
         .eq('is_refunded', false);
 
-      const monthSaleIds = monthSales?.map(s => s.id) || [];
+      if (isRestrictedSeller) {
+        monthSalesQuery = monthSalesQuery.in('branch_id', authorizedBranchIds);
+      }
+
+      const { data: rawMonthSales } = await monthSalesQuery;
+      const monthSales = isRestrictedSeller
+        ? (rawMonthSales || []).filter(sale => isCaja(sale) || isDelivery(sale))
+        : (rawMonthSales || []);
+
+      const monthSaleIds = monthSales.map(s => s.id);
       let topMonthList: TopProduct[] = [];
 
       if (monthSaleIds.length > 0) {
@@ -472,24 +519,24 @@ export const Dashboard = () => {
                     color={index % 2 === 0 ? 'bg-cc-primary' : 'bg-sky-400'}
                 />
             ))}
-            <StatCard 
+            {!isRestrictedSeller && <StatCard
                 title="Venta Pedidos" 
                 value={`$${breakdown.pedidosTotal.toFixed(2)}`} 
                 icon={ShoppingBag} 
                 color="bg-violet-400"
-            />
-            <StatCard 
+            />}
+            {(!isRestrictedSeller || breakdown.deliveryTotal > 0) && <StatCard
                 title="Venta Delivery" 
                 value={`$${breakdown.deliveryTotal.toFixed(2)}`} 
                 icon={Truck} 
                 color="bg-orange-500"
-            />
-            <StatCard 
+            />}
+            {!isRestrictedSeller && <StatCard
                 title="Venta Socios Comerciales" 
                 value={`$${breakdown.sociosComerciales.total.toFixed(2)}`} 
                 icon={Landmark} 
                 color="bg-indigo-500"
-            />
+            />}
             <StatCard 
                 title="Total del Día" 
                 value={`$${stats.salesToday.toFixed(2)}`} 
@@ -569,7 +616,7 @@ export const Dashboard = () => {
                     </div>
 
                     {/* Pedidos */}
-                    <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800">
+                    {!isRestrictedSeller && <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800">
                         <div className="flex items-center gap-2 mb-3">
                             <ShoppingBag size={16} className="text-violet-400" />
                             <span className="text-sm font-bold text-cc-cream">Pedidos</span>
@@ -597,7 +644,7 @@ export const Dashboard = () => {
                                 <span className="text-cc-cream font-medium">${breakdown.pedidosTransfer.toFixed(2)}</span>
                             </div>
                         </div>
-                    </div>
+                    </div>}
 
                     {/* Delivery plataformas */}
                     {breakdown.deliveryTotal > 0 && (
@@ -632,7 +679,7 @@ export const Dashboard = () => {
                     )}
 
                     {/* Socios Comerciales */}
-                    {breakdown.sociosComerciales.total > 0 && (
+                    {!isRestrictedSeller && breakdown.sociosComerciales.total > 0 && (
                     <div className="bg-neutral-900 rounded-xl p-4 border border-indigo-500/20 col-span-2">
                         <div className="flex items-center gap-2 mb-3">
                             <Landmark size={16} className="text-indigo-400" />
