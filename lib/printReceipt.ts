@@ -64,6 +64,7 @@ export function buildEscPosReceipt(data: ReceiptData): string[] {
   });
   const methodLabel =
     data.method === 'MIXED' ? 'Mixto'
+      : data.method === 'PLATFORM' ? 'Plataforma'
       : data.method === 'TRANSFER' ? 'Transferencia'
       : data.method === 'CARD' ? 'Tarjeta' : 'Efectivo';
 
@@ -96,6 +97,11 @@ export function buildEscPosReceipt(data: ReceiptData): string[] {
 
     const detail = `  ${item.size}  ${item.quantity} x $${item.unitPrice.toFixed(2)}`;
     cmds.push(escRow(detail, '$' + lineFinal.toFixed(2)));
+
+    for (const component of item.components || []) {
+      const componentLine = `  + ${component.quantity} x ${component.name}`;
+      cmds.push(componentLine.slice(0, LINE_W) + LF);
+    }
 
     if (disc > 0) {
       const reason = item.discountReason || '';

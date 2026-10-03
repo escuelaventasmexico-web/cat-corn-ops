@@ -1,9 +1,9 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { supabase, Product, CartItem } from '../supabase';
+import { useEffect, useState, useRef, useMemo } from 'react';
+import { supabase, Product, CartItem, ProductComboCatalogEntry, ComboCatalogOption } from '../supabase';
 import type { Customer } from '../supabase';
 import { normalizePhone, fetchCustomerByPhoneNorm, fetchCustomerById, createCustomerRecord, fetchCustomersList } from '../lib/loyalty';
 import { exportCustomersToExcel } from '../lib/exportCustomers';
-import { PROMOTIONS, clearPromoDiscounts, countEligible, countGummyCombos, getPromoEmoji, getPromotion, isGummyComboGummy, isGummyComboPopcorn, isTodayWeekday } from '../lib/promotions';
+import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion, isTodayWeekday } from '../lib/promotions';
 import type { PromotionCode } from '../lib/promotions';
 import { Search, Plus, Minus, CreditCard, Banknote, Landmark, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings, Package, Truck } from 'lucide-react';
 import { fetchCashStatus, getOpenSessionIdForBranch, EMPTY_CASH_STATUS } from '../lib/cashRegister';
@@ -23,6 +23,7 @@ import { useBranch } from '../contexts/BranchContext';
 export const POS = () => {
   const { selectedBranch, loading: branchLoading, error: branchError } = useBranch();
   const [products, setProducts] = useState<Product[]>([]);
+  const [comboCatalog, setComboCatalog] = useState<ProductComboCatalogEntry[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -30,6 +31,8 @@ export const POS = () => {
   const [barcodeInput, setBarcodeInput] = useState('');
   const [scanMsg, setScanMsg] = useState<string | null>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
+  const [pendingComboProduct, setPendingComboProduct] = useState<Product | null>(null);
+  const [comboSelectionError, setComboSelectionError] = useState<string | null>(null);
 
   // Loyalty state
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -90,14 +93,13 @@ export const POS = () => {
 
   const toggleDeliveryPlatform = (platform: 'uber_eats' | 'didi_food' | 'rappi') => {
     const nextPlatform = deliveryPlatform === platform ? null : platform;
-    if (nextPlatform && activePromoCode === 'COMBO_PALOMITAS_GOMITAS') {
-      setActivePromoCode(null);
-      setCart(prev => clearPromoDiscounts(prev));
-    }
     setDeliveryPlatform(nextPlatform);
   };
 
-  useEffect(() => { fetchProducts(); }, []);
+  useEffect(() => {
+    void fetchProducts();
+    void fetchComboCatalog();
+  }, []);
 
   useEffect(() => {
     if (!selectedBranch) {
@@ -142,6 +144,8 @@ export const POS = () => {
     setShowWithdrawalModal(false);
     setShowCloseCashModal(false);
     setPendingReceipt(null);
+    setPendingComboProduct(null);
+    setComboSelectionError(null);
     cashRequestBranchRef.current = null;
     setCashStatus(EMPTY_CASH_STATUS);
   };
@@ -190,7 +194,7 @@ export const POS = () => {
     return () => clearInterval(timer);
   }, []);
 
-  const handleBarcodeScan = useCallback(async (code: string) => {
+  const handleBarcodeScan = async (code: string) => {
     const trimmed = code.trim();
     if (!trimmed || !supabase) return;
     setScanMsg(null);
@@ -224,7 +228,7 @@ export const POS = () => {
       setScanMsg('Error al buscar código');
       setTimeout(() => setScanMsg(null), 3000);
     }
-  }, [products]);
+  };
 
   const fetchProducts = async () => {
     try {
@@ -257,6 +261,21 @@ export const POS = () => {
     }
   };
 
+  const fetchComboCatalog = async () => {
+    if (!supabase) return;
+    const { data, error } = await supabase.rpc('get_product_combo_catalog');
+    if (error) {
+      console.error('Error loading official combos:', error);
+      return;
+    }
+    setComboCatalog(Array.isArray(data) ? data as ProductComboCatalogEntry[] : []);
+  };
+
+  const cartKeyOf = (item: CartItem) => item.cart_key || item.id;
+
+  const getCombo = (productId: string) =>
+    comboCatalog.find(combo => combo.product_id === productId);
+
   // Helper: reapply Instagram 15% discount to most expensive item
   const reapplyInstagramDiscount = (items: CartItem[]): CartItem[] => {
     // Clear existing instagram discounts
@@ -265,13 +284,16 @@ export const POS = () => {
         ? { ...item, discount_amount: undefined, discount_reason: undefined }
         : item
     );
-    if (cleaned.length === 0) return cleaned;
-    let mostExpensiveIdx = 0;
+    const eligibleIndexes = cleaned
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => !getCombo(item.id));
+    if (eligibleIndexes.length === 0) return cleaned;
+    let mostExpensiveIdx = eligibleIndexes[0].index;
     let maxPrice = 0;
-    cleaned.forEach((item, idx) => {
+    eligibleIndexes.forEach(({ item, index }) => {
       if (item.price > maxPrice) {
         maxPrice = item.price;
-        mostExpensiveIdx = idx;
+        mostExpensiveIdx = index;
       }
     });
     const discountAmount = Math.round(maxPrice * 0.15 * 100) / 100;
@@ -283,12 +305,37 @@ export const POS = () => {
   };
 
   const addToCart = (product: Product) => {
+    const combo = getCombo(product.id);
+    const isComboProduct = `${product.category || ''} ${product.flavor || ''}`.toUpperCase().includes('COMBOS')
+      || (product.sku_code || '').toUpperCase().startsWith('COMBO-');
+    if (isComboProduct && !combo) {
+      setScanMsg('No se pudo cargar la configuración del combo. Recarga el POS antes de venderlo.');
+      setTimeout(() => setScanMsg(null), 4000);
+      return;
+    }
+    if (combo) {
+      if (!combo.active) {
+        setScanMsg(`${combo.name} está inactivo.`);
+        setTimeout(() => setScanMsg(null), 4000);
+        return;
+      }
+      const unavailableFixed = combo.fixed_components.find(component => !component.active);
+      if (unavailableFixed) {
+        setScanMsg(`${unavailableFixed.name} está inactivo; no se puede configurar ${combo.name}.`);
+        setTimeout(() => setScanMsg(null), 4000);
+        return;
+      }
+      setComboSelectionError(null);
+      setPendingComboProduct(product);
+      return;
+    }
+
     setCart(prev => {
       let next: CartItem[];
-      const exists = prev.find(item => item.id === product.id);
+      const exists = prev.find(item => cartKeyOf(item) === product.id);
       if (exists) {
         next = prev.map(item => {
-          if (item.id !== product.id) return item;
+          if (cartKeyOf(item) !== product.id) return item;
           const updated = { ...item, quantity: item.quantity + 1 };
           if (updated.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM') {
             updated.discount_amount = updated.price * updated.quantity * 0.5;
@@ -311,10 +358,57 @@ export const POS = () => {
     });
   };
 
-  const updateQuantity = (id: string, delta: number) => {
+  const addConfiguredCombo = (beverage: ComboCatalogOption) => {
+    if (!pendingComboProduct) return;
+    const combo = getCombo(pendingComboProduct.id);
+    if (!combo) {
+      setComboSelectionError('La configuración de este combo ya no está disponible.');
+      return;
+    }
+    if (!beverage.active) {
+      setComboSelectionError('La bebida seleccionada está inactiva.');
+      return;
+    }
+
+    const cartKey = `${pendingComboProduct.id}:${beverage.product_id}`;
+    const beverageQuantity = combo.option_groups.find(group => group.key === 'beverage')?.quantity || 1;
+    const comboComponents = [
+      ...combo.fixed_components.map(component => ({
+        product_id: component.product_id,
+        name: component.name,
+        quantity_per_combo: component.quantity,
+      })),
+      {
+        product_id: beverage.product_id,
+        name: beverage.name,
+        quantity_per_combo: beverageQuantity,
+        selected_option_group: 'beverage',
+      },
+    ];
+
+    setCart(prev => {
+      const existing = prev.find(item => cartKeyOf(item) === cartKey);
+      if (existing) {
+        return prev.map(item => cartKeyOf(item) === cartKey
+          ? { ...item, quantity: item.quantity + 1 }
+          : item);
+      }
+      return [...prev, {
+        ...pendingComboProduct,
+        cart_key: cartKey,
+        quantity: 1,
+        combo_beverage_product_id: beverage.product_id,
+        combo_components: comboComponents,
+      }];
+    });
+    setPendingComboProduct(null);
+    setComboSelectionError(null);
+  };
+
+  const updateQuantity = (cartKey: string, delta: number) => {
     setCart(prev => {
       let next = prev.map(item => {
-        if (item.id === id) {
+        if (cartKeyOf(item) === cartKey) {
           const newQ = Math.max(0, item.quantity + delta);
           const updated: CartItem = { ...item, quantity: newQ };
           if (updated.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM') {
@@ -331,9 +425,9 @@ export const POS = () => {
       }
       // Reapply Instagram promo
       if (instagramPromoActive) {
-        if (next.length === 0) {
+        if (!next.some(item => !getCombo(item.id))) {
           setInstagramPromoActive(false);
-          return next;
+          return reapplyInstagramDiscount(next);
         }
         return reapplyInstagramDiscount(next);
       }
@@ -349,34 +443,30 @@ export const POS = () => {
   const hasInstagramApplied = cart.some(item => item.discount_reason === 'PROMOCION_INSTAGRAM_15');
   const hasSaboresPromoApplied = cart.some(item => item.discount_reason === 'PROMO_SATURDAY_SABORES_50');
   const hasMantequillaPromoApplied = cart.some(item => item.discount_reason === 'PROMO_FRIDAY_MANTEQUILLA_2X1');
-  const hasGummyComboPromoApplied = cart.some(item => item.discount_reason === 'PROMO_COMBO_PALOMITAS_GOMITAS');
-  const gummyComboCount = useMemo(() => countGummyCombos(cart), [cart]);
-  const gummyComboStatus = useMemo(() => {
-    if (gummyComboCount > 0) return `${gummyComboCount} combo${gummyComboCount === 1 ? '' : 's'} completo${gummyComboCount === 1 ? '' : 's'}`;
-    if (!cart.some(isGummyComboPopcorn) && !cart.some(isGummyComboGummy)) return 'Agrega una palomita y una gomita';
-    if (!cart.some(isGummyComboPopcorn)) return 'Falta agregar una palomita';
-    return 'Falta agregar una gomita';
-  }, [cart, gummyComboCount]);
 
   // Instagram promo derived values
   const instagramDiscountInfo = useMemo(() => {
     if (!instagramPromoActive || cart.length === 0) return null;
-    let mostExpensiveIdx = 0;
+    const eligibleIndexes = cart
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => !comboCatalog.some(combo => combo.product_id === item.id));
+    if (eligibleIndexes.length === 0) return null;
+    let mostExpensiveIdx = eligibleIndexes[0].index;
     let maxPrice = 0;
-    cart.forEach((item, idx) => {
+    eligibleIndexes.forEach(({ item, index }) => {
       if (item.price > maxPrice) {
         maxPrice = item.price;
-        mostExpensiveIdx = idx;
+        mostExpensiveIdx = index;
       }
     });
     const discountAmount = Math.round(maxPrice * 0.15 * 100) / 100;
     return {
       itemIndex: mostExpensiveIdx,
-      itemId: cart[mostExpensiveIdx]?.id,
+      itemId: cart[mostExpensiveIdx] ? cartKeyOf(cart[mostExpensiveIdx]) : undefined,
       itemName: cart[mostExpensiveIdx]?.product_name || cart[mostExpensiveIdx]?.name || '',
       discountAmount,
     };
-  }, [instagramPromoActive, cart]);
+  }, [instagramPromoActive, cart, comboCatalog]);
 
   // Split-payment derived values
   const paymentTotal = cashInput + cardInput + transferInput;
@@ -442,29 +532,25 @@ export const POS = () => {
         const rewardApplied = cart.some(i => i.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM');
         const discountTotal = cart.reduce((s, i) => s + (i.discount_amount || 0), 0);
 
-        // 1. Insert sale (linked to cash session)
-        // For CASH: store actual received amount (cashInput) so reprint can show change.
-        //   The register uses sale.total for CASH, NOT cash_amount, so this is safe.
-        // For MIXED: store effectiveCash because the register uses cash_amount for split.
+        // Preserve the deployed sales and sale_items flow. The database trigger
+        // validates combo configuration and creates its component snapshots.
         const salePayload: Record<string, unknown> = {
-            total: cartTotal,
-            payment_method: method,
+          total: cartTotal,
+          payment_method: method,
           cash_amount: deliveryPlatform ? 0 : (method === 'CASH' ? cashInput : method === 'MIXED' ? effectiveCash : 0),
           card_amount: deliveryPlatform ? 0 : (method === 'CARD' || method === 'MIXED' ? effectiveCard : 0),
           transfer_amount: deliveryPlatform ? 0 : (method === 'TRANSFER' ? cartTotal : 0),
           platform_amount: deliveryPlatform ? cartTotal : 0,
           sale_origin: deliveryPlatform ? 'delivery' : 'pos',
           delivery_platform: deliveryPlatform || null,
-            cashier_id: user.id,
-            customer_id: customer?.id || null,
-            loyalty_reward_applied: rewardApplied,
-            loyalty_discount_amount: discountTotal,
+          cashier_id: user.id,
+          customer_id: customer?.id || null,
+          loyalty_reward_applied: rewardApplied,
+          loyalty_discount_amount: discountTotal,
           promotion_code: activePromoCode || (instagramPromoActive ? 'PROMO_INSTAGRAM_15' : null),
           branch_id: selectedBranch.id,
         };
-        if (cashSessionId) {
-          salePayload.cash_session_id = cashSessionId;
-        }
+        if (cashSessionId) salePayload.cash_session_id = cashSessionId;
 
         const { data: sale, error: saleErr } = await supabase
           .from('sales')
@@ -474,8 +560,6 @@ export const POS = () => {
 
         if (saleErr) throw saleErr;
 
-        // 2. Insert sale_items
-        // Store the FINAL price after any discount so DB totals match cash collected
         const saleItems = cart.map(item => {
           const disc = item.discount_amount || 0;
           const effectivePrice = item.quantity > 0
@@ -490,6 +574,7 @@ export const POS = () => {
             price: effectivePrice,
             discount_amount: disc,
             discount_reason: item.discount_reason || null,
+            selected_beverage_product_id: item.combo_beverage_product_id || null,
           };
         });
 
@@ -507,6 +592,7 @@ export const POS = () => {
 
         // Refresh cash register status after sale
         loadCashStatus();
+        void fetchComboCatalog();
         setDeliveryPlatform(null);
 
         // Build receipt data BEFORE clearing the cart
@@ -521,11 +607,15 @@ export const POS = () => {
             lineTotal: item.price * item.quantity,
             discount: item.discount_amount || 0,
             discountReason: item.discount_reason || undefined,
+            components: item.combo_components?.map(component => ({
+              name: component.name,
+              quantity: component.quantity_per_combo * item.quantity,
+            })),
           })),
           subtotal: cartSubtotal,
           totalDiscount: totalDiscount,
           total: cartTotal,
-          method: method as 'CASH' | 'CARD' | 'MIXED' | 'TRANSFER',
+          method: method as 'CASH' | 'CARD' | 'MIXED' | 'TRANSFER' | 'PLATFORM',
           cashAmount: cashInput,
           cardAmount: effectiveCard,
           changeAmount,
@@ -547,7 +637,10 @@ export const POS = () => {
 
     } catch (err: any) {
         console.error(err);
-        alert('Error procesando venta: ' + err.message);
+        const details = [err?.message, err?.details, err?.hint, err?.code]
+          .filter(Boolean)
+          .join(' · ');
+        alert('Error procesando venta: ' + (details || String(err)));
     } finally {
         setProcessing(false);
     }
@@ -576,10 +669,21 @@ export const POS = () => {
       // 2. Fetch sale items with product info
       const { data: items, error: itemsErr } = await supabase
         .from('sale_items')
-        .select('quantity, price, discount_amount, discount_reason, product_id, product_name, products(product_name, name, size, price)')
+        .select('id, quantity, price, discount_amount, discount_reason, product_id, product_name, products!sale_items_product_id_fkey(product_name, name, size, price)')
         .eq('sale_id', sale.id);
 
       if (itemsErr) throw itemsErr;
+
+      const itemIds = (items || []).map((item: any) => item.id);
+      const { data: comboComponents, error: componentsErr } = itemIds.length > 0
+        ? await supabase
+          .from('sale_item_combo_components')
+          .select('sale_item_id, component_name, quantity_total, selected_option_group')
+          .in('sale_item_id', itemIds)
+          .order('selected_option_group', { ascending: true, nullsFirst: true })
+        : { data: [], error: null };
+
+      if (componentsErr) throw componentsErr;
 
       // 3. Optionally fetch customer name
       let customerName: string | undefined;
@@ -624,13 +728,19 @@ export const POS = () => {
           lineTotal: baseUnitPrice * qty,
           discount: disc,
           discountReason: it.discount_reason || undefined,
+          components: (comboComponents || [])
+            .filter((component: any) => component.sale_item_id === it.id)
+            .map((component: any) => ({
+              name: component.component_name,
+              quantity: component.quantity_total,
+            })),
         };
       });
 
       const subtotal = receiptItems.reduce((s: number, i: any) => s + i.lineTotal, 0);
       const totalDiscount = receiptItems.reduce((s: number, i: any) => s + (i.discount || 0), 0);
 
-      const method = (sale.payment_method || 'CASH').toUpperCase() as 'CASH' | 'CARD' | 'MIXED' | 'TRANSFER';
+      const method = (sale.payment_method || 'CASH').toUpperCase() as 'CASH' | 'CARD' | 'MIXED' | 'TRANSFER' | 'PLATFORM';
       const cashAmt = method === 'CASH'
         ? Number(sale.cash_amount || sale.total)
         : method === 'MIXED'
@@ -713,7 +823,7 @@ export const POS = () => {
     setCart(prev => {
       const cleaned = clearPromoDiscounts(prev);
       return cleaned.map(item => {
-        if (item.id === rewardSelectedItem) {
+        if (cartKeyOf(item) === rewardSelectedItem && !getCombo(item.id)) {
           return {
             ...item,
             discount_amount: item.price * item.quantity * 0.5,
@@ -746,17 +856,21 @@ export const POS = () => {
 
     // Check mutual exclusion
     if (instagramBlocked) return;
-    if (cart.length === 0) return;
+    if (!cart.some(item => !getCombo(item.id))) return;
 
     // Activate: find most expensive item and apply 15% discount
     setInstagramPromoActive(true);
     setCart(prev => {
-      let mostExpensiveIdx = 0;
+      const eligibleIndexes = prev
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => !getCombo(item.id));
+      if (eligibleIndexes.length === 0) return prev;
+      let mostExpensiveIdx = eligibleIndexes[0].index;
       let maxPrice = 0;
-      prev.forEach((item, idx) => {
+      eligibleIndexes.forEach(({ item, index }) => {
         if (item.price > maxPrice) {
           maxPrice = item.price;
-          mostExpensiveIdx = idx;
+          mostExpensiveIdx = index;
         }
       });
       const discountAmount = Math.round(maxPrice * 0.15 * 100) / 100;
@@ -818,7 +932,7 @@ export const POS = () => {
   // --- Promotion helpers ---
 
   const activatePromo = (code: PromotionCode) => {
-    if (promoBlocked || (deliveryPlatform && code === 'COMBO_PALOMITAS_GOMITAS')) return;
+    if (promoBlocked) return;
     if (activePromoCode === code) {
       // Deactivate
       deactivatePromo();
@@ -839,9 +953,7 @@ export const POS = () => {
   const promoEligibleCounts = useMemo(() => {
     const map: Record<string, number> = {};
     for (const p of PROMOTIONS) {
-      map[p.code] = p.code === 'COMBO_PALOMITAS_GOMITAS'
-        ? countGummyCombos(cart)
-        : countEligible(cart, p.code);
+      map[p.code] = countEligible(cart, p.code);
     }
     return map;
   }, [cart]);
@@ -851,16 +963,16 @@ export const POS = () => {
     const sku = p.sku_code || '';
     const barcode = p.barcode_value || '';
     const search = searchTerm.toLowerCase();
-    
+
     // FILTER OUT DELIVERY PRODUCTS
     // Check if EITHER flavor or category contains 'delivery' (case-insensitive)
     const flavorLower = (p.flavor || '').toLowerCase();
     const categoryLower = (p.category || '').toLowerCase();
-    
+
     if (flavorLower.includes('delivery') || categoryLower.includes('delivery')) {
       return false; // Hide this product
     }
-    
+
     // Apply search filter
     return displayName.toLowerCase().includes(search)
       || sku.toLowerCase().includes(search)
@@ -882,6 +994,8 @@ export const POS = () => {
 
   const getFlavorEmoji = (flavor: string): string => {
     const f = flavor.toLowerCase();
+    if (f.includes('combo')) return '🍿🥤';
+    if (f.includes('bebida')) return '🥤';
     if (f.includes('salad')) return '🧂';
     if (f.includes('caramel')) return '🍯';
     if (f.includes('cheddar') || f.includes('queso')) return '🧀';
@@ -889,6 +1003,12 @@ export const POS = () => {
     if (f.includes('gomit')) return '🍬';
     return '🍿';
   };
+
+  const pendingComboDefinition = pendingComboProduct
+    ? getCombo(pendingComboProduct.id)
+    : undefined;
+  const pendingBeverageOptions = pendingComboDefinition
+    ?.option_groups.find(group => group.key === 'beverage')?.options || [];
 
   return (
     <div className="flex h-[calc(100vh-140px)] gap-4">
@@ -933,9 +1053,9 @@ export const POS = () => {
           {/* Text search */}
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <input 
+              <input
                   type="text"
-                  placeholder="Buscar producto por nombre..."
+                  placeholder="Buscar por nombre, SKU o código de barras..."
                   className="w-full bg-cc-surface border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm text-black placeholder-gray-400 caret-black focus:ring-2 focus:ring-cc-primary outline-none"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
@@ -982,14 +1102,18 @@ export const POS = () => {
                 </h2>
                 <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 gap-2">
                   {flavorProducts.map(product => (
-                    <button 
+                    <button
                       key={product.id}
                       onClick={() => addToCart(product)}
                       className="bg-cc-surface hover:bg-white/5 border border-white/5 px-3 py-3 rounded-lg transition-all text-left group flex flex-col h-[5.5rem] relative"
                     >
                       <h3 className="font-semibold text-sm text-cc-cream leading-tight line-clamp-2">{product.product_name || product.name}</h3>
                       <div className="mt-auto flex items-end justify-between w-full">
-                        <span className="text-xs text-cc-text-muted">{product.grams || product.weight_grams || ''}g</span>
+                        <span className="text-xs text-cc-text-muted">
+                          {product.grams || product.weight_grams
+                            ? `${product.grams || product.weight_grams}g`
+                            : product.size}
+                        </span>
                         <span className="text-lg font-bold text-cc-primary leading-none">${product.price}</span>
                       </div>
                       <div className="absolute top-2 right-2 bg-cc-primary text-cc-bg p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1018,14 +1142,13 @@ export const POS = () => {
                   const eligible = promoEligibleCounts[p.code] || 0;
                   const blocked = promoBlocked;
                   const notToday = p.dayIndex !== undefined && !isTodayWeekday(p.dayIndex);
-                  const isGummyComboPromo = p.code === 'COMBO_PALOMITAS_GOMITAS';
                   const isSaboresPromo = p.code === 'SATURDAY_SABORES_50';
                   const isMantequillaPromo = p.code === 'FRIDAY_MANTEQUILLA_2X1';
                   return (
                     <button
                       key={p.code}
                       onClick={() => activatePromo(p.code)}
-                      disabled={(blocked && !isActive) || notToday || (isGummyComboPromo && !!deliveryPlatform && !isActive)}
+                      disabled={(blocked && !isActive) || notToday}
                       className={`relative text-left p-4 rounded-xl border transition-all group ${
                         isActive
                           ? isSaboresPromo
@@ -1033,7 +1156,7 @@ export const POS = () => {
                             : isMantequillaPromo
                               ? 'bg-amber-500/10 border-amber-400/40 ring-1 ring-amber-400/30'
                               : 'bg-cc-accent/10 border-cc-accent/40 ring-1 ring-cc-accent/30'
-                          : blocked || notToday || (isGummyComboPromo && !!deliveryPlatform)
+                          : blocked || notToday
                             ? 'bg-cc-surface border-white/5 opacity-40 cursor-not-allowed'
                             : isSaboresPromo
                               ? 'bg-cc-surface border-orange-400/20 hover:border-orange-400/40 hover:bg-orange-500/5'
@@ -1091,16 +1214,10 @@ export const POS = () => {
                             : isMantequillaPromo ? 'text-amber-300 bg-amber-400/10'
                             : 'text-cc-accent bg-cc-accent/10'
                           }`}>
-                            {isGummyComboPromo ? `${eligible} combo${eligible === 1 ? '' : 's'}` : `${eligible} en carrito`}
+                            {eligible} en carrito
                           </span>
                         )}
                       </div>
-
-                      {isGummyComboPromo && (
-                        <p className="text-[10px] text-cc-text-muted/70 mt-1.5">
-                          {gummyComboStatus}
-                        </p>
-                      )}
 
                       {/* Note */}
                       {p.note && (
@@ -1201,7 +1318,7 @@ export const POS = () => {
           </div>
 
           {/* Apply Reward Button — only when available */}
-          {customer?.reward_available && cart.length > 0 && !hasRewardApplied && (
+          {customer?.reward_available && cart.some(item => !getCombo(item.id)) && !hasRewardApplied && (
             <button
               onClick={() => { if (loyaltyBlocked) return; setRewardSelectedItem(null); setShowRewardModal(true); }}
               disabled={loyaltyBlocked}
@@ -1238,7 +1355,7 @@ export const POS = () => {
                 const lineTotal = item.price * item.quantity;
                 const disc = item.discount_amount || 0;
                 return (
-                <div key={item.id} className={`flex justify-between items-center p-3 rounded-lg border ${
+                <div key={cartKeyOf(item)} className={`flex justify-between items-center p-3 rounded-lg border ${
                   item.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM' ? 'bg-green-500/5 border-green-500/20'
                   : item.discount_reason === 'PROMOCION_INSTAGRAM_15' ? 'bg-pink-500/5 border-pink-500/20'
                   : item.discount_reason === 'PROMO_SATURDAY_SABORES_50' ? 'bg-orange-500/5 border-orange-400/20'
@@ -1249,16 +1366,22 @@ export const POS = () => {
                     <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-cc-text-main truncate">{item.product_name || item.name}</div>
                         <div className="text-xs text-cc-text-muted">{item.size}</div>
+                        {item.combo_components && (
+                          <div className="mt-1 space-y-0.5 text-[10px] text-cc-text-muted">
+                            {item.combo_components.map(component => (
+                              <div key={`${component.product_id}:${component.selected_option_group || 'fixed'}`}>
+                                + {component.quantity_per_combo * item.quantity} x {component.name}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         {item.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM' && (
                           <div className="text-[10px] text-green-400 mt-0.5 flex items-center gap-1"><Gift size={10} /> -50%</div>
                         )}
                         {item.discount_reason === 'PROMOCION_INSTAGRAM_15' && (
                           <div className="text-[10px] text-pink-300 mt-0.5 flex items-center gap-1"><Sparkles size={10} /> -15% Instagram</div>
                         )}
-                        {item.discount_reason === 'PROMO_COMBO_PALOMITAS_GOMITAS' && (
-                          <div className="text-[10px] text-cc-accent mt-0.5 flex items-center gap-1"><Tag size={10} /> Combo Palomitas + Gomitas</div>
-                        )}
-                        {item.discount_reason?.startsWith('PROMO_') && item.discount_reason !== 'PROMO_COMBO_PALOMITAS_GOMITAS' && item.discount_reason !== 'PROMOCION_INSTAGRAM_15' && item.discount_reason !== 'PROMO_SATURDAY_SABORES_50' && item.discount_reason !== 'PROMO_FRIDAY_MANTEQUILLA_2X1' && (
+                        {item.discount_reason?.startsWith('PROMO_') && item.discount_reason !== 'PROMOCION_INSTAGRAM_15' && item.discount_reason !== 'PROMO_SATURDAY_SABORES_50' && item.discount_reason !== 'PROMO_FRIDAY_MANTEQUILLA_2X1' && (
                           <div className="text-[10px] text-cc-accent mt-0.5 flex items-center gap-1"><Tag size={10} /> Promo</div>
                         )}
                         {item.discount_reason === 'PROMO_SATURDAY_SABORES_50' && (
@@ -1269,11 +1392,11 @@ export const POS = () => {
                         )}
                     </div>
                     <div className="flex items-center gap-3">
-                        <button onClick={() => updateQuantity(item.id, -1)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-cc-text-main">
+                        <button onClick={() => updateQuantity(cartKeyOf(item), -1)} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-cc-text-main">
                             <Minus size={14} />
                         </button>
                         <span className="font-bold w-4 text-center">{item.quantity}</span>
-                        <button onClick={() => updateQuantity(item.id, 1)} className="w-8 h-8 rounded-full bg-cc-primary/20 hover:bg-cc-primary/30 flex items-center justify-center text-cc-primary">
+                        <button onClick={() => updateQuantity(cartKeyOf(item), 1)} className="w-8 h-8 rounded-full bg-cc-primary/20 hover:bg-cc-primary/30 flex items-center justify-center text-cc-primary">
                             <Plus size={14} />
                         </button>
                     </div>
@@ -1319,16 +1442,10 @@ export const POS = () => {
                     <span className="text-green-400">-${cart.filter(i => i.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
                   </div>
                 )}
-                {hasPromoApplied && !hasInstagramApplied && !hasSaboresPromoApplied && !hasMantequillaPromoApplied && !hasGummyComboPromoApplied && (
+                {hasPromoApplied && !hasInstagramApplied && !hasSaboresPromoApplied && !hasMantequillaPromoApplied && (
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-cc-accent">Desc. Promoción</span>
                     <span className="text-cc-accent">-${cart.filter(i => i.discount_reason?.startsWith('PROMO_') && i.discount_reason !== 'PROMOCION_INSTAGRAM_15' && i.discount_reason !== 'PROMO_SATURDAY_SABORES_50' && i.discount_reason !== 'PROMO_FRIDAY_MANTEQUILLA_2X1').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
-                  </div>
-                )}
-                {hasGummyComboPromoApplied && (
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-cc-accent">Combo Palomitas + Gomitas</span>
-                    <span className="text-cc-accent">-${cart.filter(i => i.discount_reason === 'PROMO_COMBO_PALOMITAS_GOMITAS').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
                   </div>
                 )}
                 {hasMantequillaPromoApplied && (
@@ -1642,6 +1759,77 @@ export const POS = () => {
         </div>
       </div>
 
+      {/* Required beverage selector for official combos */}
+      {pendingComboProduct && pendingComboDefinition && (
+        <div
+          className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+          onClick={() => {
+            setPendingComboProduct(null);
+            setComboSelectionError(null);
+          }}
+        >
+          <div
+            className="bg-cc-surface border border-white/10 rounded-xl p-6 w-full max-w-md shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-cc-primary font-bold">Configurar combo</p>
+                <h3 className="font-bold text-lg text-cc-cream">{pendingComboDefinition.name}</h3>
+                <p className="text-sm text-cc-text-muted mt-1">
+                  Selecciona exactamente un sabor de Agua gaseosa.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setPendingComboProduct(null);
+                  setComboSelectionError(null);
+                }}
+                className="text-cc-text-muted hover:text-cc-text-main"
+                aria-label="Cerrar selector de bebida"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="rounded-lg bg-black/20 border border-white/5 p-3 mb-4 text-xs text-cc-text-muted space-y-1">
+              {pendingComboDefinition.fixed_components.map(component => (
+                <div key={component.product_id}>{component.quantity} x {component.name}</div>
+              ))}
+              <div>1 x Agua gaseosa a elegir</div>
+            </div>
+
+            <div className="space-y-2">
+              {pendingBeverageOptions.map(option => {
+                const unavailable = !option.active;
+                return (
+                  <button
+                    key={option.product_id}
+                    onClick={() => addConfiguredCombo(option)}
+                    disabled={unavailable}
+                    className="w-full flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-left hover:border-cc-primary/40 hover:bg-cc-primary/5 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <span>
+                      <span className="block text-sm font-semibold text-cc-cream">{option.name}</span>
+                      <span className="block text-[10px] text-cc-text-muted">
+                        {option.active ? option.sku_code : 'Producto inactivo'}
+                      </span>
+                    </span>
+                    <span className="text-cc-primary font-bold">Elegir</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {comboSelectionError && (
+              <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                {comboSelectionError}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Generic Sale Modal */}
       {showGenericModal && (
         <GenericSaleModal
@@ -1701,18 +1889,18 @@ export const POS = () => {
             </div>
             <p className="text-xs text-cc-text-muted mb-3">Selecciona el producto que recibirá el descuento:</p>
             <div className="flex-1 overflow-y-auto space-y-2 mb-4">
-              {cart.map(item => (
+              {cart.filter(item => !getCombo(item.id)).map(item => (
                 <label
-                  key={item.id}
+                  key={cartKeyOf(item)}
                   className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                    rewardSelectedItem === item.id ? 'bg-green-500/10 border-green-500/30' : 'bg-black/20 border-white/5 hover:bg-white/5'
+                    rewardSelectedItem === cartKeyOf(item) ? 'bg-green-500/10 border-green-500/30' : 'bg-black/20 border-white/5 hover:bg-white/5'
                   }`}
                 >
                   <input
                     type="radio"
                     name="reward-item"
-                    checked={rewardSelectedItem === item.id}
-                    onChange={() => setRewardSelectedItem(item.id)}
+                    checked={rewardSelectedItem === cartKeyOf(item)}
+                    onChange={() => setRewardSelectedItem(cartKeyOf(item))}
                     className="accent-green-400"
                   />
                   <div className="flex-1 min-w-0">

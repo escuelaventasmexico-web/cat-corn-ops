@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Tag,
   HeartHandshake,
+  Users,
   Loader
 } from 'lucide-react';
 
@@ -40,6 +41,7 @@ export const Layout = () => {
     { to: '/waste', icon: Trash2, label: 'Merma', module: 'merma' },
     { to: '/ops', icon: Truck, label: 'Logística y Operación', module: 'logistica' },
     { to: '/socios-comerciales', icon: HeartHandshake, label: 'Socios Comerciales', module: 'socios_comerciales' },
+    { to: '/prospectos-comerciales', icon: Users, label: 'Prospectos Comerciales', module: 'prospectos_comerciales' },
     { to: '/sales-history', icon: Receipt, label: 'Historial', module: 'historial' },
     { to: '/corte-de-caja', icon: Wallet, label: 'Corte de Caja', module: 'corte_caja' },
     { to: '/pedidos', icon: ClipboardList, label: 'Pedidos', module: 'pedidos' },

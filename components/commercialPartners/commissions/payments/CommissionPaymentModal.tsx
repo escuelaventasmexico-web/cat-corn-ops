@@ -9,6 +9,8 @@ import {
 } from './CommissionPaymentMethod';
 import {
   createCommissionSettlement,
+  formatSupabaseError,
+  getCommissionSettlementPreview,
   payCommissionSettlement,
   uploadPaymentProof,
 } from './paymentUtils';
@@ -25,6 +27,12 @@ interface CommissionPaymentModalProps {
   periodLabel: string;
   totalAmount: number;
   movementCount: number;
+  accumulatedAvailable: number;
+  existingSettlement?: {
+    id: string;
+    folio: string;
+    totalAmount: number;
+  };
 }
 
 type Step = 1 | 2;
@@ -41,6 +49,8 @@ export const CommissionPaymentModal: React.FC<CommissionPaymentModalProps> = ({
   periodLabel,
   totalAmount,
   movementCount,
+  accumulatedAvailable,
+  existingSettlement,
 }) => {
   const [step, setStep] = useState<Step>(1);
   const [loading, setLoading] = useState(false);
@@ -51,19 +61,21 @@ export const CommissionPaymentModal: React.FC<CommissionPaymentModalProps> = ({
   const [paymentAmount, setPaymentAmount] = useState(String(totalAmount));
   const [amountError, setAmountError] = useState('');
   const [settlementTotalAmount, setSettlementTotalAmount] = useState(0);
+  const [availableAmount, setAvailableAmount] = useState(totalAmount);
 
   useEffect(() => {
     if (!isOpen) return;
 
-    setStep(1);
+    setStep(existingSettlement ? 2 : 1);
     setError('');
     setSuccessMessage('');
-    setSettlementId('');
-    setFolio('');
+    setSettlementId(existingSettlement?.id || '');
+    setFolio(existingSettlement?.folio || '');
     setPaymentAmount(String(totalAmount));
     setAmountError('');
-    setSettlementTotalAmount(0);
-  }, [isOpen, totalAmount]);
+    setSettlementTotalAmount(existingSettlement?.totalAmount || 0);
+    setAvailableAmount(totalAmount);
+  }, [existingSettlement, isOpen, totalAmount]);
 
   const validatePaymentAmount = (value: string): string | null => {
     const normalizedValue = value.trim();
@@ -90,7 +102,7 @@ export const CommissionPaymentModal: React.FC<CommissionPaymentModalProps> = ({
       return 'El monto debe ser mayor que cero';
     }
 
-    if (amount > totalAmount) {
+    if (amount > availableAmount) {
       return 'El monto no puede superar el saldo disponible';
     }
 
@@ -121,6 +133,31 @@ export const CommissionPaymentModal: React.FC<CommissionPaymentModalProps> = ({
     setLoading(true);
 
     try {
+      const preview = await getCommissionSettlementPreview(
+        sellerId,
+        periodStart,
+        periodEnd
+      );
+
+      if (preview.existing_draft_id && preview.existing_draft_folio) {
+        setSettlementId(preview.existing_draft_id);
+        setFolio(preview.existing_draft_folio);
+        setSettlementTotalAmount(preview.existing_draft_total);
+        setSuccessMessage(
+          `Se encontró el borrador ${preview.existing_draft_folio}. Continúa con ese borrador.`
+        );
+        setStep(2);
+        return;
+      }
+
+      setAvailableAmount(preview.available_total);
+      if (amount > preview.available_total + 0.005) {
+        setAmountError(
+          `El monto no puede superar el disponible actual del periodo (${preview.available_total.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}).`
+        );
+        return;
+      }
+
       console.log('CREATING SETTLEMENT', { sellerId, periodStart, periodEnd, amount });
 
       const settlement = await createCommissionSettlement(
@@ -137,9 +174,8 @@ export const CommissionPaymentModal: React.FC<CommissionPaymentModalProps> = ({
       setSettlementTotalAmount(settlement.total_amount);
       setStep(2);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Error al preparar liquidación';
       console.error('PREPARE ERROR', err);
-      setError(message);
+      setError(formatSupabaseError(err, 'Error al preparar liquidación'));
     } finally {
       setLoading(false);
     }
@@ -208,9 +244,8 @@ export const CommissionPaymentModal: React.FC<CommissionPaymentModalProps> = ({
         onSuccess();
       }, 2000);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Error al procesar pago';
       console.error('PAYMENT ERROR', err);
-      setError(message);
+      setError(formatSupabaseError(err, 'Error al procesar pago'));
     } finally {
       setLoading(false);
     }
@@ -253,7 +288,7 @@ export const CommissionPaymentModal: React.FC<CommissionPaymentModalProps> = ({
           {error && (
             <div className="mb-4 p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
               <p className="text-sm text-red-300 font-medium">Error</p>
-              <p className="text-xs text-red-300 mt-1">{error}</p>
+              <p className="text-xs text-red-300 mt-1 whitespace-pre-line break-words">{error}</p>
             </div>
           )}
 
@@ -270,7 +305,8 @@ export const CommissionPaymentModal: React.FC<CommissionPaymentModalProps> = ({
                 end: periodEnd,
                 label: periodLabel,
               }}
-              availableAmount={totalAmount}
+              availableAmount={availableAmount}
+              accumulatedAvailable={accumulatedAvailable}
               paymentAmount={paymentAmount}
               onPaymentAmountChange={handlePaymentAmountChange}
               amountError={amountError}

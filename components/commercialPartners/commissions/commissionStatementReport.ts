@@ -89,6 +89,8 @@ type CommissionSourceKey =
   | 'pos_sale'
   | 'comodato_sale'
   | 'conversion_bonus'
+  | 'prospect_conversion_bonus'
+  | 'prospect_origin_sale'
   | 'wholesale_sale'
   | 'piece_sale'
   | 'other_adjustment';
@@ -98,6 +100,8 @@ const SOURCE_DEFINITIONS: Array<{ key: CommissionSourceKey; label: string }> = [
   { key: 'pos_sale', label: 'Punto de Venta' },
   { key: 'comodato_sale', label: 'Comodato' },
   { key: 'conversion_bonus', label: 'Bono de conversión' },
+  { key: 'prospect_conversion_bonus', label: 'Bono por prospecto convertido' },
+  { key: 'prospect_origin_sale', label: 'Socio originado' },
   { key: 'wholesale_sale', label: 'Mayoreo' },
   { key: 'piece_sale', label: 'Venta por pieza' },
   { key: 'other_adjustment', label: 'Otros ajustes' },
@@ -108,6 +112,7 @@ const PRODUCT_SOURCE_TYPES = new Set<SourceType>([
   'wholesale_sale',
   'piece_sale',
   'pos_sale',
+  'prospect_origin_sale',
 ]);
 
 const EMPTY_TOTALS = (): CommissionFinancialTotals => ({
@@ -245,6 +250,8 @@ const sourceKeyForMovement = (movement: CommissionMovement): CommissionSourceKey
     case 'pos_sale':
     case 'comodato_sale':
     case 'conversion_bonus':
+    case 'prospect_conversion_bonus':
+    case 'prospect_origin_sale':
     case 'wholesale_sale':
     case 'piece_sale':
       return movement.source_type;
@@ -267,6 +274,7 @@ export const getMovementDescription = (movement: CommissionMovement): string => 
       : 'Día extra';
   }
   if (movement.source_type === 'conversion_bonus') return 'Bono de conversión';
+  if (movement.source_type === 'prospect_conversion_bonus') return 'Bono por prospecto convertido';
   return movement.product_name?.trim() || getStatementSourceLabel(movement);
 };
 

@@ -1,11 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabase';
-import { Receipt, X, CreditCard, Banknote, Landmark, Download, Calendar, Filter, RotateCcw, AlertTriangle, Truck, Users, DollarSign } from 'lucide-react';
+import { Receipt, X, CreditCard, Banknote, Landmark, Download, Calendar, Filter, RotateCcw, AlertTriangle, Truck, Printer } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { formatDateTimeMX } from '../lib/datetime';
+import { addCalendarDays, formatDateTimeMX, getMexicoCityDateKey, mexicoCityDateStartISO } from '../lib/datetime';
 import { getCommercialCollections, CommercialCollectionItem } from '../services/commercialCollectionsService';
+import { useAuth } from '../contexts/AuthContext';
+import { useBranch } from '../contexts/BranchContext';
+import { printSaleReceipt } from '../lib/printReceipt';
+import type { ReceiptData } from '../components/TicketReceipt';
 
 interface SaleItemPreview {
+  sale_id: string;
   quantity: number;
   product_name?: string | null;
   products: { name: string } | null;
@@ -15,6 +20,9 @@ interface Sale {
   id: string;
   total: number;
   payment_method: string;
+  cash_amount: number | null;
+  card_amount: number | null;
+  transfer_amount: number | null;
   created_at: string;
   branch_id: string | null;
   branch_name: string | null;
@@ -23,7 +31,14 @@ interface Sale {
   refund_reason?: string | null;
   sale_origin?: string;
   delivery_platform?: string | null;
+  promotion_code?: string | null;
+  customer_id?: string | null;
   sale_items?: SaleItemPreview[];
+}
+
+interface ComboComponentSnapshot {
+  component_name: string;
+  quantity_total: number;
 }
 
 interface SaleItem {
@@ -32,11 +47,16 @@ interface SaleItem {
   product_name?: string | null;
   quantity: number;
   price: number;
+  discount_amount: number;
+  discount_reason: string | null;
+  combo_components: ComboComponentSnapshot[];
   products: {
     name: string;
+    product_name: string | null;
     size: string;
     flavor: string | null;
     grams: number | null;
+    price: number | null;
   } | null;
 }
 
@@ -50,27 +70,26 @@ interface Sample {
 }
 
 export const SalesHistory = () => {
+  const { isAdmin, profile } = useAuth();
+  const { branches, loading: branchesLoading, error: branchContextError } = useBranch();
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
+  const [salesError, setSalesError] = useState<string | null>(null);
+  const [branchFilter, setBranchFilter] = useState('all');
+  const [hasLegacySales, setHasLegacySales] = useState(false);
+  const [branchOptionsError, setBranchOptionsError] = useState<string | null>(null);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
+  const [itemsError, setItemsError] = useState<string | null>(null);
+  const [reprintLoading, setReprintLoading] = useState(false);
+  const [reprintError, setReprintError] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
   const [samples, setSamples] = useState<Sample[]>([]);
   const [loadingSamples, setLoadingSamples] = useState(true);
-  // Summary (from RPC)
-  const [grossTotal, setGrossTotal] = useState(0);
-  const [refundedTotal, setRefundedTotal] = useState(0);
-  const [netTotal, setNetTotal] = useState(0);
-  const [posCashTotal, setPosCashTotal] = useState(0);
-  const [posCardTotal, setPosCardTotal] = useState(0);
-  const [orderCashTotal, setOrderCashTotal] = useState(0);
-  const [orderCardTotal, setOrderCardTotal] = useState(0);
-  const [orderTransferTotal, setOrderTransferTotal] = useState(0);
-  const [deliveryTotal, setDeliveryTotal] = useState(0);
-  const [totalsByOrigin, setTotalsByOrigin] = useState<Record<string, any>>({});
-  
+  const [samplesError, setSamplesError] = useState<string | null>(null);
+  const [collectionsError, setCollectionsError] = useState<string | null>(null);
   // Commercial collections (Socios Comerciales)
   const [comercialCollections, setComercialCollections] = useState<{
     total: number;
@@ -108,6 +127,14 @@ export const SalesHistory = () => {
     return 'other';
   };
 
+  const formatSupabaseError = (error: unknown, fallback: string): string => {
+    if (!error || typeof error !== 'object') return fallback;
+    const value = error as { message?: string; details?: string; hint?: string; code?: string };
+    return [value.message, value.details, value.hint, value.code]
+      .filter((part): part is string => Boolean(part))
+      .join(' · ') || fallback;
+  };
+
   /** Builds a short summary of product names for a sale card */
   const buildProductSummary = (items?: SaleItemPreview[]): string => {
     if (!items || items.length === 0) return 'Venta';
@@ -140,7 +167,7 @@ export const SalesHistory = () => {
   };
 
   const handleRefund = async () => {
-    if (!refundTarget || !supabase) return;
+    if (!isAdmin || !refundTarget || !supabase) return;
     setRefundLoading(true);
     setRefundError(null);
     try {
@@ -157,172 +184,114 @@ export const SalesHistory = () => {
       ));
       setRefundTarget(null);
       setRefundReason('');
-    } catch (err: any) {
-      setRefundError(err?.message || 'Error al procesar la devolución');
+    } catch (err: unknown) {
+      console.error('[SalesHistory] Error completo de Supabase al procesar la devolución:', err);
+      setRefundError(formatSupabaseError(err, 'Error al procesar la devolución'));
     } finally {
       setRefundLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadSales();
-    loadSamples();
-    loadSummary();
-  }, [fromDate, toDate]);
-
-  const loadSummary = async () => {
-    try {
-      if (!supabase) return;
-      const { data, error } = await supabase.rpc('sales_history_summary', {
-        p_start_date: fromDate || null,
-        p_end_date: toDate || null,
-      });
-      if (error) throw error;
-      const s = Array.isArray(data) ? data[0] || {} : data || {};
-      setGrossTotal(Number(s.gross_total ?? 0));
-      setRefundedTotal(Number(s.refunded_total ?? 0));
-      setNetTotal(Number(s.net_total ?? 0));
-      setPosCashTotal(Number(s.pos_cash_total ?? 0));
-      setPosCardTotal(Number(s.pos_card_total ?? 0));
-      setOrderCashTotal(Number(s.order_cash_total ?? 0));
-      setOrderCardTotal(Number(s.order_card_total ?? 0));
-      setOrderTransferTotal(Number(s.order_transfer_total ?? 0));
-      setDeliveryTotal(Number(s.delivery_total ?? 0));
-      setTotalsByOrigin(s.totals_by_origin ?? {});
-      
-      // Load commercial collections for the same date range
-      try {
-        // For commercial collections, we need UTC midnight dates (payment_date is stored as UTC)
-        // Build dates as UTC midnight to match business date semantics
-        let startDate: Date | null = null;
-        let endDate: Date | null = null;
-
-        if (fromDate) {
-          const [year, month, day] = fromDate.split('-').map(Number);
-          startDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
-        }
-
-        if (toDate) {
-          const [year, month, day] = toDate.split('-').map(Number);
-          // End date should be end of day (23:59:59 UTC ≈ next day 00:00:00)
-          endDate = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0));
-        } else if (fromDate) {
-          // If only from date, use same day (end at next day 00:00:00)
-          const [year, month, day] = fromDate.split('-').map(Number);
-          endDate = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0));
-        }
-
-        if (startDate && endDate) {
-          const collections = await getCommercialCollections(startDate, endDate);
-          if (!collections.error) {
-            setComercialCollections({
-              total: collections.total,
-              comodato: collections.bySource?.comodato || 0,
-              mayoreo: collections.bySource?.mayoreo || 0,
-              pieceSale: collections.bySource?.pieceSale || 0,
-              cash: collections.cash,
-              transfer: collections.transfer,
-              breakdown: collections.breakdown || []
-            });
-          } else {
-            console.warn('Commercial collections error:', collections.error);
-          }
-        }
-      } catch (err) {
-        console.error('Exception loading commercial collections:', err);
-      }
-    } catch (err: any) {
-      console.error('Error loading sales summary:', err);
-    } finally {
-    }
-  };
-
-  // Helper to build date range considering local timezone (America/Mexico_City)
   const buildDateRange = (fromDateStr: string, toDateStr: string) => {
-    let startISO: string | null = null;
-    let endISO: string | null = null;
-    let effectiveFrom = fromDateStr;
+    const effectiveFrom = fromDateStr;
     let effectiveTo = toDateStr;
-
-    // Si solo hay from sin to, usa from como to
     if (fromDateStr && !toDateStr) {
       effectiveTo = fromDateStr;
     }
-
-    if (effectiveFrom) {
-      // Parse YYYY-MM-DD como fecha local en MX timezone
-      const [year, month, day] = effectiveFrom.split('-').map(Number);
-      const startLocal = new Date(year, month - 1, day);
-      startLocal.setHours(0, 0, 0, 0);
-      // Convertir a UTC/ISO para query de Supabase
-      startISO = startLocal.toISOString();
+    if (effectiveFrom && effectiveTo && effectiveFrom > effectiveTo) {
+      throw new Error('La fecha “Desde” no puede ser posterior a “Hasta”.');
     }
-
-    if (effectiveTo) {
-      // Parse YYYY-MM-DD como fecha local en MX timezone
-      const [year, month, day] = effectiveTo.split('-').map(Number);
-      const endLocal = new Date(year, month - 1, day);
-      endLocal.setHours(0, 0, 0, 0);
-      endLocal.setDate(endLocal.getDate() + 1); // Día siguiente para rango [start, end)
-      // Convertir a UTC/ISO para query de Supabase
-      endISO = endLocal.toISOString();
-    }
-
-    console.log('FILTER', { from: effectiveFrom, to: effectiveTo, startISO, endISO });
-    return { startISO, endISO };
+    return {
+      startISO: effectiveFrom ? mexicoCityDateStartISO(effectiveFrom) : null,
+      endISO: effectiveTo ? mexicoCityDateStartISO(addCalendarDays(effectiveTo, 1)) : null,
+      effectiveFrom,
+      effectiveTo,
+    };
   };
 
   const loadSales = async () => {
     setLoading(true);
+    setSalesError(null);
     try {
-      if (!supabase) return;
-      
+      if (!supabase) throw new Error('Supabase no está configurado.');
+      if (!profile?.is_active) throw new Error('El perfil no está activo.');
+      if (!isAdmin && branches.length === 0) {
+        throw new Error('No tienes sucursales autorizadas para consultar el historial.');
+      }
+
       let query = supabase
-        .from('sales')
-        .select('id, total, payment_method, created_at, branch_id, is_refunded, refunded_at, refund_reason, sale_origin, delivery_platform, promotion_code, branches(name), sale_items(quantity, product_name, products(name))')
+        .from('v_sales_history')
+        .select('id, total, payment_method, cash_amount, card_amount, transfer_amount, created_at, branch_id, branch_name, is_refunded, refunded_at, refund_reason, sale_origin, delivery_platform, promotion_code, customer_id')
         .order('created_at', { ascending: false });
 
-      // Si hay alguna fecha seleccionada, aplica filtros
       if (fromDate || toDate) {
         const { startISO, endISO } = buildDateRange(fromDate, toDate);
+        if (startISO) query = query.gte('created_at', startISO);
+        if (endISO) query = query.lt('created_at', endISO);
+      }
 
-        if (startISO) {
-          query = query.gte('created_at', startISO);
+      if (isAdmin) {
+        if (branchFilter === 'legacy') query = query.is('branch_id', null);
+        else if (branchFilter !== 'all') {
+          if (!branches.some(branch => branch.id === branchFilter)) {
+            throw new Error('La sucursal seleccionada no pertenece al catálogo autorizado.');
+          }
+          query = query.eq('branch_id', branchFilter);
         }
-
-        if (endISO) {
-          query = query.lt('created_at', endISO);
-        }
+      } else {
+        query = query.in('branch_id', branches.map(branch => branch.id));
       }
 
       const { data, error } = await query;
-
       if (error) throw error;
-      console.log('SALES COUNT', data?.length);
-      console.log('[SALES] raw sales', data);
-      console.log('[SALES] payment methods', data?.map((s: any) => s.payment_method));
-      const salesData: Sale[] = (data || []).map((s: any) => ({
+
+      const baseSales = (data || []) as any[];
+      const previewsBySale = new Map<string, SaleItemPreview[]>();
+      const saleIds = baseSales.map(sale => sale.id);
+      for (let offset = 0; offset < saleIds.length; offset += 100) {
+        const ids = saleIds.slice(offset, offset + 100);
+        const { data: itemData, error: itemError } = await supabase
+          .from('sale_items')
+          .select('sale_id, quantity, product_name, products!sale_items_product_id_fkey(name)')
+          .in('sale_id', ids);
+        if (itemError) throw itemError;
+        for (const item of itemData || []) {
+          const product = Array.isArray(item.products) ? item.products[0] || null : item.products || null;
+          const preview: SaleItemPreview = {
+            sale_id: item.sale_id,
+            quantity: item.quantity,
+            product_name: item.product_name || null,
+            products: product,
+          };
+          previewsBySale.set(item.sale_id, [...(previewsBySale.get(item.sale_id) || []), preview]);
+        }
+      }
+
+      const salesData: Sale[] = baseSales.map((s: any) => ({
         id: s.id,
-        total: s.total,
+        total: Number(s.total || 0),
         payment_method: s.payment_method,
+        cash_amount: s.cash_amount == null ? null : Number(s.cash_amount),
+        card_amount: s.card_amount == null ? null : Number(s.card_amount),
+        transfer_amount: s.transfer_amount == null ? null : Number(s.transfer_amount),
         created_at: s.created_at,
         branch_id: s.branch_id ?? null,
-        branch_name: Array.isArray(s.branches) ? (s.branches[0]?.name ?? null) : (s.branches?.name ?? null),
+        branch_name: s.branch_name ?? null,
         is_refunded: s.is_refunded ?? false,
         refunded_at: s.refunded_at ?? null,
         refund_reason: s.refund_reason ?? null,
         sale_origin: s.sale_origin
           ?? (s.promotion_code === 'ORDER_CHECKOUT' ? 'order' : 'pos'),
         delivery_platform: s.delivery_platform ?? null,
-        sale_items: (s.sale_items || []).map((si: any) => ({
-          quantity: si.quantity,
-          product_name: si.product_name || null,
-          products: Array.isArray(si.products) ? (si.products[0] || null) : (si.products || null)
-        }))
+        promotion_code: s.promotion_code ?? null,
+        customer_id: s.customer_id ?? null,
+        sale_items: previewsBySale.get(s.id) || [],
       }));
       setSales(salesData);
-    } catch (error) {
-      console.error('Error loading sales:', error);
+    } catch (error: unknown) {
+      console.error('[SalesHistory] Error completo de Supabase al cargar ventas:', error);
+      setSales([]);
+      setSalesError(formatSupabaseError(error, 'No se pudo cargar el historial de ventas.'));
     } finally {
       setLoading(false);
     }
@@ -330,8 +299,9 @@ export const SalesHistory = () => {
 
   const loadSamples = async () => {
     setLoadingSamples(true);
+    setSamplesError(null);
     try {
-      if (!supabase) return;
+      if (!supabase) throw new Error('Supabase no está configurado.');
       
       let query = supabase
         .from('waste_events')
@@ -340,7 +310,6 @@ export const SalesHistory = () => {
         .eq('reason', 'MUESTRA')
         .order('created_at', { ascending: false });
 
-      // Si hay alguna fecha seleccionada, aplica filtros
       if (fromDate || toDate) {
         const { startISO, endISO } = buildDateRange(fromDate, toDate);
 
@@ -356,11 +325,11 @@ export const SalesHistory = () => {
       const { data, error } = await query;
 
       if (error) throw error;
-      console.log('SAMPLES COUNT', data?.length);
-      console.log('[SALES] raw samples', data);
       setSamples(data || []);
-    } catch (error) {
-      console.error('Error loading samples:', error);
+    } catch (error: unknown) {
+      console.error('[SalesHistory] Error completo de Supabase al cargar muestras:', error);
+      setSamples([]);
+      setSamplesError(formatSupabaseError(error, 'No se pudieron cargar las muestras.'));
     } finally {
       setLoadingSamples(false);
     }
@@ -369,8 +338,11 @@ export const SalesHistory = () => {
   const loadSaleDetails = async (sale: Sale) => {
     setSelectedSale(sale);
     setLoadingItems(true);
+    setItemsError(null);
+    setReprintError(null);
+    setSaleItems([]);
     try {
-      if (!supabase) return;
+      if (!supabase) throw new Error('Supabase no está configurado.');
       
       const { data, error } = await supabase
         .from('sale_items')
@@ -380,16 +352,29 @@ export const SalesHistory = () => {
           product_name,
           quantity,
           price,
-          products (
+          discount_amount,
+          discount_reason,
+          products!sale_items_product_id_fkey (
             name,
+            product_name,
             size,
             flavor,
-            grams
+            grams,
+            price
           )
         `)
         .eq('sale_id', sale.id);
 
       if (error) throw error;
+
+      const itemIds = (data || []).map((item: any) => item.id);
+      const { data: comboData, error: comboError } = itemIds.length > 0
+        ? await supabase
+          .from('sale_item_combo_components')
+          .select('sale_item_id, component_name, quantity_total')
+          .in('sale_item_id', itemIds)
+        : { data: [], error: null };
+      if (comboError) throw comboError;
       
       // Transform data to match SaleItem type
       const items: SaleItem[] = (data || []).map((item: any) => {
@@ -401,23 +386,100 @@ export const SalesHistory = () => {
           product_id: item.product_id,
           product_name: item.product_name || null,
           quantity: item.quantity,
-          price: item.price,
+          price: Number(item.price || 0),
+          discount_amount: Number(item.discount_amount || 0),
+          discount_reason: item.discount_reason || null,
+          combo_components: (comboData || [])
+            .filter((component: any) => component.sale_item_id === item.id)
+            .map((component: any) => ({
+              component_name: component.component_name,
+              quantity_total: component.quantity_total,
+            })),
           products: raw ? {
             name: raw.name || '',
+            product_name: raw.product_name || null,
             size: raw.size || '',
             flavor: raw.flavor || null,
             grams: raw.grams || null,
+            price: raw.price == null ? null : Number(raw.price),
           } : null
         };
       });
       
       setSaleItems(items);
-    } catch (error) {
-      console.error('Error loading sale items:', error);
+    } catch (error: unknown) {
+      console.error('[SalesHistory] Error completo de Supabase al cargar el detalle:', error);
+      setItemsError(formatSupabaseError(error, 'No se pudo cargar el detalle de la venta.'));
     } finally {
       setLoadingItems(false);
     }
   };
+
+  const loadCommercialCollections = async () => {
+    setCollectionsError(null);
+    if (!isAdmin || branchFilter !== 'all' || !fromDate || !toDate) {
+      setComercialCollections({ total: 0, comodato: 0, mayoreo: 0, pieceSale: 0, cash: 0, transfer: 0, breakdown: [] });
+      return;
+    }
+    try {
+      const { effectiveFrom, effectiveTo } = buildDateRange(fromDate, toDate);
+      const startKey = effectiveFrom || effectiveTo;
+      if (!startKey || !effectiveTo) return;
+      const asUtcCalendarDate = (dateKey: string) => {
+        const [year, month, day] = dateKey.split('-').map(Number);
+        return new Date(Date.UTC(year, month - 1, day));
+      };
+      const collections = await getCommercialCollections(
+        asUtcCalendarDate(startKey),
+        asUtcCalendarDate(addCalendarDays(effectiveTo, 1)),
+      );
+      if (collections.error) throw new Error(collections.error);
+      setComercialCollections({
+        total: collections.total,
+        comodato: collections.bySource.comodato,
+        mayoreo: collections.bySource.mayoreo,
+        pieceSale: collections.bySource.pieceSale,
+        cash: collections.cash,
+        transfer: collections.transfer,
+        breakdown: collections.breakdown || [],
+      });
+    } catch (error: unknown) {
+      console.error('[SalesHistory] Error al cargar cobros comerciales:', error);
+      setCollectionsError(formatSupabaseError(error, 'No se pudieron cargar los cobros comerciales.'));
+      setComercialCollections({ total: 0, comodato: 0, mayoreo: 0, pieceSale: 0, cash: 0, transfer: 0, breakdown: [] });
+    }
+  };
+
+  useEffect(() => {
+    if (branchesLoading || !profile) return;
+    void loadSales();
+  }, [branchFilter, branchesLoading, branches, fromDate, isAdmin, profile, toDate]);
+
+  useEffect(() => {
+    void loadSamples();
+    void loadCommercialCollections();
+  }, [branchFilter, fromDate, isAdmin, toDate]);
+
+  useEffect(() => {
+    if (!isAdmin || !supabase) {
+      setHasLegacySales(false);
+      setBranchOptionsError(null);
+      return;
+    }
+    void supabase
+      .from('sales')
+      .select('id', { count: 'exact', head: true })
+      .is('branch_id', null)
+      .then(({ count, error }) => {
+        if (error) {
+          console.error('[SalesHistory] Error al comprobar ventas históricas sin sucursal:', error);
+          setBranchOptionsError(formatSupabaseError(error, 'No se pudo comprobar si hay ventas sin sucursal.'));
+        } else {
+          setBranchOptionsError(null);
+        }
+        setHasLegacySales(!error && (count || 0) > 0);
+      });
+  }, [isAdmin]);
 
   const getPaymentBadge = (method: string, origin?: string | null) => {
     const norm = normalizePaymentMethod(method);
@@ -453,11 +515,7 @@ export const SalesHistory = () => {
   const getPaymentLabel = (method: string) => getPaymentBadge(method).label;
 
   const setQuickFilter = (filter: 'today' | 'last7' | 'month' | 'clear') => {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const todayLocal = `${year}-${month}-${day}`;
+    const todayLocal = getMexicoCityDateKey();
 
     switch (filter) {
       case 'today':
@@ -465,20 +523,11 @@ export const SalesHistory = () => {
         setToDate(todayLocal);
         break;
       case 'last7':
-        const last7 = new Date(today);
-        last7.setDate(last7.getDate() - 7);
-        const year7 = last7.getFullYear();
-        const month7 = String(last7.getMonth() + 1).padStart(2, '0');
-        const day7 = String(last7.getDate()).padStart(2, '0');
-        setFromDate(`${year7}-${month7}-${day7}`);
+        setFromDate(addCalendarDays(todayLocal, -6));
         setToDate(todayLocal);
         break;
       case 'month':
-        const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-        const yearM = firstDay.getFullYear();
-        const monthM = String(firstDay.getMonth() + 1).padStart(2, '0');
-        const dayM = String(firstDay.getDate()).padStart(2, '0');
-        setFromDate(`${yearM}-${monthM}-${dayM}`);
+        setFromDate(`${todayLocal.slice(0, 7)}-01`);
         setToDate(todayLocal);
         break;
       case 'clear':
@@ -494,14 +543,14 @@ export const SalesHistory = () => {
       return;
     }
 
-    // POS sales rows
-    const headers = ['Origen', 'Fecha', 'Hora', 'Folio', 'Descripción', 'Método de Pago', 'Monto', 'Estado'];
+    const headers = ['Sucursal', 'Origen', 'Fecha', 'Hora', 'Folio', 'Descripción', 'Método de Pago', 'Monto', 'Estado'];
     const posSalesRows = sales.map(sale => {
       const origin = sale.sale_origin === 'order' ? 'Pedido' : 
                      sale.sale_origin === 'delivery' ? `Delivery (${sale.delivery_platform || 'otra'})` : 
                      'Caja Directa';
       const [date, time] = formatDateTimeMX(sale.created_at).split(' ');
       return [
+        sale.branch_name || 'Histórica / sin sucursal',
         origin,
         date,
         time || '',
@@ -513,87 +562,163 @@ export const SalesHistory = () => {
       ];
     });
 
-    // Socios comerciales rows (if any data loaded)
-    const sociosRows = [];
-    if (comercialCollections.comodato > 0 || comercialCollections.mayoreo > 0 || comercialCollections.pieceSale > 0) {
-      const fromDateObj = fromDate ? new Date(fromDate) : new Date();
-      const dateStr = fromDateObj.toLocaleDateString('es-MX');
-      
-      if (comercialCollections.comodato > 0) {
-        sociosRows.push([
-          'Socios Comerciales - Comodato',
-          dateStr,
-          '',
-          'COMOD',
-          'Cobro Comodato',
-          comercialCollections.cash > 0 ? 'Efectivo' : 'Transferencia',
-          `$${comercialCollections.comodato.toFixed(2)}`,
-          'Completado'
-        ]);
-      }
-      if (comercialCollections.mayoreo > 0) {
-        sociosRows.push([
-          'Socios Comerciales - Mayoreo',
-          dateStr,
-          '',
-          'MAYO',
-          'Cobro Mayoreo',
-          comercialCollections.cash > 0 ? 'Efectivo' : 'Transferencia',
-          `$${comercialCollections.mayoreo.toFixed(2)}`,
-          'Completado'
-        ]);
-      }
-      if (comercialCollections.pieceSale > 0) {
-        sociosRows.push([
-          'Socios Comerciales - Venta Pieza',
-          dateStr,
-          '',
-          'PIEZA',
-          'Cobro Venta Pieza',
-          comercialCollections.cash > 0 ? 'Efectivo' : 'Transferencia',
-          `$${comercialCollections.pieceSale.toFixed(2)}`,
-          'Completado'
-        ]);
-      }
-    }
-
     const csvContent = [
       headers.join(','),
       ...posSalesRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')),
-      ...(sociosRows.length > 0 ? ['', '# Socios Comerciales'] : []),
-      ...sociosRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `historial_ventas_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `historial_ventas_${getMexicoCityDateKey()}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
-  // ── Summary-driven buckets (from RPC) ─────────────────────────────────
-  // Use values returned by sales_history_summary RPC (not the loaded rows)
-  const cajaTotal = posCashTotal + posCardTotal;
+  const summary = useMemo(() => {
+    const result = {
+      grossTotal: 0,
+      refundedTotal: 0,
+      netTotal: 0,
+      posCashTotal: 0,
+      posCardTotal: 0,
+      posTransferTotal: 0,
+      orderCashTotal: 0,
+      orderCardTotal: 0,
+      orderTransferTotal: 0,
+      deliveryTotal: 0,
+      totalsByOrigin: {
+        pos: { count: 0 },
+        order: { count: 0 },
+        delivery_platform: { count: 0 },
+      },
+    };
+    for (const sale of sales) {
+      const total = Number(sale.total || 0);
+      result.grossTotal += total;
+      if (sale.is_refunded) {
+        result.refundedTotal += total;
+        continue;
+      }
+      result.netTotal += total;
+      const method = normalizePaymentMethod(sale.payment_method);
+      const origin = sale.sale_origin === 'delivery'
+        ? 'delivery'
+        : sale.sale_origin === 'order' || sale.promotion_code === 'ORDER_CHECKOUT'
+          ? 'order'
+          : 'pos';
+      if (origin === 'delivery') {
+        result.deliveryTotal += total;
+        result.totalsByOrigin.delivery_platform.count += 1;
+      } else if (origin === 'order') {
+        result.totalsByOrigin.order.count += 1;
+        if (method === 'cash') result.orderCashTotal += total;
+        if (method === 'card') result.orderCardTotal += total;
+        if (method === 'transfer') result.orderTransferTotal += total;
+      } else {
+        result.totalsByOrigin.pos.count += 1;
+        if (method === 'cash') result.posCashTotal += total;
+        else if (method === 'card') result.posCardTotal += total;
+        else if (method === 'transfer') result.posTransferTotal += total;
+        else {
+          result.posCashTotal += Number(sale.cash_amount || 0);
+          result.posCardTotal += Number(sale.card_amount || 0);
+        }
+      }
+    }
+    return result;
+  }, [sales]);
+
+  const {
+    grossTotal,
+    refundedTotal,
+    netTotal,
+    posCashTotal,
+    posCardTotal,
+    posTransferTotal,
+    orderCashTotal,
+    orderCardTotal,
+    orderTransferTotal,
+    deliveryTotal,
+    totalsByOrigin,
+  } = summary;
+
+  const cajaTotal = posCashTotal + posCardTotal + posTransferTotal;
   const pedidosTotal = orderCashTotal + orderCardTotal + orderTransferTotal;
   const deliveryTotalRPC = deliveryTotal;
-
-  // Primary total comes from RPC netTotal
-  // (netTotal used directly in UI)
-
-  // Chart includes all origins, labeled clearly — using RPC buckets
   const paymentChartData = [
     { name: 'Caja Efectivo',    value: posCashTotal,        color: '#4CAF50' },
     { name: 'Caja Tarjeta',     value: posCardTotal,        color: '#2196F3' },
+    { name: 'Caja Transf.',     value: posTransferTotal,    color: '#7C3AED' },
     { name: 'Pedidos Efectivo', value: orderCashTotal,      color: '#F59E0B' },
     { name: 'Pedidos Tarjeta',  value: orderCardTotal,      color: '#06B6D4' },
     { name: 'Pedidos Transf.',  value: orderTransferTotal,  color: '#8B5CF6' },
     { name: 'Delivery',         value: deliveryTotalRPC,    color: '#FF6900' },
     { name: 'Socios Comerciales', value: comercialCollections.total, color: '#EC4899' },
   ].filter(item => item.value > 0);
+
+  const reprintSelectedSale = async () => {
+    if (!selectedSale || saleItems.length === 0) return;
+    setReprintLoading(true);
+    setReprintError(null);
+    try {
+      const items = saleItems.map(item => {
+        const quantity = Number(item.quantity || 1);
+        const discount = Number(item.discount_amount || 0);
+        const storedPrice = Number(item.price || 0);
+        const catalogPrice = Number(item.products?.price || 0);
+        const unitPrice = discount > 0 && quantity > 0
+          ? Math.round((storedPrice + discount / quantity) * 100) / 100
+          : catalogPrice > storedPrice ? catalogPrice : storedPrice;
+        return {
+          name: item.products?.product_name || item.products?.name || item.product_name || 'Producto genérico',
+          size: item.products?.size || '',
+          quantity,
+          unitPrice,
+          lineTotal: unitPrice * quantity,
+          discount,
+          discountReason: item.discount_reason || undefined,
+          components: item.combo_components.map(component => ({
+            name: component.component_name,
+            quantity: component.quantity_total,
+          })),
+        };
+      });
+      const rawMethod = String(selectedSale.payment_method || '').toUpperCase();
+      const method: ReceiptData['method'] = selectedSale.sale_origin === 'delivery'
+        ? 'PLATFORM'
+        : ['CASH', 'CARD', 'MIXED', 'TRANSFER', 'PLATFORM'].includes(rawMethod)
+          ? rawMethod as ReceiptData['method']
+          : 'CASH';
+      const cashAmount = method === 'CASH'
+        ? Number(selectedSale.cash_amount ?? selectedSale.total)
+        : Number(selectedSale.cash_amount || 0);
+      const cardAmount = method === 'CARD'
+        ? Number(selectedSale.card_amount ?? selectedSale.total)
+        : Number(selectedSale.card_amount || 0);
+      await printSaleReceipt({
+        saleId: selectedSale.id,
+        date: new Date(selectedSale.created_at),
+        items,
+        subtotal: items.reduce((sum, item) => sum + item.lineTotal, 0),
+        totalDiscount: items.reduce((sum, item) => sum + item.discount, 0),
+        total: Number(selectedSale.total),
+        method,
+        cashAmount,
+        cardAmount,
+        changeAmount: method === 'CASH' ? Math.max(0, cashAmount - Number(selectedSale.total)) : 0,
+      });
+    } catch (error: unknown) {
+      console.error('[SalesHistory] Error al reimprimir la venta:', error);
+      setReprintError(formatSupabaseError(error, 'No se pudo reimprimir la venta.'));
+    } finally {
+      setReprintLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -604,7 +729,8 @@ export const SalesHistory = () => {
         </h2>
         <button
           onClick={exportToCSV}
-          className="flex items-center gap-2 px-4 py-2 bg-cc-primary text-cc-bg rounded-lg hover:bg-cc-primary/90 transition-colors font-medium"
+          disabled={loading || Boolean(salesError) || sales.length === 0}
+          className="flex items-center gap-2 px-4 py-2 bg-cc-primary text-cc-bg rounded-lg hover:bg-cc-primary/90 transition-colors font-medium disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Download size={18} />
           Exportar CSV
@@ -615,10 +741,10 @@ export const SalesHistory = () => {
       <div className="bg-cc-surface p-5 rounded-xl border border-white/5">
         <div className="flex items-center gap-2 mb-4">
           <Filter size={20} className="text-cc-primary" />
-          <h3 className="text-lg font-semibold text-cc-cream">Filtros por Fecha</h3>
+          <h3 className="text-lg font-semibold text-cc-cream">Filtros</h3>
         </div>
         
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <div className={`grid grid-cols-1 ${isAdmin ? 'lg:grid-cols-3' : 'lg:grid-cols-2'} gap-4 mb-4`}>
           <div>
             <label className="block text-sm text-cc-text-muted mb-2">Desde</label>
             <input
@@ -637,7 +763,29 @@ export const SalesHistory = () => {
               className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
             />
           </div>
+          {isAdmin && (
+            <div>
+              <label className="block text-sm text-cc-text-muted mb-2">Sucursal</label>
+              <select
+                value={branchFilter}
+                onChange={(event) => setBranchFilter(event.target.value)}
+                className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
+              >
+                <option value="all">Todas las sucursales</option>
+                {branches.map(branch => (
+                  <option key={branch.id} value={branch.id}>{branch.name}</option>
+                ))}
+                {hasLegacySales && <option value="legacy">Históricas / sin sucursal</option>}
+              </select>
+            </div>
+          )}
         </div>
+
+        {!isAdmin && (
+          <p className="mb-4 text-xs text-cc-text-muted">
+            Sucursales autorizadas: {branches.map(branch => branch.name).join(', ') || 'ninguna'}
+          </p>
+        )}
 
         <div className="flex flex-wrap gap-2">
           <button
@@ -667,6 +815,30 @@ export const SalesHistory = () => {
           </button>
         </div>
       </div>
+
+      {salesError && (
+        <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200" role="alert">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={20} className="mt-0.5 shrink-0" />
+            <div>
+              <p className="font-semibold">No se pudo cargar el historial de ventas</p>
+              <p className="mt-1 break-words text-sm">{salesError}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(branchContextError || branchOptionsError) && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200" role="alert">
+          Sucursales: {branchOptionsError || branchContextError}
+        </div>
+      )}
+
+      {collectionsError && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200" role="alert">
+          Cobros comerciales: {collectionsError}
+        </div>
+      )}
 
       {/* Sales breakdown by origin */}
       {(sales.length > 0 || comercialCollections.total > 0) && (
@@ -721,7 +893,7 @@ export const SalesHistory = () => {
             {/* Stats panels */}
             <div className="flex flex-col justify-start gap-3">
 
-              {/* Caja directa (desde RPC) */}
+              {/* Caja directa from the exact visible sales set */}
               {(totalsByOrigin['pos']?.count || 0) > 0 && (
                 <div className="bg-black/20 p-4 rounded-lg border border-green-500/20">
                   <div className="flex items-center justify-between mb-2">
@@ -736,6 +908,12 @@ export const SalesHistory = () => {
                     <span className="text-cc-text-muted flex items-center gap-1"><CreditCard size={13} className="text-blue-400" /> Tarjeta</span>
                     <span className="text-cc-cream font-semibold">${posCardTotal.toFixed(2)}</span>
                   </div>
+                  {posTransferTotal > 0 && (
+                    <div className="flex justify-between text-sm mt-1">
+                      <span className="text-cc-text-muted flex items-center gap-1"><Landmark size={13} className="text-violet-400" /> Transferencia</span>
+                      <span className="text-cc-cream font-semibold">${posTransferTotal.toFixed(2)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm mt-2 pt-2 border-t border-white/10">
                     <span className="text-green-300 font-bold">Total caja</span>
                     <span className="text-green-300 font-bold">${cajaTotal.toFixed(2)}</span>
@@ -743,7 +921,7 @@ export const SalesHistory = () => {
                 </div>
               )}
 
-              {/* Pedidos (desde RPC) */}
+              {/* Pedidos from the exact visible sales set */}
               {(totalsByOrigin['order']?.count || 0) > 0 && (
                 <div className="bg-black/20 p-4 rounded-lg border border-violet-500/20">
                   <div className="flex items-center justify-between mb-2">
@@ -775,7 +953,7 @@ export const SalesHistory = () => {
                 </div>
               )}
 
-              {/* Delivery (desde RPC) */}
+              {/* Delivery from the exact visible sales set */}
               {(totalsByOrigin['delivery_platform']?.count || 0) > 0 && (
                 <div className="bg-black/20 p-4 rounded-lg border border-orange-500/20">
                   <div className="flex items-center justify-between mb-2">
@@ -833,7 +1011,7 @@ export const SalesHistory = () => {
                 </div>
               )}
 
-              {/* Grand total (from RPC + commercial collections) */}
+              {/* Grand total from visible sales plus separately labeled commercial collections */}
               <div className="bg-cc-primary/10 p-4 rounded-lg border border-cc-primary/20">
                 <div className="text-sm text-cc-text-muted mb-1">Total General histórico</div>
                 <div className="text-3xl font-bold text-cc-primary">${(netTotal + comercialCollections.total).toFixed(2)}</div>
@@ -853,40 +1031,23 @@ export const SalesHistory = () => {
         <div className="text-center text-cc-text-muted py-20">
           Cargando ventas...
         </div>
-      ) : sales.length === 0 ? (
+      ) : salesError ? null : sales.length === 0 ? (
         <div className="text-center text-cc-text-muted py-20 bg-cc-surface rounded-xl border border-white/5">
           <Receipt size={64} className="mx-auto mb-4 opacity-30" />
-          <p className="text-xl">No hay ventas registradas aún</p>
+          <p className="text-xl">No hay ventas para los filtros seleccionados</p>
         </div>
       ) : (
         <div className="grid gap-4">
-          {(() => {
-            // Create combined list of sales and commercial collections
-            const posMovements = sales.map(sale => ({ type: 'pos' as const, data: sale }));
-            const sociosMovements = comercialCollections.breakdown.map(payment => ({ 
-              type: 'socios' as const, 
-              data: payment 
-            }));
-            
-            const combinedMovements = [...posMovements, ...sociosMovements].sort((a, b) => {
-              const dateA = a.type === 'pos' ? new Date(a.data.created_at).getTime() : new Date(a.data.payment_date).getTime();
-              const dateB = b.type === 'pos' ? new Date(b.data.created_at).getTime() : new Date(b.data.payment_date).getTime();
-              return dateB - dateA;
-            });
-            
-            return combinedMovements.map((movement) => {
-              if (movement.type === 'pos') {
-                const sale = movement.data;
-                return (
-                  <div
-                    key={sale.id}
-                    onClick={() => !sale.is_refunded && loadSaleDetails(sale)}
-                    className={`bg-cc-surface p-5 rounded-xl border transition-all ${
-                      sale.is_refunded
-                        ? 'border-red-500/20 opacity-60 cursor-default'
-                        : 'border-white/5 hover:border-cc-primary/30 cursor-pointer hover:shadow-lg group'
-                    }`}
-                  >
+          {sales.map(sale => (
+            <div
+              key={sale.id}
+              onClick={() => loadSaleDetails(sale)}
+              className={`bg-cc-surface p-5 rounded-xl border transition-all ${
+                sale.is_refunded
+                  ? 'border-red-500/20 opacity-75 cursor-pointer'
+                  : 'border-white/5 hover:border-cc-primary/30 cursor-pointer hover:shadow-lg group'
+              }`}
+            >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-4">
                         <div className={`w-12 h-12 rounded-lg flex items-center justify-center transition-colors ${
@@ -939,10 +1100,10 @@ export const SalesHistory = () => {
                             {sale.is_refunded ? 'Devuelta' : 'Click para ver detalles'}
                           </div>
                           <span className="mt-1 inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-cc-text-muted">
-                            {sale.branch_id && sale.branch_name ? sale.branch_name : 'Sucursal no identificada'}
+                            {sale.branch_id && sale.branch_name ? sale.branch_name : 'Histórica / sin sucursal'}
                           </span>
                         </div>
-                        {!sale.is_refunded && (
+                        {isAdmin && !sale.is_refunded && (
                           <button
                             onClick={(e) => { e.stopPropagation(); setRefundTarget(sale); setRefundReason(''); setRefundError(null); }}
                             className="p-2 rounded-lg bg-white/5 border border-white/10 text-cc-text-muted hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 transition-all"
@@ -953,57 +1114,8 @@ export const SalesHistory = () => {
                         )}
                       </div>
                     </div>
-                  </div>
-                );
-              } else {
-                // Render socios commercial movement
-                const payment = movement.data;
-                const sourceType = payment.source_type === 'comodato' ? 'COMODATO' : payment.source_type === 'mayoreo' ? 'MAYOREO' : 'VENTA PIEZA';
-                return (
-                  <div
-                    key={payment.id}
-                    className="bg-cc-surface p-5 rounded-xl border border-pink-500/20 hover:border-pink-500/40 transition-all"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-pink-500/10">
-                          <Users size={24} className="text-pink-400" />
-                        </div>
-                        <div>
-                          <div className="font-semibold text-cc-text-main mb-1 line-clamp-1 flex items-center gap-2">
-                            Socios Comerciales
-                            <span className="text-[10px] font-bold bg-pink-500/20 text-pink-300 border border-pink-500/30 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
-                              {sourceType}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs text-cc-text-muted">
-                              {formatDateTimeMX(payment.payment_date)}
-                            </span>
-                            <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-white/5">
-                              {payment.payment_method === 'cash' ? (
-                                <><DollarSign size={12} className="text-green-400" /><span className="text-green-400">EFECTIVO</span></>
-                              ) : (
-                                <><Banknote size={12} className="text-blue-400" /><span className="text-blue-400">TRANSFERENCIA</span></>
-                              )}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-bold text-pink-400">
-                          ${Number(payment.amount).toFixed(2)}
-                        </div>
-                        <div className="text-xs text-cc-text-muted">
-                          Movimiento comercial
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              }
-            });
-          })()}
+            </div>
+          ))}
         </div>
       )}
 
@@ -1017,6 +1129,10 @@ export const SalesHistory = () => {
         {loadingSamples ? (
           <div className="text-center text-cc-text-muted py-8">
             Cargando muestras...
+          </div>
+        ) : samplesError ? (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200" role="alert">
+            {samplesError}
           </div>
         ) : samples.length === 0 ? (
           <div className="text-center text-cc-text-muted py-8">
@@ -1091,6 +1207,12 @@ export const SalesHistory = () => {
                 <div className="text-center text-cc-text-muted py-8">
                   Cargando productos...
                 </div>
+              ) : itemsError ? (
+                <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200" role="alert">
+                  {itemsError}
+                </div>
+              ) : saleItems.length === 0 ? (
+                <div className="text-center text-cc-text-muted py-8">La venta no tiene partidas registradas.</div>
               ) : (
                 <div className="space-y-3">
                   {saleItems.map((item) => {
@@ -1104,11 +1226,20 @@ export const SalesHistory = () => {
                         {/* Product name + description */}
                         <div>
                           <div className="font-semibold text-cc-text-main">
-                            {item.products?.name || item.product_name || 'Producto genérico'}
+                            {item.products?.product_name || item.products?.name || item.product_name || 'Producto genérico'}
                           </div>
                           {description && (
                             <div className="text-xs text-cc-text-muted mt-0.5">
                               {description}
+                            </div>
+                          )}
+                          {item.combo_components.length > 0 && (
+                            <div className="mt-2 space-y-1 rounded-md border border-cc-primary/15 bg-cc-primary/5 p-2">
+                              {item.combo_components.map((component, index) => (
+                                <div key={`${component.component_name}-${index}`} className="text-xs text-cc-text-muted">
+                                  + {component.quantity_total} × {component.component_name}
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
@@ -1127,6 +1258,12 @@ export const SalesHistory = () => {
                             <div className="font-bold text-cc-primary">${itemTotal.toFixed(2)}</div>
                           </div>
                         </div>
+                        {item.discount_amount > 0 && (
+                          <div className="text-xs text-emerald-300">
+                            Descuento: -${item.discount_amount.toFixed(2)}
+                            {item.discount_reason ? ` · ${item.discount_reason}` : ''}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1150,6 +1287,20 @@ export const SalesHistory = () => {
                   {selectedSale.refund_reason && <span className="text-xs text-red-400/70 ml-1">— {selectedSale.refund_reason}</span>}
                 </div>
               )}
+              {reprintError && (
+                <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200" role="alert">
+                  {reprintError}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => void reprintSelectedSale()}
+                disabled={loadingItems || Boolean(itemsError) || saleItems.length === 0 || reprintLoading}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-cc-primary/30 bg-cc-primary/10 px-4 py-2.5 font-semibold text-cc-primary transition-colors hover:bg-cc-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Printer size={17} />
+                {reprintLoading ? 'Reimprimiendo…' : 'Reimprimir ticket'}
+              </button>
             </div>
           </div>
         </div>

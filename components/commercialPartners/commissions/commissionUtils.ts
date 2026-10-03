@@ -120,6 +120,10 @@ export const getSourceTypeLabel = (sourceType: SourceType): string => {
       return 'Venta por pieza';
     case 'conversion_bonus':
       return 'Bono de conversión';
+    case 'prospect_conversion_bonus':
+      return 'Bono por prospecto convertido';
+    case 'prospect_origin_sale':
+      return 'Comisión por socio originado';
     case 'adjustment':
       return 'Ajuste';
     case 'pos_sale':
@@ -139,6 +143,10 @@ export const getSourceTypeColor = (sourceType: SourceType): string => {
       return '#ec4899'; // pink
     case 'conversion_bonus':
       return '#f59e0b'; // amber
+    case 'prospect_conversion_bonus':
+      return '#22c55e'; // green
+    case 'prospect_origin_sale':
+      return '#f97316'; // orange
     case 'adjustment':
       return '#6b7280'; // gray
     case 'pos_sale':

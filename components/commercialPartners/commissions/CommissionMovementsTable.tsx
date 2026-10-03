@@ -134,7 +134,17 @@ export const CommissionMovementsTable = ({
 
             {/* Source Type Filter */}
             <div className="flex gap-1">
-              {['todos', 'comodato_sale', 'wholesale_sale', 'conversion_bonus'].map(type => (
+              {[
+                'todos',
+                'comodato_sale',
+                'wholesale_sale',
+                'piece_sale',
+                'pos_sale',
+                'conversion_bonus',
+                'prospect_conversion_bonus',
+                'prospect_origin_sale',
+                'adjustment',
+              ].map(type => (
                 <button
                   key={type}
                   onClick={() => onFiltersChange({ ...filters, sourceType: type as any })}
@@ -144,13 +154,7 @@ export const CommissionMovementsTable = ({
                       : 'bg-white/5 text-cc-text-muted hover:bg-white/10'
                   }`}
                 >
-                  {type === 'todos'
-                    ? 'Todos'
-                    : type === 'comodato_sale'
-                      ? 'Comodato'
-                      : type === 'wholesale_sale'
-                        ? 'Mayoreo'
-                        : 'Conversiones'}
+                  {type === 'todos' ? 'Todos' : getSourceTypeLabel(type as any)}
                 </button>
               ))}
             </div>

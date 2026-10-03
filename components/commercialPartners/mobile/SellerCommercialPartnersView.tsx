@@ -96,8 +96,8 @@ export const SellerCommercialPartnersView = ({
     setError(null);
     try {
       const { data, error: dbErr } = await supabase
-        .from('commercial_partners')
-        .select('*')
+        .from('v_commercial_partner_directory')
+        .select('id, record_type, folio, business_name, responsible_name, phone, business_type, partner_model, status, assigned_to, originator_user_id, originator_name, created_at, updated_at')
         .order('business_name', { ascending: true });
 
       if (dbErr) throw dbErr;
@@ -156,7 +156,7 @@ export const SellerCommercialPartnersView = ({
           <SellerMobileHome
             commissionPending={commissionData.pending}
             commissionAvailable={commissionData.available}
-            partnersCount={partners.length}
+            partnersCount={partners.filter(partner => partner.record_type !== 'prospecto').length}
             sellerId={user?.id}
             refreshKey={homeRefreshKey}
             onNavigate={(page) => setActiveTab(page)}
@@ -168,7 +168,13 @@ export const SellerCommercialPartnersView = ({
             partners={partners}
             loading={loading}
             error={error}
-            onSelectPartner={setSelectedPartner}
+            onSelectPartner={partner => {
+              if (partner.record_type === 'prospecto') {
+                window.location.href = '/prospectos-comerciales';
+                return;
+              }
+              setSelectedPartner(partner);
+            }}
             onNewPartner={() => setShowNewForm(true)}
           />
         );

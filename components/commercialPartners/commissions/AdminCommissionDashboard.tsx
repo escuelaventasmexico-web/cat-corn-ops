@@ -38,12 +38,16 @@ export const AdminCommissionDashboard = () => {
     paid_total: number;
     comodato_units: number;
     wholesale_units: number;
+    piece_sale_units: number;
+    pos_units: number;
+    prospect_origin_units: number;
     conversion_count: number;
   }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [verificationRefreshKey, setVerificationRefreshKey] = useState(0);
+  const selectedSellerRole = sellers.find(seller => seller.id === selectedSellerId)?.role;
 
   const loadSellers = async () => {
     if (!supabase) {
@@ -56,8 +60,8 @@ export const AdminCommissionDashboard = () => {
       setLoading(true);
       const { data, error: err } = await supabase
         .from('user_profiles')
-        .select('*')
-        .eq('role', 'socios_comerciales')
+        .select('id, full_name, role, is_active')
+        .in('role', ['socios_comerciales', 'vendedora'])
         .eq('is_active', true);
 
       if (err) throw err;
@@ -117,7 +121,7 @@ export const AdminCommissionDashboard = () => {
 
       const { data, error: err } = await supabase
         .from('v_seller_commission_monthly_summary')
-        .select('seller_id, generated_total, pending_total, available_total, paid_total, comodato_units, wholesale_units, conversion_count')
+        .select('seller_id, generated_total, pending_total, available_total, paid_total, comodato_units, wholesale_units, piece_sale_units, pos_units, prospect_origin_units, conversion_count')
         .eq('month_start', monthStart);
 
       if (err) throw err;
@@ -274,7 +278,7 @@ export const AdminCommissionDashboard = () => {
           </div>
 
           {/* Extra Days Section - Admin Only */}
-          {selectedSellerId && (
+          {selectedSellerId && selectedSellerRole === 'socios_comerciales' && (
             <div className="bg-cc-surface rounded-xl border border-white/5 p-6">
               <button
                 onClick={() => setShowExtraDayModal(true)}
@@ -286,7 +290,7 @@ export const AdminCommissionDashboard = () => {
           )}
 
           {/* Partner Target Section - Admin Only */}
-          {selectedSellerId && (
+          {selectedSellerId && selectedSellerRole === 'socios_comerciales' && (
             <AdminPartnerTargetEditor
               sellerId={selectedSellerId}
               sellerName={sellers.find(s => s.id === selectedSellerId)?.full_name || ''}
@@ -392,7 +396,10 @@ export const AdminCommissionDashboard = () => {
                       </td>
                       <td className="px-4 py-3 text-center text-cc-text-main">
                         {parseNumericValue(seller.comodato_units) +
-                          parseNumericValue(seller.wholesale_units)}
+                          parseNumericValue(seller.wholesale_units) +
+                          parseNumericValue(seller.piece_sale_units) +
+                          parseNumericValue(seller.pos_units) +
+                          parseNumericValue(seller.prospect_origin_units)}
                       </td>
                       <td className="px-4 py-3 text-center text-cc-text-main">
                         {parseNumericValue(seller.conversion_count)}

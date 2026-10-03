@@ -8,6 +8,10 @@ export interface ReceiptItem {
   lineTotal: number;
   discount?: number;
   discountReason?: string;
+  components?: Array<{
+    name: string;
+    quantity: number;
+  }>;
 }
 
 export interface ReceiptData {
@@ -17,7 +21,7 @@ export interface ReceiptData {
   subtotal: number;
   totalDiscount: number;
   total: number;
-  method: 'CASH' | 'CARD' | 'MIXED' | 'TRANSFER';
+  method: 'CASH' | 'CARD' | 'MIXED' | 'TRANSFER' | 'PLATFORM';
   cashAmount: number;
   cardAmount: number;
   changeAmount: number;
@@ -41,6 +45,8 @@ export const TicketReceipt = forwardRef<HTMLDivElement, { data: ReceiptData }>(
     const methodLabel =
       data.method === 'MIXED'
         ? 'Mixto'
+        : data.method === 'PLATFORM'
+          ? 'Plataforma'
         : data.method === 'TRANSFER'
           ? 'Transferencia'
         : data.method === 'CARD'
@@ -103,6 +109,11 @@ export const TicketReceipt = forwardRef<HTMLDivElement, { data: ReceiptData }>(
                     <div style={{ fontSize: '10px', color: '#444' }}>
                       {item.size} &nbsp; {item.quantity} x ${item.unitPrice.toFixed(2)}
                     </div>
+                    {item.components?.map((component, componentIndex) => (
+                      <div key={componentIndex} style={{ fontSize: '9px', color: '#555' }}>
+                        + {component.quantity} x {component.name}
+                      </div>
+                    ))}
                     {disc > 0 && (
                       <div style={{ fontSize: '9px', color: '#888' }}>
                         {item.discountReason === 'PROMO_SATURDAY_SABORES_50'

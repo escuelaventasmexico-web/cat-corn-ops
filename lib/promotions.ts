@@ -3,7 +3,6 @@ import type { CartItem } from '../supabase';
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type PromotionCode =
-  | 'COMBO_PALOMITAS_GOMITAS'
   | 'MONDAY_2_MICHI'
   | 'TUESDAY_MINI_CAR'
   | 'WEDNESDAY_GATO'
@@ -41,80 +40,9 @@ function isDeliverySku(item: CartItem): boolean {
   return sku.startsWith('DEL-') || sku.startsWith('DEL_');
 }
 
-const GUMMY_COMBO_SKU = 'GOMIX90';
-const GUMMY_COMBO_REASON = 'PROMO_COMBO_PALOMITAS_GOMITAS';
-
-/** Delivery identification for the combo uses catalog classification and SKU. */
-function isDeliveryComboItem(item: CartItem): boolean {
-  const classification = `${item.category || ''} ${item.flavor || ''}`.toLowerCase();
-  return isDeliverySku(item) || classification.includes('delivery');
-}
-
-/** Gomitas are identified only by their stable SKU, never by their display name. */
-export function isGummyComboGummy(item: CartItem): boolean {
-  return !item.is_generic
-    && !isDeliveryComboItem(item)
-    && (item.sku_code || '').toUpperCase() === GUMMY_COMBO_SKU;
-}
-
-/**
- * Eligible popcorn products are catalog products classified as Salada/Mantequilla,
- * Sabores, or Caramelo. Generic, delivery, and gummy items are excluded.
- */
-export function isGummyComboPopcorn(item: CartItem): boolean {
-  if (item.is_generic || isGummyComboGummy(item) || isDeliveryComboItem(item)) return false;
-  const classification = `${item.category || ''} ${item.flavor || ''}`.toLowerCase();
-  return classification.includes('salad')
-    || classification.includes('mantequill')
-    || classification.includes('tradicional')
-    || classification.includes('sabor')
-    || classification.includes('caramel');
-}
-
-/** Number of complete 1-popcorn + 1-gummy pairs currently in the cart. */
-export function countGummyCombos(cart: CartItem[]): number {
-  const popcornUnits = cart
-    .filter(isGummyComboPopcorn)
-    .reduce((sum, item) => sum + item.quantity, 0);
-  const gummyUnits = cart
-    .filter(isGummyComboGummy)
-    .reduce((sum, item) => sum + item.quantity, 0);
-  return Math.min(popcornUnits, gummyUnits);
-}
-
-/**
- * Applies the permanent combo in cart order. It allocates complete pairs first
- * to the earliest eligible popcorn and gummy lines, never discounting an
- * unpaired unit or more than a line subtotal.
- */
-export function applyGummyCombo(cart: CartItem[]): CartItem[] {
-  const cleaned = clearPromoDiscounts(cart);
-  const combos = countGummyCombos(cleaned);
-  if (combos === 0) return cleaned;
-
-  let popcornRemaining = combos;
-  let gummyRemaining = combos;
-  return cleaned.map(item => {
-    if (isGummyComboPopcorn(item) && popcornRemaining > 0) {
-      const matchedUnits = Math.min(item.quantity, popcornRemaining);
-      popcornRemaining -= matchedUnits;
-      return {
-        ...item,
-        discount_amount: Math.min(item.price * item.quantity, matchedUnits * 5),
-        discount_reason: GUMMY_COMBO_REASON,
-      };
-    }
-    if (isGummyComboGummy(item) && gummyRemaining > 0) {
-      const matchedUnits = Math.min(item.quantity, gummyRemaining);
-      gummyRemaining -= matchedUnits;
-      return {
-        ...item,
-        discount_amount: Math.min(item.price * item.quantity, matchedUnits * 3),
-        discount_reason: GUMMY_COMBO_REASON,
-      };
-    }
-    return item;
-  });
+export function isOfficialCombo(item: CartItem): boolean {
+  return `${item.category || ''} ${item.flavor || ''}`.toUpperCase().includes('COMBOS')
+    || (item.sku_code || '').toUpperCase().startsWith('COMBO-');
 }
 
 /** Returns true when item belongs to the "Sabores" category/flavor (case-insensitive). */
@@ -204,19 +132,6 @@ function sortByPriceDesc(items: CartItem[]): CartItem[] {
 // ─── Promotion Definitions ──────────────────────────────────────────────────
 
 export const PROMOTIONS: PromotionDefinition[] = [
-  {
-    code: 'COMBO_PALOMITAS_GOMITAS',
-    label: 'Combo Palomitas + Gomitas',
-    shortLabel: 'Combo',
-    day: 'COMBO',
-    description: '1 palomita + 1 bolsa de gomitas 90 g',
-    includes: '1 palomita + 1 bolsa de gomitas 90 g',
-    promoPrice: '$8 OFF por combo',
-    note: '$5 OFF palomitas + $3 OFF gomitas',
-    isEligible: (item) => isGummyComboPopcorn(item) || isGummyComboGummy(item),
-    apply: applyGummyCombo,
-  },
-
   // --- MONDAY: Buy 2 Michi 90g, special bundle discount ($10 off each) ---
   {
     code: 'MONDAY_2_MICHI',
@@ -316,12 +231,12 @@ export const PROMOTIONS: PromotionDefinition[] = [
     includes: 'Aplica a cualquier producto en punto de venta',
     promoPrice: '$5 OFF c/u',
     note: 'Excluye pedidos delivery',
-    isEligible: (item) => !isDeliverySku(item),
+    isEligible: (item) => !isDeliverySku(item) && !isOfficialCombo(item),
     apply: (cart) => {
       const reason = 'PROMO_THURSDAY_NON_DELIVERY';
       const cleaned = clearPromoDiscounts(cart);
       // Apply $5 per unit to each non-delivery item, highest price first
-      const eligible = cleaned.filter(i => !isDeliverySku(i));
+      const eligible = cleaned.filter(i => !isDeliverySku(i) && !isOfficialCombo(i));
       const sorted = sortByPriceDesc(eligible);
       const eligibleIds = new Set(sorted.map(i => i.id));
       return cleaned.map(item => {
@@ -518,7 +433,28 @@ export const PROMOTIONS: PromotionDefinition[] = [
 ];
 
 export function getPromotion(code: PromotionCode): PromotionDefinition | undefined {
-  return PROMOTIONS.find(p => p.code === code);
+  const promotion = PROMOTIONS.find(p => p.code === code);
+  if (!promotion) return undefined;
+
+  return {
+    ...promotion,
+    isEligible: item => !isOfficialCombo(item) && promotion.isEligible(item),
+    apply: cart => {
+      const applied = promotion.apply(cart);
+      return applied.map((item, index) => {
+        const original = cart[index];
+        if (!original || !isOfficialCombo(original)) return item;
+        if (original.discount_reason?.startsWith('PROMO_')) {
+          return {
+            ...original,
+            discount_amount: undefined,
+            discount_reason: undefined,
+          };
+        }
+        return original;
+      });
+    },
+  };
 }
 
 /** Count how many cart items are eligible for a given promo */
@@ -531,7 +467,6 @@ export function countEligible(cart: CartItem[], code: PromotionCode): number {
 /** Get the emoji for a promo day */
 export function getPromoEmoji(code: PromotionCode): string {
   switch (code) {
-    case 'COMBO_PALOMITAS_GOMITAS': return '🍿🍬';
     case 'MONDAY_2_MICHI': return '🐱';
     case 'TUESDAY_MINI_CAR': return '🍯';
     case 'WEDNESDAY_GATO': return '🐈';

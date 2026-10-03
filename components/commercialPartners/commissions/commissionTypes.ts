@@ -7,6 +7,8 @@ export type SourceType =
   | 'wholesale_sale'
   | 'piece_sale'
   | 'conversion_bonus'
+  | 'prospect_conversion_bonus'
+  | 'prospect_origin_sale'
   | 'adjustment'
   | 'pos_sale';
 
@@ -20,6 +22,9 @@ export interface SellerCommissionMonthlySummary {
   paid_total: number;
   comodato_units: number;
   wholesale_units: number;
+  piece_sale_units: number;
+  pos_units: number;
+  prospect_origin_units: number;
   conversion_count: number;
   partners_count: number;
   events_count: number | string;
@@ -108,6 +113,20 @@ export interface CommissionAvailableForPayment {
   available_event_count: number;
   has_draft_settlement: boolean;
   draft_settlement_id: string | null;
+}
+
+export interface CommissionSettlementPreview {
+  available_total: number;
+  event_count: number;
+  first_available_date: string | null;
+  last_available_date: string | null;
+  existing_draft_id: string | null;
+  existing_draft_folio: string | null;
+  existing_draft_total: number;
+  existing_draft_created_at: string | null;
+  existing_draft_period_start: string | null;
+  existing_draft_period_end: string | null;
+  existing_draft_event_count: number;
 }
 
 export interface SellerCommissionTargetProgress {

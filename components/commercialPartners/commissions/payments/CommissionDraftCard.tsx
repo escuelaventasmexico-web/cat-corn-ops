@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { AlertCircle, Trash2, ArrowRight } from 'lucide-react';
 import { formatCurrency, formatDate } from '../commissionUtils';
-import { cancelCommissionSettlementDraft } from './paymentUtils';
+import { cancelCommissionSettlementDraft, formatSupabaseError } from './paymentUtils';
 
 interface CommissionDraftCardProps {
   draft: {
@@ -48,9 +48,8 @@ export const CommissionDraftCard: React.FC<CommissionDraftCardProps> = ({
 
       onRefresh();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Error al cancelar';
       console.error('CANCEL ERROR', err);
-      setError(message);
+      setError(formatSupabaseError(err, 'Error al cancelar el borrador'));
     } finally {
       setCancelling(false);
     }
@@ -89,11 +88,17 @@ export const CommissionDraftCard: React.FC<CommissionDraftCardProps> = ({
             {formatDate(draft.month_start)} - {formatDate(draft.month_end)}
           </p>
         </div>
+        <div className="p-2 bg-amber-900/20 rounded col-span-2">
+          <p className="text-xs text-neutral-500">Creado</p>
+          <p className="text-xs text-amber-300 mt-1">
+            {new Date(draft.created_at).toLocaleString('es-MX')}
+          </p>
+        </div>
       </div>
 
       {/* Error */}
       {error && (
-        <div className="text-xs text-red-300 bg-red-500/10 p-2 rounded border border-red-500/20">
+        <div className="text-xs text-red-300 bg-red-500/10 p-2 rounded border border-red-500/20 whitespace-pre-line break-words">
           {error}
         </div>
       )}

@@ -8,20 +8,26 @@ interface SensitiveModuleGuardProps {
   children: ReactNode;
   /** Enables the seller-role bypass only for the explicitly opted-in route. */
   allowCommercialPartnersRoleBypass?: boolean;
+  /** Allows branch-restricted sellers to open the explicitly opted-in route. */
+  allowSellerRoleBypass?: boolean;
 }
 
 export const SensitiveModuleGuard: React.FC<SensitiveModuleGuardProps> = ({
   children,
   allowCommercialPartnersRoleBypass = false,
+  allowSellerRoleBypass = false,
 }) => {
   const {
     financialAccessUnlockedUntil,
     unlockFinancialAccess,
     lockFinancialAccess,
     isCommercialPartnersUser,
+    role,
   } = useAuth();
   const navigate = useNavigate();
-  const bypassFinancialPassword = allowCommercialPartnersRoleBypass && isCommercialPartnersUser;
+  const bypassFinancialPassword =
+    (allowCommercialPartnersRoleBypass && isCommercialPartnersUser)
+    || (allowSellerRoleBypass && role === 'vendedora');
 
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);

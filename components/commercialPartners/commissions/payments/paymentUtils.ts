@@ -5,7 +5,67 @@ import {
   CommissionSettlementHistory,
   CommissionSettlementDetail,
   CommissionAvailableForPayment,
+  CommissionSettlementPreview,
 } from '../commissionTypes';
+
+export const formatSupabaseError = (
+  error: unknown,
+  fallback = 'Ocurrió un error inesperado'
+): string => {
+  if (!error || typeof error !== 'object') {
+    return error instanceof Error && error.message ? error.message : fallback;
+  }
+
+  const record = error as Record<string, unknown>;
+  const fields: Array<[string, unknown]> = [
+    ['message', record.message],
+    ['details', record.details],
+    ['hint', record.hint],
+    ['code', record.code],
+  ];
+  const lines = fields
+    .filter(([, value]) => typeof value === 'string' && value.trim() !== '')
+    .map(([label, value]) => `${label}: ${String(value)}`);
+
+  return lines.length > 0 ? lines.join('\n') : fallback;
+};
+
+/**
+ * Load the exact candidate universe used by create_commission_settlement.
+ */
+export const getCommissionSettlementPreview = async (
+  sellerId: string,
+  periodStart: string,
+  periodEnd: string
+): Promise<CommissionSettlementPreview> => {
+  if (!supabase) throw new Error('Supabase not configured');
+
+  const { data, error } = await supabase.rpc('get_commission_settlement_preview', {
+    p_seller_id: sellerId,
+    p_period_start: periodStart,
+    p_period_end: periodEnd,
+  });
+
+  if (error) {
+    console.error('SETTLEMENT PREVIEW ERROR', error);
+    throw error;
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+  return {
+    available_total: Number(row?.available_total || 0),
+    event_count: Number(row?.event_count || 0),
+    first_available_date: typeof row?.first_available_date === 'string' ? row.first_available_date : null,
+    last_available_date: typeof row?.last_available_date === 'string' ? row.last_available_date : null,
+    existing_draft_id: typeof row?.existing_draft_id === 'string' ? row.existing_draft_id : null,
+    existing_draft_folio: typeof row?.existing_draft_folio === 'string' ? row.existing_draft_folio : null,
+    existing_draft_total: Number(row?.existing_draft_total || 0),
+    existing_draft_created_at: typeof row?.existing_draft_created_at === 'string' ? row.existing_draft_created_at : null,
+    existing_draft_period_start: typeof row?.existing_draft_period_start === 'string' ? row.existing_draft_period_start : null,
+    existing_draft_period_end: typeof row?.existing_draft_period_end === 'string' ? row.existing_draft_period_end : null,
+    existing_draft_event_count: Number(row?.existing_draft_event_count || 0),
+  };
+};
 
 /**
  * Sanitize file name for storage

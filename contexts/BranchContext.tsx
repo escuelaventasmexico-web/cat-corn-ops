@@ -48,6 +48,7 @@ export const BranchProvider: React.FC<React.PropsWithChildren> = ({ children }) 
       .order('name', { ascending: true });
 
     if (queryError) {
+      console.error('[BranchContext] Error completo de Supabase al cargar sucursales:', queryError);
       setBranches([]);
       setSelectedBranchId(null);
       setError('No se pudieron cargar las sucursales autorizadas.');

@@ -2,6 +2,9 @@
 
 export interface CommercialPartner {
   id: string;
+  record_type?: 'socio' | 'prospecto';
+  originator_user_id?: string | null;
+  originator_name?: string | null;
   folio?: string | null;
   business_name: string;
   responsible_name: string;

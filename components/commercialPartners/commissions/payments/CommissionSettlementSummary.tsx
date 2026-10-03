@@ -16,6 +16,7 @@ interface CommissionSettlementSummaryProps {
     label: string;
   };
   availableAmount: number;
+  accumulatedAvailable: number;
   paymentAmount: string;
   onPaymentAmountChange: (value: string) => void;
   amountError: string;
@@ -27,6 +28,7 @@ export const CommissionSettlementSummary: React.FC<CommissionSettlementSummaryPr
   seller,
   period,
   availableAmount,
+  accumulatedAvailable,
   paymentAmount,
   onPaymentAmountChange,
   amountError,
@@ -73,9 +75,10 @@ export const CommissionSettlementSummary: React.FC<CommissionSettlementSummaryPr
           aria-describedby={amountError ? 'commission-payment-amount-error' : undefined}
           className="w-full rounded-lg border border-yellow-500/40 bg-neutral-950 px-3 py-2 text-2xl font-bold text-yellow-400 focus:border-yellow-400 focus:outline-none"
         />
-        <p className="mt-2 text-xs text-neutral-500">
-          Saldo disponible: {formatCurrency(availableAmount)}
-        </p>
+        <div className="mt-2 grid grid-cols-1 gap-1 text-xs text-neutral-500">
+          <p>Disponible en el periodo: {formatCurrency(availableAmount)}</p>
+          <p>Disponible acumulado: {formatCurrency(accumulatedAvailable)}</p>
+        </div>
         {amountError && (
           <p id="commission-payment-amount-error" className="mt-2 text-xs font-medium text-red-300">
             {amountError}

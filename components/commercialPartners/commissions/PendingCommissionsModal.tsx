@@ -19,6 +19,9 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   wholesale_sale: 'Venta de mayoreo',
   piece_sale: 'Venta por pieza',
   conversion_bonus: 'Bono por conversión Comodato → Mayoreo',
+  prospect_conversion_bonus: 'Bono por prospecto convertido',
+  prospect_origin_sale: 'Comisión por socio originado',
+  pos_sale: 'Venta en Punto de Venta',
   adjustment: 'Ajuste',
 };
 
@@ -36,6 +39,10 @@ const getWaitingReason = (sourceType: string, releaseCondition: string): string 
       return 'El pedido de mayoreo todavía no ha sido liquidado completamente.';
     case 'conversion_bonus':
       return 'La primera compra de mayoreo que libera el bono todavía no cumple las condiciones de pago.';
+    case 'prospect_conversion_bonus':
+      return 'Se libera cuando el primer corte válido de Comodato quede completamente pagado.';
+    case 'prospect_origin_sale':
+      return 'Se libera con el pago completo de la operación comercial del socio originado.';
     default:
       if (releaseCondition === 'full_payment') {
         return 'Se libera cuando la operación quede completamente pagada.';

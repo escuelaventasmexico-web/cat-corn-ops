@@ -29,6 +29,43 @@ export interface Product {
   unit_cost?: number;
 }
 
+export interface ComboCatalogComponent {
+  product_id: string;
+  name: string;
+  sku_code?: string | null;
+  quantity: number;
+  active: boolean;
+}
+
+export interface ComboCatalogOption extends ComboCatalogComponent {}
+
+export interface ComboCatalogOptionGroup {
+  key: string;
+  quantity: number;
+  min_selections: number;
+  max_selections: number;
+  options: ComboCatalogOption[];
+}
+
+export interface ProductComboCatalogEntry {
+  product_id: string;
+  name: string;
+  sku_code: string;
+  barcode_value: string;
+  price: number;
+  active: boolean;
+  commission_product_id: string;
+  fixed_components: ComboCatalogComponent[];
+  option_groups: ComboCatalogOptionGroup[];
+}
+
+export interface CartComboComponent {
+  product_id: string;
+  name: string;
+  quantity_per_combo: number;
+  selected_option_group?: string;
+}
+
 export interface Ingredient {
   id: string;
   name: string;
@@ -43,6 +80,10 @@ export interface CartItem extends Product {
   discount_reason?: string;
   /** True for manually entered products with no SKU/product_id in the catalog */
   is_generic?: boolean;
+  /** Stable UI identity; combo lines include their selected beverage. */
+  cart_key?: string;
+  combo_beverage_product_id?: string;
+  combo_components?: CartComboComponent[];
 }
 
 export interface Customer {

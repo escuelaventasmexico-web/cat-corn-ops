@@ -7,6 +7,7 @@ export type UserRole = 'admin' | 'socios_comerciales' | 'vendedora';
 export interface UserProfile {
   id: string;
   full_name: string | null;
+  commercial_alias?: string | null;
   role: UserRole;
   is_active: boolean;
   created_at?: string;
@@ -43,6 +44,7 @@ export interface AuthContextType {
 
 // Helper to get module name from pathname
 export const getModuleFromPath = (pathname: string): string => {
+  if (pathname.includes('prospectos-comerciales')) return 'prospectos_comerciales';
   if (pathname.includes('socios-comerciales')) return 'socios_comerciales';
   if (pathname.includes('dashboard') || pathname === '/') return 'dashboard';
   if (pathname.includes('punto-de-venta') || pathname.includes('pos')) return 'pos';
@@ -97,7 +99,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       const { data: profileData, error: profileError } = await supabase
         .from('user_profiles')
-        .select('id, full_name, role, is_active, created_at, updated_at')
+        .select('id, full_name, commercial_alias, role, is_active, created_at, updated_at')
         .eq('id', userId)
         .maybeSingle();
 
@@ -295,6 +297,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       'merma',
       'logistica',
       'socios_comerciales',
+      'prospectos_comerciales',
       'historial',
       'corte_caja',
       'pedidos',
@@ -304,11 +307,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       'pos',
       'etiquetas',
       'socios_comerciales',
+      'prospectos_comerciales',
+      'historial',
     ],
     vendedora: [
       'dashboard',
       'pos',
       'etiquetas',
+      'prospectos_comerciales',
+      'historial',
     ],
   };
 

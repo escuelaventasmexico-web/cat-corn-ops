@@ -40,7 +40,7 @@ export const SellerMobilePartners = ({
       {/* Header */}
       <div className="px-4 pt-4 space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-base font-bold text-cc-text-main">Mis Socios Comerciales</h2>
+          <h2 className="text-base font-bold text-cc-text-main">Directorio comercial</h2>
           <button
             onClick={onNewPartner}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cc-primary text-cc-bg font-semibold text-xs hover:bg-cc-primary-dark transition-colors"
@@ -138,6 +138,11 @@ export const SellerMobilePartners = ({
                     <p className="font-semibold text-cc-text-main truncate text-sm">
                       {p.business_name}
                     </p>
+                    {p.record_type === 'prospecto' && (
+                      <p className="mt-0.5 text-[11px] font-semibold text-cc-primary">
+                        PROSPECTO / {p.originator_name || 'SIN ALIAS'}
+                      </p>
+                    )}
                   </div>
                   <div className="flex flex-col gap-1 items-end shrink-0">
                     <span

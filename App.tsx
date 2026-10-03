@@ -18,6 +18,7 @@ import { Pedidos } from './pages/Pedidos';
 import Ops from './pages/Ops';
 import { PrintLabels } from './pages/PrintLabels';
 import { CommercialPartners } from './pages/CommercialPartners';
+import { CommercialProspects } from './pages/CommercialProspects';
 import { SupabaseNotConfigured } from './components/SupabaseNotConfigured';
 import 'leaflet/dist/leaflet.css';
 // Inner component that uses useAuth hook
@@ -94,7 +95,7 @@ function AppRoutes() {
         } />
         <Route path="/sales-history" element={
           <ProtectedRoute requiredModules={['historial']}>
-            <SensitiveModuleGuard>
+            <SensitiveModuleGuard allowCommercialPartnersRoleBypass allowSellerRoleBypass>
               <SalesHistory />
             </SensitiveModuleGuard>
           </ProtectedRoute>
@@ -133,6 +134,11 @@ function AppRoutes() {
             <SensitiveModuleGuard allowCommercialPartnersRoleBypass>
               <CommercialPartners />
             </SensitiveModuleGuard>
+          </ProtectedRoute>
+        } />
+        <Route path="/prospectos-comerciales" element={
+          <ProtectedRoute requiredModules={['prospectos_comerciales']}>
+            <CommercialProspects />
           </ProtectedRoute>
         } />
         {/* Catch-all for unauthorized access */}

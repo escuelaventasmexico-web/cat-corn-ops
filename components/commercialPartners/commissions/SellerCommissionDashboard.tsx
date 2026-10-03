@@ -213,7 +213,13 @@ export const SellerCommissionDashboard = ({ sellerId }: SellerCommissionDashboar
   const pending = parseNumericValue(summary?.pending_total);
   const generated = parseNumericValue(summary?.generated_total);
   const prevMonth = parseNumericValue(summary?.generated_total) * 0.8; // Simulated
-  const hasActivity = (summary?.comodato_units || 0) + (summary?.wholesale_units || 0) > 0;
+  const hasActivity = [
+    summary?.comodato_units,
+    summary?.wholesale_units,
+    summary?.piece_sale_units,
+    summary?.pos_units,
+    summary?.prospect_origin_units,
+  ].some(value => parseNumericValue(value) > 0);
 
   const motivationalMessage = getMotivationalMessage(available, pending, generated, prevMonth, hasActivity);
 
