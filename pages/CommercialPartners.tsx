@@ -77,6 +77,7 @@ export const CommercialPartners = () => {
   /* ── Modals ────────────────────────────────────────────────── */
   const [showNewForm, setShowNewForm] = useState(false);
   const [selectedPartner, setSelectedPartner] = useState<CommercialPartner | null>(null);
+  const [partnerDetailRefreshKey, setPartnerDetailRefreshKey] = useState(0);
 
   /* ── Toast ─────────────────────────────────────────────────── */
   const [toast, setToast] = useState<string | null>(null);
@@ -551,7 +552,12 @@ export const CommercialPartners = () => {
         profile?.role === 'socios_comerciales' ? (
           <SellerCommissionDashboard sellerId={user?.id || ''} />
         ) : (
-          <AdminCommissionDashboard />
+          <AdminCommissionDashboard
+            onPartnerPaymentChanged={() => {
+              setPartnerDetailRefreshKey(key => key + 1);
+              void loadPartners();
+            }}
+          />
         )
       )}
 
@@ -575,6 +581,7 @@ export const CommercialPartners = () => {
       {/* ─── Detail side panel ──────────────────────────────── */}
       {selectedPartner && (
         <CommercialPartnerDetail
+          key={`${selectedPartner.id}-${partnerDetailRefreshKey}`}
           partner={selectedPartner}
           onClose={() => setSelectedPartner(null)}
           onUpdated={handleUpdated}

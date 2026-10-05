@@ -14,6 +14,8 @@ import {
   Loader2,
   Lock,
   Printer,
+  Scale,
+  Droplets,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
@@ -22,8 +24,9 @@ import type {
   CashSessionSummary,
   CashSessionSale,
   CashSessionWithdrawal,
+  CashInventorySessionState,
 } from '../lib/cashRegister';
-import { fetchAndPrintCorteDeCaja } from '../lib/cashRegister';
+import { fetchAndPrintCorteDeCaja, fetchCashInventorySessionState } from '../lib/cashRegister';
 import { formatDateTimeMX } from '../lib/datetime';
 
 interface Props {
@@ -57,6 +60,8 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
   const [exporting, setExporting] = useState(false);
   const [printingCorte, setPrintingCorte] = useState(false);
   const [printCorteMsg, setPrintCorteMsg] = useState<string | null>(null);
+  const [inventoryState, setInventoryState] = useState<CashInventorySessionState | null>(null);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
 
   const handleExportCashSessionExcel = useCallback(async () => {
     if (loading) return;
@@ -143,6 +148,10 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
         ['Número de retiros', s.withdrawals_count],
         ['Notas apertura', s.notes ?? ''],
         ['Notas cierre', s.close_notes ?? ''],
+        ['Maíz apertura (kg)', inventoryState?.opening.corn_kg ?? ''],
+        ['Maíz cierre (kg)', inventoryState?.closing.corn_kg ?? ''],
+        ['Aceite apertura (L)', inventoryState?.opening.oil_liters ?? ''],
+        ['Aceite cierre (L)', inventoryState?.closing.oil_liters ?? ''],
       ];
       const wsResumen = XLSX.utils.aoa_to_sheet(resumenData);
       wsResumen['!cols'] = [{ wch: 22 }, { wch: 40 }];
@@ -201,7 +210,7 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
     } finally {
       setExporting(false);
     }
-  }, [loading, s, sales, withdrawals]);
+  }, [inventoryState, loading, s, sales, withdrawals]);
 
   // Resolve the real UUID — the view may expose it as 'id' or 'session_id'
   const resolvedSessionId =
@@ -214,6 +223,7 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
     let cancelled = false;
     const load = async () => {
       setLoading(true);
+      setInventoryError(null);
 
       console.log('[CORTE FIX] session recibido:', s);
       console.log('[CORTE FIX] resolvedSessionId:', resolvedSessionId);
@@ -222,6 +232,8 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
         console.error('[CORTE FIX] No valid session id found', s);
         setSales([]);
         setWithdrawals([]);
+        setInventoryState(null);
+        setInventoryError(null);
         setLoading(false);
         return;
       }
@@ -317,6 +329,21 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
           }
         } catch (err) {
           console.error('[CORTE] Exception loading withdrawals:', err);
+        }
+
+        try {
+          const state = await fetchCashInventorySessionState(s.branch_id, resolvedSessionId);
+          if (!cancelled) {
+            setInventoryState(state.controlled ? state : null);
+            setInventoryError(null);
+          }
+        } catch (err) {
+          // Legacy sessions and branches remain fully usable without count data.
+          console.warn('[CORTE] Inventory count state is unavailable for this session:', err);
+          if (!cancelled) {
+            setInventoryState(null);
+            setInventoryError(err instanceof Error ? err.message : 'No se pudieron consultar los conteos de la sesión');
+          }
         }
       }
 
@@ -439,6 +466,12 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
           </div>
         )}
 
+        {inventoryError && (
+          <div className="bg-red-500/10 px-5 py-2 text-center text-xs text-red-300">
+            {inventoryError}
+          </div>
+        )}
+
         {/* ── Scrollable body ────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto p-5 space-y-6">
           {/* ── Financial summary cards ──────────────────────────── */}
@@ -523,6 +556,44 @@ export const CashSessionDetailModal = ({ session: s, onClose, onCloseRegister }:
               </div>
             )}
           </div>
+
+          {inventoryState && (
+            <div>
+              <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-cc-text-muted">
+                Conteos de maíz y aceite
+              </h4>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <SummaryCard icon={<Scale size={14} />} label="Maíz apertura" value={inventoryState.opening.corn_kg == null ? '—' : `${inventoryState.opening.corn_kg.toFixed(3)} kg`} color="text-amber-200" />
+                <SummaryCard icon={<Scale size={14} />} label="Maíz cierre" value={inventoryState.closing.corn_kg == null ? '—' : `${inventoryState.closing.corn_kg.toFixed(3)} kg`} color="text-amber-200" />
+                <SummaryCard icon={<Droplets size={14} />} label="Aceite apertura" value={inventoryState.opening.oil_liters == null ? '—' : `${inventoryState.opening.oil_liters.toFixed(3)} L`} color="text-sky-200" />
+                <SummaryCard icon={<Droplets size={14} />} label="Aceite cierre" value={inventoryState.closing.oil_liters == null ? '—' : `${inventoryState.closing.oil_liters.toFixed(3)} L`} color="text-sky-200" />
+              </div>
+              {inventoryState.close_summary && (
+                <>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                    {[
+                      ['Ventas netas', 'net_sales'],
+                      ['Descuentos', 'discount_total'],
+                      ['Costo conocido', 'known_cost_total'],
+                      ['Importe sin costo', 'amount_without_known_cost'],
+                      ['Renglones sin costo', 'lines_without_known_cost'],
+                      ['Ventas genéricas', 'generic_sales_total'],
+                      ['Promociones', 'promotion_sale_count'],
+                      ['Reembolsos', 'refunded_sale_count'],
+                    ].map(([label, key]) => (
+                      <div key={key} className="rounded-md bg-black/25 p-2">
+                        <p className="text-[10px] text-cc-text-muted">{label}</p>
+                        <p className="font-semibold text-cc-cream">{String(inventoryState.close_summary?.[key] ?? 0)}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[10px] text-amber-200/80">
+                    Resumen histórico inmutable. Las diferencias de insumos son informativas y no descuentan stock: compras, producción, mermas y transferencias se controlan por separado.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
 
           {/* ── Sales table ──────────────────────────────────────── */}
           <div>

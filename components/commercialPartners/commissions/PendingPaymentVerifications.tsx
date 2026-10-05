@@ -29,12 +29,33 @@ interface PendingVerification {
 
 interface Props {
   refreshTrigger?: number;
-  onVerificationApproved?: () => void;
+  onVerificationChanged?: (partnerId: string) => void;
 }
+
+const formatSupabaseError = (error: unknown, fallback: string) => {
+  if (!error || typeof error !== 'object') {
+    return error instanceof Error ? error.message : fallback;
+  }
+
+  const candidate = error as {
+    message?: string;
+    details?: string;
+    hint?: string;
+    code?: string;
+  };
+  const parts = [
+    candidate.message,
+    candidate.details && `Detalles: ${candidate.details}`,
+    candidate.hint && `Sugerencia: ${candidate.hint}`,
+    candidate.code && `Código: ${candidate.code}`,
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(' · ') : fallback;
+};
 
 export const PendingPaymentVerifications: React.FC<Props> = ({
   refreshTrigger = 0,
-  onVerificationApproved
+  onVerificationChanged
 }) => {
   const [verifications, setVerifications] = useState<PendingVerification[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,14 +68,6 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
   const [reviewNotes, setReviewNotes] = useState('');
   const [step, setStep] = useState<'review' | 'reject'>('review');
 
-  // Render logging
-  console.log('[RENDER PENDING_PAYMENT_VERIFICATIONS]', {
-    rejecting,
-    approving,
-    showReviewModal,
-    selectedFolio: selectedVerification?.folio,
-  });
-
   const loadPendingVerifications = async () => {
     if (!supabase) {
       setError('Supabase no está configurado');
@@ -66,12 +79,9 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
       setLoading(true);
       setError(null);
 
-      const { data, error: err } = await supabase
-        .from('v_pending_payment_verifications')
-        .select('*')
-        .order('submitted_at', { ascending: false });
-
-      console.log('ADMIN PENDING PAYMENT VERIFICATIONS DATA', data);
+      const { data, error: err } = await supabase.rpc(
+        'get_pending_payment_verifications_admin'
+      );
 
       if (err) {
         console.error('ADMIN PENDING PAYMENT VERIFICATIONS ERROR', err);
@@ -81,7 +91,7 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
       setVerifications((data as PendingVerification[]) || []);
     } catch (err: any) {
       console.error('Error loading pending verifications:', err);
-      setError('No se pudieron cargar los cobros pendientes.');
+      setError(formatSupabaseError(err, 'No se pudieron cargar los cobros pendientes.'));
     } finally {
       setLoading(false);
     }
@@ -96,7 +106,7 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
 
     setApproving(true);
     try {
-      const { data, error: err } = await supabase!.rpc(
+      const { error: err } = await supabase!.rpc(
         'approve_partner_payment_verification_request',
         {
           p_request_id: selectedVerification.request_id,
@@ -106,20 +116,20 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
 
       if (err) throw err;
 
-      console.log('Approval successful:', data);
-
       // Reload pending verifications
       await loadPendingVerifications();
 
-      // Notify parent to refresh commission data
-      onVerificationApproved?.();
+      // Refresh commission data and the affected partner card.
+      onVerificationChanged?.(selectedVerification.partner_id);
 
       setShowReviewModal(false);
       setSelectedVerification(null);
       setReviewNotes('');
     } catch (err: any) {
       console.error('Error approving verification:', err);
-      alert('Error al confirmar el ingreso: ' + (err.message || 'Unknown error'));
+      const message = formatSupabaseError(err, 'No se pudo confirmar el ingreso.');
+      setError(message);
+      alert(`Error al confirmar el ingreso: ${message}`);
     } finally {
       setApproving(false);
     }
@@ -131,18 +141,9 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
       return;
     }
 
-    console.log('[PEND_REJECT 1] handleReject started in PendingPaymentVerifications', {
-      requestId: selectedVerification.request_id,
-      rejectReason: rejectionReason.trim(),
-    });
-
     setRejecting(true);
     try {
-      console.log('[PEND_REJECT 2] Calling RPC reject_partner_payment_verification_request', {
-        requestId: selectedVerification.request_id,
-      });
-
-      const { data, error: err } = await supabase!.rpc(
+      const { error: err } = await supabase!.rpc(
         'reject_partner_payment_verification_request',
         {
           p_request_id: selectedVerification.request_id,
@@ -150,14 +151,7 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
         }
       );
 
-      console.log('[PEND_REJECT 3] RPC response', {
-        data,
-        error: err
-      });
-
       if (err) throw err;
-
-      console.log('[PEND_REJECT 4] Rejection successful, closing modal');
 
       // RPC succeeded - close modal immediately
       setShowReviewModal(false);
@@ -168,20 +162,14 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
       // Show success message
       alert('Cobro rechazado. El vendedor podrá corregir la venta y volver a enviarla.');
 
-      // Refresh pending verifications in background (best-effort, don't wait)
-      console.log('[PEND_REJECT 5] Refreshing verifications list');
-      loadPendingVerifications().catch(refreshErr => {
-        console.error('[PEND_REJECT] Secondary refresh failed (non-blocking):', refreshErr);
-      });
-
-      // Notify parent to refresh commission data
-      console.log('[PEND_REJECT 6] Calling onVerificationApproved callback');
-      onVerificationApproved?.();
+      await loadPendingVerifications();
+      onVerificationChanged?.(selectedVerification.partner_id);
     } catch (err: any) {
       console.error('[PEND_REJECT ERROR]', err);
-      alert('No se pudo rechazar el cobro. Intenta nuevamente.');
+      const message = formatSupabaseError(err, 'No se pudo rechazar el cobro.');
+      setError(message);
+      alert(message);
     } finally {
-      console.log('[PEND_REJECT 7] Finally - setting rejecting to false');
       setRejecting(false);
     }
   };
@@ -194,19 +182,29 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
     );
   }
 
+  if (error) {
+    return (
+      <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-3">
+        <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+        <div>
+          <h3 className="font-semibold text-red-300">Error al cargar cobros pendientes</h3>
+          <p className="text-sm text-red-200 break-words">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
   if (verifications.length === 0) {
-    return null;
+    return (
+      <div className="py-6 text-center">
+        <h3 className="text-lg font-bold text-cc-cream">Cobros pendientes de revisión</h3>
+        <p className="mt-1 text-sm text-cc-text-muted">No hay cobros pendientes de revisión.</p>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-4">
-      {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
-          <p className="text-sm text-red-200">{error}</p>
-        </div>
-      )}
-
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-lg font-bold text-cc-cream">Cobros pendientes de revisión</h3>
@@ -459,10 +457,7 @@ export const PendingPaymentVerifications: React.FC<Props> = ({
                   </button>
 
                   <button
-                    onClick={() => {
-                      console.log('[BUTTON REJECT PEND] Clicked reject button in PendingPaymentVerifications');
-                      void handleReject();
-                    }}
+                    onClick={() => void handleReject()}
                     className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-300 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2 disabled:opacity-50"
                     disabled={!rejectionReason.trim() || rejecting}
                   >

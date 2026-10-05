@@ -396,7 +396,7 @@ commission_checks AS (
         AND function_row.definition LIKE '%v_profile.role = ''vendedora'' and v_profile.is_active%'
         AND function_row.definition LIKE '%if v_product.id is null then%v_product := v_sold_product%'
       ),
-    'Gerardo, Bianca eligibility snapshots and the normal-product fallback remain in the same function.'
+    'Gerardo, Angelica eligibility snapshots and the normal-product fallback remain in the same function.'
   FROM function_defs AS function_row
   WHERE function_row.proname = 'sync_pos_commission_for_sale_item'
 

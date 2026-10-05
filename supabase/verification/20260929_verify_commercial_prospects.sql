@@ -57,12 +57,12 @@ WITH relation_checks AS (
       FROM auth.users AS auth_user
       JOIN public.user_profiles AS profile ON profile.id = auth_user.id
       WHERE auth_user.id = 'b5fe98b7-d5ff-457e-8176-ed66a13af84b'::UUID
-        AND lower(auth_user.email) = 'biancapan@catcorn.com.mx'
-        AND profile.full_name = 'Blanca Paniagua'
+        AND lower(auth_user.email) = 'angelicagut@catcorn.com.mx'
+        AND profile.full_name = 'Angelica Gutierrez'
         AND profile.role = 'vendedora'
         AND profile.is_active
-        AND profile.commercial_alias = 'BIANCA'
-    ) AS bianca_identity_and_alias_match
+        AND profile.commercial_alias = 'ANGELICA'
+    ) AS angelica_identity_and_alias_match
 ), constraint_checks AS (
   SELECT
     EXISTS (

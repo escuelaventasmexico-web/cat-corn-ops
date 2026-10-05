@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
-import { AlertCircle, Plus, Edit2, Minus, X, RefreshCw, FlaskConical, Package } from 'lucide-react';
+import { AlertCircle, Plus, Edit2, Minus, X, RefreshCw, FlaskConical, Package, ClipboardList } from 'lucide-react';
 import { SeasoningsInventory } from '../components/inventory/SeasoningsInventory';
+import { CashInventoryCountsHistory } from '../components/inventory/CashInventoryCountsHistory';
 
 interface RawMaterial {
   id: string;
@@ -57,7 +58,7 @@ export const Inventory = () => {
   const [formMinStock, setFormMinStock] = useState('');
   const [formCurrentStock, setFormCurrentStock] = useState('');
   const [adjustAmount, setAdjustAmount] = useState('');
-  const [activeTab, setActiveTab] = useState<'general' | 'saborizantes'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'saborizantes' | 'conteos_caja'>('general');
 
   useEffect(() => {
     fetchMaterials();
@@ -219,10 +220,22 @@ export const Inventory = () => {
         >
           <FlaskConical size={16} /> Inventario de Saborizantes
         </button>
+        <button
+          onClick={() => setActiveTab('conteos_caja')}
+          className={`flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
+            activeTab === 'conteos_caja'
+              ? 'bg-cc-accent text-cc-bg shadow-[0_0_12px_rgba(244,197,66,0.25)]'
+              : 'text-cc-text-muted hover:text-cc-text-main'
+          }`}
+        >
+          <ClipboardList size={16} /> Conteos de insumos de caja
+        </button>
       </div>
 
       {/* Saborizantes tab */}
       {activeTab === 'saborizantes' && <SeasoningsInventory />}
+
+      {activeTab === 'conteos_caja' && <CashInventoryCountsHistory />}
 
       {/* General tab */}
       {activeTab === 'general' && (<div className="space-y-6">

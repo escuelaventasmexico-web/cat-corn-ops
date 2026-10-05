@@ -12,19 +12,29 @@ export const CorteDeCaja = () => {
   const { selectedBranch, loading: branchLoading, error: branchError } = useBranch();
   const [sessions, setSessions] = useState<CashSessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<CashSessionSummary | null>(null);
   const [closeStatus, setCloseStatus] = useState<CashRegisterStatus | null>(null);
 
   const load = async (branchId = selectedBranch?.id) => {
     if (!branchId) {
       setSessions([]);
+      setError(null);
       setLoading(false);
       return;
     }
     setLoading(true);
-    const data = await fetchSessionsHistory(branchId);
-    setSessions(data);
-    setLoading(false);
+    setError(null);
+    try {
+      const data = await fetchSessionsHistory(branchId);
+      setSessions(data);
+    } catch (err: unknown) {
+      console.error('[CORTE] Error loading sessions:', err);
+      setSessions([]);
+      setError(err instanceof Error ? err.message : 'No se pudo consultar el historial de cortes');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -86,6 +96,12 @@ export const CorteDeCaja = () => {
         </div>
       )}
 
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
       {/* Table */}
       {loading ? (
         <div className="text-center text-cc-text-muted py-20">Cargando historial…</div>
@@ -112,6 +128,8 @@ export const CorteDeCaja = () => {
                   <th className="text-right py-3 px-4 font-medium">Diferencia</th>
                   <th className="text-center py-3 px-4 font-medium"># Ventas</th>
                   <th className="text-center py-3 px-4 font-medium"># Retiros</th>
+                  <th className="text-right py-3 px-4 font-medium">Maíz A/C</th>
+                  <th className="text-right py-3 px-4 font-medium">Aceite A/C</th>
                   <th className="text-center py-3 px-4 font-medium">Detalle</th>
                 </tr>
               </thead>
@@ -180,6 +198,12 @@ export const CorteDeCaja = () => {
                       </td>
                       <td className="py-3 px-4 text-center text-cc-text-muted">
                         {s.withdrawals_count}
+                      </td>
+                      <td className="py-3 px-4 text-right text-xs text-amber-200 whitespace-nowrap">
+                        {s.inventory_opening_corn_kg == null ? '—' : s.inventory_opening_corn_kg.toFixed(3)} / {s.inventory_closing_corn_kg == null ? '—' : s.inventory_closing_corn_kg.toFixed(3)} kg
+                      </td>
+                      <td className="py-3 px-4 text-right text-xs text-sky-200 whitespace-nowrap">
+                        {s.inventory_opening_oil_liters == null ? '—' : s.inventory_opening_oil_liters.toFixed(3)} / {s.inventory_closing_oil_liters == null ? '—' : s.inventory_closing_oil_liters.toFixed(3)} L
                       </td>
                       <td className="py-3 px-4 text-center">
                         <button

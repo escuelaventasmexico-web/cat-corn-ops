@@ -97,7 +97,7 @@ const ComodatoMovementEditModal: React.FC<Props> = ({ movementId, partnerId, onC
       // Check payment verification requests
       if (movementData.movement_type === 'settlement') {
         const { data: verificationsData, error: verificationsErr } = await supabase
-          .from('commercial_partner_payment_verification_requests')
+          .from('partner_payment_verification_requests')
           .select('id')
           .eq('movement_id', movementId)
           .in('status', ['pending_review', 'approved'])

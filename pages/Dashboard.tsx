@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabase';
-import { DollarSign, ShoppingBag, TrendingUp, TrendingDown, Banknote, CreditCard, Landmark, Store, Receipt, Truck } from 'lucide-react';
+import { DollarSign, ShoppingBag, TrendingUp, TrendingDown, Banknote, CreditCard, Landmark, Store, Receipt, Truck, Bell, Check } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { getCommercialCollections } from '../services/commercialCollectionsService';
 import { getBusinessDayBounds } from '../lib/dateUtils';
 import { useBranch } from '../contexts/BranchContext';
 import { useAuth } from '../contexts/AuthContext';
+import { formatDateTimeMX } from '../lib/datetime';
+import { acknowledgeAdminOperationalAlert, fetchAdminOperationalAlerts } from '../lib/operationalAlerts';
+import type { AdminOperationalAlert } from '../lib/operationalAlerts';
 
 interface TopProduct {
   id: string;
@@ -70,12 +73,60 @@ export const Dashboard = () => {
   const [topMode, setTopMode] = useState<'day' | 'month'>('day');
   const [chartData, setChartData] = useState<any[]>([]);
   const [breakdown, setBreakdown] = useState<DashboardBreakdown>(emptyBreakdown);
+  const [operationalAlerts, setOperationalAlerts] = useState<AdminOperationalAlert[]>([]);
+  const [alertsError, setAlertsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!branchesLoading) {
       void loadDashboardData();
     }
   }, [branches, branchesLoading, role]);
+
+  useEffect(() => {
+    if (role !== 'admin' || !supabase) {
+      setOperationalAlerts([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadAlerts = async () => {
+      try {
+        const rows = await fetchAdminOperationalAlerts(false);
+        if (!cancelled) {
+          setOperationalAlerts(rows);
+          setAlertsError(null);
+        }
+      } catch (err: unknown) {
+        console.error('[OPERATIONS] Error loading cash inventory alerts:', err);
+        if (!cancelled) setAlertsError(err instanceof Error ? err.message : 'No se pudieron cargar las alertas operativas');
+      }
+    };
+
+    void loadAlerts();
+    const channel = supabase
+      .channel('admin-cash-inventory-alerts')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'admin_operational_alerts' },
+        () => { void loadAlerts(); },
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      void supabase?.removeChannel(channel);
+    };
+  }, [role]);
+
+  const markAlertRead = async (alertId: string) => {
+    try {
+      await acknowledgeAdminOperationalAlert(alertId);
+      setOperationalAlerts((current) => current.filter((alert) => alert.id !== alertId));
+    } catch (err: unknown) {
+      console.error('[OPERATIONS] Error acknowledging cash inventory alert:', err);
+      setAlertsError(err instanceof Error ? err.message : 'No se pudo marcar la alerta como leída');
+    }
+  };
 
   const loadDashboardData = async () => {
     setLoading(true);
@@ -512,6 +563,55 @@ export const Dashboard = () => {
                 )}
             </div>
         </div>
+
+        {role === 'admin' && (alertsError || operationalAlerts.length > 0) && (
+          <section className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <Bell size={18} className="text-amber-300" />
+              <h3 className="font-bold text-cc-cream">Alertas operativas</h3>
+              {operationalAlerts.length > 0 && (
+                <span className="rounded-full bg-amber-400/20 px-2 py-0.5 text-xs font-bold text-amber-200">
+                  {operationalAlerts.length}
+                </span>
+              )}
+            </div>
+            {alertsError && <p className="mb-2 text-xs text-red-300">{alertsError}</p>}
+            <div className="space-y-2">
+              {operationalAlerts.map((alert) => (
+                <div key={alert.id} className="flex items-start gap-3 rounded-lg border border-white/10 bg-black/20 p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-cc-cream">{alert.title}</p>
+                    <p className="text-xs text-cc-text-muted">{alert.actor_name} · {alert.branch_name} · {formatDateTimeMX(alert.created_at)}</p>
+                    {alert.alert_type === 'cash_inventory_opening' ? (
+                      <p className="mt-1 text-xs text-amber-100">
+                        Maíz {String((alert.payload.corn as Record<string, unknown> | undefined)?.captured_value ?? '—')} kg · Aceite {String((alert.payload.oil as Record<string, unknown> | undefined)?.captured_value ?? '—')} L
+                      </p>
+                    ) : (
+                      <div className="mt-1 space-y-0.5 text-xs text-amber-100">
+                        <p>
+                          Maíz {String((alert.payload.opening_counts as Record<string, unknown> | undefined)?.corn_kg ?? '—')} → {String((alert.payload.closing_counts as Record<string, unknown> | undefined)?.corn_kg ?? '—')} kg · diferencia {String((alert.payload.differences as Record<string, unknown> | undefined)?.corn_kg ?? '—')} kg
+                        </p>
+                        <p>
+                          Aceite {String((alert.payload.opening_counts as Record<string, unknown> | undefined)?.oil_liters ?? '—')} → {String((alert.payload.closing_counts as Record<string, unknown> | undefined)?.oil_liters ?? '—')} L · diferencia {String((alert.payload.differences as Record<string, unknown> | undefined)?.oil_liters ?? '—')} L
+                        </p>
+                        <p className="text-cc-text-muted">
+                          Ventas {String((alert.payload.sales_summary as Record<string, unknown> | undefined)?.sale_count ?? 0)} · Neto ${String((alert.payload.sales_summary as Record<string, unknown> | undefined)?.net_sales ?? 0)} · Costo conocido ${String((alert.payload.sales_summary as Record<string, unknown> | undefined)?.known_cost_total ?? 0)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void markAlertRead(alert.id)}
+                    className="inline-flex flex-shrink-0 items-center gap-1 rounded-md border border-green-400/30 bg-green-400/10 px-2 py-1 text-xs font-semibold text-green-300 hover:bg-green-400/20"
+                  >
+                    <Check size={13} /> Leída
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">

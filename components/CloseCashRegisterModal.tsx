@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { X, Lock, DollarSign, Banknote, CreditCard, ArrowDownCircle, CheckCircle, AlertTriangle, Printer, Loader2 } from 'lucide-react';
-import { closeCashRegisterForBranch, fetchAndPrintCorteDeCaja } from '../lib/cashRegister';
-import type { CashRegisterStatus, CloseResult, CashSessionSummary } from '../lib/cashRegister';
+import React, { useEffect, useState } from 'react';
+import { X, Lock, DollarSign, Banknote, CreditCard, ArrowDownCircle, CheckCircle, AlertTriangle, Printer, Loader2, Scale, Droplets, Info } from 'lucide-react';
+import { closeCashRegisterForBranch, fetchAndPrintCorteDeCaja, fetchCashInventoryControlForBranch, fetchCashInventorySessionState } from '../lib/cashRegister';
+import type { CashInventoryContractState, CashInventorySessionState, CashRegisterStatus, CloseResult, CashSessionSummary } from '../lib/cashRegister';
 import type { Branch } from '../contexts/BranchContext';
 
 interface Props {
@@ -16,13 +16,83 @@ interface Props {
  * Shows a pre-close summary, asks for counted cash, then shows the result.
  */
 export const CloseCashRegisterModal: React.FC<Props> = ({ branch, status, onClose, onSuccess }) => {
+  const [contractState, setContractState] = useState<CashInventoryContractState>({ status: 'loading' });
   const [countedCash, setCountedCash] = useState<number>(0);
+  const [cornKg, setCornKg] = useState('');
+  const [oilLiters, setOilLiters] = useState('');
+  const [inventoryState, setInventoryState] = useState<CashInventorySessionState | null>(null);
+  const [inventoryLoading, setInventoryLoading] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [closeResult, setCloseResult] = useState<CloseResult | null>(null);
   const [printing, setPrinting] = useState(false);
   const [printMsg, setPrintMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setContractState({ status: 'loading' });
+    setInventoryLoading(true);
+    setInventoryState(null);
+    setError(null);
+    setCornKg('');
+    setOilLiters('');
+
+    void fetchCashInventoryControlForBranch(branch.id)
+      .then(async (contract) => {
+        if (cancelled) return;
+        setContractState({ status: 'ready', contract });
+        if (!(contract.control_enabled && contract.requires_closing_counts)) {
+          setInventoryLoading(false);
+          return;
+        }
+        if (!status.session_id) {
+          throw new Error('No se encontró la sesión abierta que se desea cerrar');
+        }
+        const state = await fetchCashInventorySessionState(branch.id, status.session_id);
+        if (cancelled) return;
+        setInventoryState(state);
+        if (state.opening.corn_kg == null || state.opening.oil_liters == null) {
+          throw new Error('La sesión no tiene los conteos iniciales obligatorios y no puede cerrarse desde este flujo.');
+        }
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : 'No se pudieron cargar los conteos iniciales';
+        setContractState({ status: 'error', error: message });
+        setError(message);
+      })
+      .finally(() => {
+        if (!cancelled) setInventoryLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [branch.id, status.session_id]);
+
+  const contract = contractState.status === 'ready' ? contractState.contract : null;
+  const requiresInventoryCounts = Boolean(
+    contract?.control_enabled && contract.requires_closing_counts,
+  );
+
+  const parseInventoryCount = (raw: string, label: string): number | null => {
+    if (!raw.trim()) {
+      setError(`${label} es obligatorio`);
+      return null;
+    }
+    if (!/^\d+(?:\.\d{1,3})?$/.test(raw.trim())) {
+      setError(`${label} debe ser un número no negativo con máximo tres decimales`);
+      return null;
+    }
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) {
+      setError(`${label} debe ser un número finito no negativo`);
+      return null;
+    }
+    return value;
+  };
+
+  const parsedCornPreview = /^\d+(?:\.\d{1,3})?$/.test(cornKg.trim()) ? Number(cornKg) : null;
+  const parsedOilPreview = /^\d+(?:\.\d{1,3})?$/.test(oilLiters.trim()) ? Number(oilLiters) : null;
 
   /** Build a CashSessionSummary from the status (and optional close result) so we can print */
   const buildSessionForPrint = (result?: CloseResult | null): CashSessionSummary => ({
@@ -65,6 +135,30 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ branch, status, onClos
 
   const handleSubmit = async () => {
     if (!status.session_id) return;
+    if (contractState.status !== 'ready') {
+      setError(contractState.status === 'error'
+        ? contractState.error
+        : 'Espera a que termine de cargar el control de caja');
+      return;
+    }
+    if (requiresInventoryCounts && (
+      inventoryLoading
+      || !inventoryState
+      || inventoryState.opening.corn_kg == null
+      || inventoryState.opening.oil_liters == null
+    )) {
+      setError('No se puede cerrar hasta validar los conteos iniciales de la sesión.');
+      return;
+    }
+    const parsedCorn = requiresInventoryCounts
+      ? parseInventoryCount(cornKg, 'Maíz disponible')
+      : null;
+    if (requiresInventoryCounts && parsedCorn === null) return;
+    const parsedOil = requiresInventoryCounts
+      ? parseInventoryCount(oilLiters, 'Aceite disponible')
+      : null;
+    if (requiresInventoryCounts && parsedOil === null) return;
+
     setSaving(true);
     setError(null);
     try {
@@ -72,13 +166,17 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ branch, status, onClos
         branch.id,
         status.session_id,
         countedCash,
+        contractState.contract,
         notes.trim() || undefined,
+        requiresInventoryCounts
+          ? { cornKg: parsedCorn!, oilLiters: parsedOil! }
+          : undefined,
       );
       // Always use our local expectedCash — the RPC may still have the old
       // formula that includes opening_cash (fondo) in expected.
       const finalResult: CloseResult = {
         expected_cash: expectedCash,
-        counted_cash: result.counted_cash || countedCash,
+        counted_cash: result.counted_cash ?? countedCash,
         difference: countedCash - expectedCash,
       };
       setCloseResult(finalResult);
@@ -97,8 +195,8 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ branch, status, onClos
     const isSurplus = diff > 0.5;
 
     return (
-      <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={onSuccess}>
-        <div className="bg-cc-surface border border-white/10 rounded-xl p-6 w-96 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm" onClick={onSuccess}>
+        <div className="w-96 rounded-xl border border-white/10 bg-[#17130f] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
           <div className="text-center mb-5">
             {isMatch ? (
               <CheckCircle size={48} className="mx-auto text-green-400 mb-2" />
@@ -165,8 +263,8 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ branch, status, onClos
 
   // ── Pre-close form ───────────────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="bg-cc-surface border border-white/10 rounded-xl p-6 w-96 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="max-h-[92vh] w-[28rem] overflow-y-auto rounded-xl border border-white/10 bg-[#17130f] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex justify-between items-center mb-5">
           <h3 className="font-bold text-cc-cream flex items-center gap-2">
@@ -179,6 +277,12 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ branch, status, onClos
         </div>
 
         <p className="mb-4 text-xs text-cc-primary">Sucursal: <span className="font-bold">{branch.name}</span></p>
+
+        {contractState.status === 'loading' && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-cc-text-muted">
+            <Loader2 size={14} className="animate-spin" /> Consultando control de caja…
+          </div>
+        )}
 
         {/* Pre-close summary */}
         <div className="space-y-2 mb-5">
@@ -212,6 +316,95 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ branch, status, onClos
         </div>
 
         <div className="space-y-4">
+          {requiresInventoryCounts && (
+            <div className="space-y-3 rounded-lg border border-amber-400/25 bg-amber-400/5 p-3">
+              <div className="flex items-start gap-2 text-xs text-amber-200">
+                <Info size={14} className="mt-0.5 flex-shrink-0" />
+                <span>El conteo final quedará auditado. No modifica el inventario contable.</span>
+              </div>
+              {inventoryLoading ? (
+                <div className="flex items-center gap-2 text-xs text-cc-text-muted">
+                  <Loader2 size={13} className="animate-spin" /> Cargando conteos iniciales…
+                </div>
+              ) : inventoryState?.opening.corn_kg != null && inventoryState.opening.oil_liters != null ? (
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-md bg-black/25 p-2">
+                    <span className="block text-cc-text-muted">Maíz inicial</span>
+                    <strong className="text-cc-cream">{inventoryState.opening.corn_kg.toFixed(3)} kg</strong>
+                  </div>
+                  <div className="rounded-md bg-black/25 p-2">
+                    <span className="block text-cc-text-muted">Aceite inicial</span>
+                    <strong className="text-cc-cream">{inventoryState.opening.oil_liters.toFixed(3)} L</strong>
+                  </div>
+                </div>
+              ) : null}
+
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-cc-text-muted">
+                  {contract?.corn_label || 'Peso del maíz'} final ({contract?.corn_unit || 'kg'})
+                </label>
+                <div className="relative">
+                  <Scale size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-cc-text-muted" />
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    inputMode="decimal"
+                    value={cornKg}
+                    onChange={(event) => setCornKg(event.target.value)}
+                    className="w-full rounded-lg border border-white/10 bg-black/30 py-2.5 pl-9 pr-10 text-right text-lg font-bold text-cc-cream outline-none focus:ring-2 focus:ring-red-400/50"
+                    placeholder="0.000"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cc-text-muted">{contract?.corn_unit || 'kg'}</span>
+                </div>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-cc-text-muted">
+                  {contract?.oil_label || 'Aceite'} final ({contract?.oil_unit || 'L'})
+                </label>
+                <div className="relative">
+                  <Droplets size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-cc-text-muted" />
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.001"
+                    inputMode="decimal"
+                    value={oilLiters}
+                    onChange={(event) => setOilLiters(event.target.value)}
+                    className="w-full rounded-lg border border-white/10 bg-black/30 py-2.5 pl-9 pr-10 text-right text-lg font-bold text-cc-cream outline-none focus:ring-2 focus:ring-red-400/50"
+                    placeholder="0.000"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cc-text-muted">{contract?.oil_unit || 'L'}</span>
+                </div>
+              </div>
+
+              {inventoryState?.opening.corn_kg != null && parsedCornPreview != null &&
+                inventoryState.opening.oil_liters != null && parsedOilPreview != null && (
+                <div className="space-y-1 rounded-md border border-white/10 bg-black/25 p-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-cc-text-muted">Diferencia maíz</span>
+                    <span>{(parsedCornPreview - inventoryState.opening.corn_kg).toFixed(3)} kg</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-cc-text-muted">Consumo aparente maíz</span>
+                    <span>{(inventoryState.opening.corn_kg - parsedCornPreview).toFixed(3)} kg</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-cc-text-muted">Diferencia aceite</span>
+                    <span>{(parsedOilPreview - inventoryState.opening.oil_liters).toFixed(3)} L</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-cc-text-muted">Consumo aparente aceite</span>
+                    <span>{(inventoryState.opening.oil_liters - parsedOilPreview).toFixed(3)} L</span>
+                  </div>
+                  <p className="pt-1 text-[10px] leading-relaxed text-amber-200/80">
+                    El consumo aparente no es consumo real autoritativo: no incorpora compras, producción, mermas ni transferencias.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Counted cash */}
           <div>
             <label className="block text-xs font-medium text-cc-text-muted mb-1.5">
@@ -282,7 +475,14 @@ export const CloseCashRegisterModal: React.FC<Props> = ({ branch, status, onClos
           {/* Submit */}
           <button
             onClick={handleSubmit}
-            disabled={saving}
+            disabled={contractState.status !== 'ready' || saving || (requiresInventoryCounts && (
+              inventoryLoading
+              || !inventoryState
+              || inventoryState.opening.corn_kg == null
+              || inventoryState.opening.oil_liters == null
+              || !cornKg.trim()
+              || !oilLiters.trim()
+            ))}
             className="w-full py-2.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 font-bold text-sm rounded-lg border border-red-500/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {saving ? 'Cerrando caja…' : (

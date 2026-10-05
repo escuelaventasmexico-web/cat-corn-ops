@@ -125,7 +125,7 @@ const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
       // 2. For settlement type movements, check payment_verification_requests
       if (movement.movement_type === 'settlement') {
         const { data: verificationsData, error: verificationsErr } = await supabase
-          .from('commercial_partner_payment_verification_requests')
+          .from('partner_payment_verification_requests')
           .select('id')
           .eq('movement_id', deletingMovementId)
           .in('status', ['pending_review', 'approved'])

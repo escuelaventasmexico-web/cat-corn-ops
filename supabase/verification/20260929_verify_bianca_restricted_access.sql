@@ -1,10 +1,10 @@
--- Read-only verifier for 20260929_bianca_restricted_access.sql.
+-- Read-only verifier for the original restricted-access rollout.
 -- Session-dependent behavior is listed separately and is not simulated here.
 
 WITH expected AS (
   SELECT
     'b5fe98b7-d5ff-457e-8176-ed66a13af84b'::UUID AS user_id,
-    'biancapan@catcorn.com.mx'::TEXT AS email,
+    'angelicagut@catcorn.com.mx'::TEXT AS email,
     'a4ce8e5f-6bfa-4f1a-8d96-8f1a7ce00101'::UUID AS chipitlan_id,
     'e7d54d51-57b3-4aae-9cf5-09aa7ce00202'::UUID AS aurrera_id
 ),
@@ -13,9 +13,10 @@ identity_facts AS (
     count(auth_user.id) = 1 AS auth_identity_matches,
     count(*) FILTER (
       WHERE profile.id = expected.user_id
-        AND profile.full_name = 'Blanca Paniagua'
+        AND profile.full_name = 'Angelica Gutierrez'
         AND profile.role = 'vendedora'
         AND profile.is_active
+        AND profile.commercial_alias = 'ANGELICA'
     ) = 1 AS profile_matches
   FROM expected
   LEFT JOIN auth.users AS auth_user
@@ -321,10 +322,10 @@ SELECT to_jsonb(checks)
         'Verified by target-scoped migration statements; this cannot be reconstructed from post-apply state without a pre-apply snapshot.'
     ),
     'manual_session_tests_required', jsonb_build_array(
-      'As Bianca, confirm only Chipitlán is returned and Aurrera in localStorage is ignored.',
-      'As Bianca, confirm Dashboard, POS and Imprimir Etiquetas work and every other direct URL is denied.',
-      'As Bianca, open, use, withdraw from and close only the Chipitlán cash register.',
-      'As Bianca, print a conventional label and a valid GOMIX90 label, then confirm direct event-table writes fail.',
+      'As Angelica, confirm only Chipitlán is returned and Aurrera in localStorage is ignored.',
+      'As Angelica, confirm Dashboard, POS and Imprimir Etiquetas work and every other direct URL is denied.',
+      'As Angelica, open, use, withdraw from and close only the Chipitlán cash register.',
+      'As Angelica, print a conventional label and a valid GOMIX90 label, then confirm direct event-table writes fail.',
       'As admin, confirm the global dashboard and existing operational modules are unchanged.',
       'As Gerardo, confirm POS label access and socios_comerciales POS commission behavior remain unchanged.'
     ),

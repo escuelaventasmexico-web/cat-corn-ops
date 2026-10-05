@@ -1,4 +1,4 @@
--- Transactional verifier for 20260929_bianca_piece_commissions.sql.
+-- Transactional verifier for the original seller per-piece commission rollout.
 -- Run only after the migration. Every data-changing sync test is rolled back.
 -- A skipped runtime fixture is reported as true with a "skipped" detail; the
 -- structural checks remain mandatory and never skip.
@@ -99,7 +99,7 @@ WITH expected(scheme, product_key, amount) AS (
     AND rule.valid_from = DATE '2026-09-30'
     AND rule.active
 )
-SELECT 'bianca_rules_are_exact',
+SELECT 'angelica_rules_are_exact',
   NOT EXISTS (SELECT * FROM expected EXCEPT SELECT * FROM actual)
     AND NOT EXISTS (SELECT * FROM actual EXCEPT SELECT * FROM expected),
   'Both schemes must contain exactly the 8 real keys at 2/5/10 from 2026-09-30.'
@@ -247,7 +247,7 @@ WITH candidate AS (
   FROM verification_function_defs
   WHERE proname = 'commission_settlement_candidate_events'
 )
-SELECT 'bianca_settlement_whitelist_is_exact',
+SELECT 'angelica_settlement_whitelist_is_exact',
   definition LIKE '%event.seller_id = p_seller_id%'
     AND definition LIKE '%seller.role = ''vendedora''%'
     AND definition LIKE '%''prospect_conversion_bonus''%'
@@ -348,7 +348,7 @@ SELECT 'new_program_is_prospective',
     WHERE snapshot.eligible
       AND (snapshot.operation_at AT TIME ZONE 'America/Mexico_City')::DATE < DATE '2026-09-30'
   ),
-  'No committed Bianca per-piece event or eligible snapshot may precede valid_from.';
+  'No committed Angelica per-piece event or eligible snapshot may precede valid_from.';
 
 INSERT INTO verification_results
 SELECT 'origin_metadata_distinguishes_commercial_scheme',
@@ -679,12 +679,12 @@ SELECT jsonb_build_object(
   'details', jsonb_object_agg(result.check_name, result.details ORDER BY result.check_name),
   'effective_date', '2026-09-30',
   'manual_tests', jsonb_build_array(
-    'Bianca POS: sell 3 Michi + 2 Gato Mayor + 1 Jefe Felino; expect one available event per item and $26 total.',
+    'Angelica POS: sell 3 Michi + 2 Gato Mayor + 1 Jefe Felino; expect one available event per item and $26 total.',
     'Valid conversion: expect a $50 prospect_conversion_bonus immediately pending; partial first cut payment stays pending and full validated payment makes it available.',
-    'Comodato: Gerardo keeps 5/10/15 while Bianca receives 2/5/10 on effective quantity_sold; both share pending/available state.',
-    'Mayoreo: Gerardo keeps his existing wholesale commission while Bianca receives 2/5/10 on the same order quantities; both share payment release.',
-    'Set inactive/change role after events exist: attribution and economic values remain; later operations create no new Bianca event.',
-    'Payments: preview and settle accumulated approved Bianca sources, including a partial commission settlement; confirm one draft maximum and automatic expense on payment.'
+    'Comodato: Gerardo keeps 5/10/15 while Angelica receives 2/5/10 on effective quantity_sold; both share pending/available state.',
+    'Mayoreo: Gerardo keeps his existing wholesale commission while Angelica receives 2/5/10 on the same order quantities; both share payment release.',
+    'Set inactive/change role after events exist: attribution and economic values remain; later operations create no new Angelica event.',
+    'Payments: preview and settle accumulated approved Angelica sources, including a partial commission settlement; confirm one draft maximum and automatic expense on payment.'
   )
 ) AS verification
 FROM verification_results AS result;

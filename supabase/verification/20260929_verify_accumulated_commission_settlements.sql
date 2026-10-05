@@ -1,7 +1,7 @@
 -- Read-only verifier for 20260929_fix_accumulated_commission_settlements.sql.
 -- It returns one JSONB row and does not create, cancel, pay, or modify settlements.
 -- Manual Gerardo test: preview/pay a range containing available August + September events.
--- Manual Bianca test: preview must contain only prospect_conversion_bonus events.
+-- Manual Angelica test: preview must contain only prospect_conversion_bonus events.
 -- Manual draft test: continue or explicitly cancel the existing draft; never auto-cancel it.
 
 WITH function_rows AS (
@@ -90,7 +90,7 @@ WITH function_rows AS (
         AS preview_and_create_share_candidate_helper,
     candidate_definition LIKE '%seller.role = ''vendedora''%'
       AND candidate_definition LIKE '%event.source_type = ''prospect_conversion_bonus''%'
-        AS bianca_is_limited_to_prospect_bonus,
+        AS angelica_is_limited_to_prospect_bonus,
     regexp_replace(candidate_definition, '[[:space:]]+', ' ', 'g') LIKE
       '%seller.role = ''socios_comerciales'' or ( seller.role = ''vendedora'' and event.source_type = ''prospect_conversion_bonus''%'
         AS socios_keep_all_normal_commissions,
@@ -153,7 +153,7 @@ SELECT jsonb_build_object(
   'historical_data_note', 'This verifier is read-only. The corrective migration only replaces functions and grants; it contains no historical payment or settlement-item DML.',
   'manual_tests', jsonb_build_array(
     'Gerardo: accumulated available commissions from August and September use one exact preview/range.',
-    'Bianca: preview and settlement contain only prospect_conversion_bonus.',
+    'Angelica: preview and settlement contain only prospect_conversion_bonus.',
     'Existing draft: show folio, total, created date; continue or cancel only by explicit administrator action.'
   )
 ) AS verification

@@ -20,7 +20,11 @@ import { ExtraDayCommissionModal } from './ExtraDayCommissionModal';
 import { AdminPartnerTargetEditor } from './AdminPartnerTargetEditor';
 import { loadAvailableForPayment } from './payments/paymentUtils';
 
-export const AdminCommissionDashboard = () => {
+interface Props {
+  onPartnerPaymentChanged?: (partnerId: string) => void;
+}
+
+export const AdminCommissionDashboard: React.FC<Props> = ({ onPartnerPaymentChanged }) => {
   const [sellers, setSellers] = useState<UserProfile[]>([]);
   const [selectedSellerId, setSelectedSellerId] = useState<string | null>(null);
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
@@ -153,21 +157,47 @@ export const AdminCommissionDashboard = () => {
     loadAllSellersSummary();
   }, [currentDate, sellers, selectedSellerId]);
 
+  const handleVerificationChanged = (partnerId: string) => {
+    setVerificationRefreshKey(prev => prev + 1);
+    setRefreshKey(prev => prev + 1);
+    void loadAllSellersSummary();
+    if (selectedSellerId) {
+      void loadSellerSummary(selectedSellerId);
+      void loadTotalAvailable(selectedSellerId);
+    }
+    onPartnerPaymentChanged?.(partnerId);
+  };
+
+  const pendingPaymentsPanel = (
+    <div className="bg-cc-surface rounded-xl border border-white/5 p-6">
+      <PendingPaymentVerifications
+        refreshTrigger={verificationRefreshKey}
+        onVerificationChanged={handleVerificationChanged}
+      />
+    </div>
+  );
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 text-cc-primary animate-spin" />
+      <div className="space-y-6">
+        {pendingPaymentsPanel}
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 text-cc-primary animate-spin" />
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="p-6 bg-red-500/10 border border-red-500/30 rounded-2xl flex items-center gap-3">
-        <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
-        <div>
-          <h3 className="font-semibold text-red-300">Error</h3>
-          <p className="text-sm text-red-200">{error}</p>
+      <div className="space-y-6">
+        {pendingPaymentsPanel}
+        <div className="p-6 bg-red-500/10 border border-red-500/30 rounded-2xl flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
+          <div>
+            <h3 className="font-semibold text-red-300">Error</h3>
+            <p className="text-sm text-red-200">{error}</p>
+          </div>
         </div>
       </div>
     );
@@ -206,6 +236,9 @@ export const AdminCommissionDashboard = () => {
           Consulta el estado de comisiones de todos los vendedores.
         </p>
       </div>
+
+      {/* Global admin queue: independent from seller/monthly commission data. */}
+      {pendingPaymentsPanel}
 
       {/* Month and Seller Selector */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -261,20 +294,6 @@ export const AdminCommissionDashboard = () => {
                 onAvailableClick={() => setShowAvailableModal(true)}
               />
             </div>
-          </div>
-
-          {/* Pending Payment Verifications */}
-          <div className="bg-cc-surface rounded-xl border border-white/5 p-6">
-            <PendingPaymentVerifications
-              refreshTrigger={verificationRefreshKey}
-              onVerificationApproved={() => {
-                setVerificationRefreshKey(prev => prev + 1);
-                setRefreshKey(prev => prev + 1);
-                loadAllSellersSummary();
-                loadSellerSummary(selectedSellerId);
-                loadTotalAvailable(selectedSellerId);
-              }}
-            />
           </div>
 
           {/* Extra Days Section - Admin Only */}

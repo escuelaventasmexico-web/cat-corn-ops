@@ -99,6 +99,79 @@ export interface PaymentVerificationHistory {
   updated_at: string;
 }
 
+export interface AdminApprovedComodatoPaymentInput {
+  requestId: string;
+  partnerId: string;
+  movementId: string;
+  paymentDate: string;
+  amount: number;
+  paymentMethod: 'cash' | 'transfer';
+  paymentReference?: string | null;
+  notes?: string | null;
+  proofPath?: string | null;
+  proofFileName?: string | null;
+  proofMimeType?: string | null;
+  proofSizeBytes?: number | null;
+}
+
+export interface AdminApprovedComodatoPaymentResult {
+  requestId: string;
+  folio: string;
+  approvedPaymentId: string;
+  amount: number;
+  status: 'approved';
+  reviewedAt: string;
+}
+
+/**
+ * Register an already-confirmed Comodato payment as an active administrator.
+ * requestId is generated once by the client and doubles as the idempotency key.
+ */
+export async function createApprovedComodatoPaymentAsAdmin(
+  input: AdminApprovedComodatoPaymentInput
+): Promise<AdminApprovedComodatoPaymentResult> {
+  if (!supabase) {
+    throw new Error('Supabase not configured');
+  }
+
+  const { data, error } = await supabase.rpc(
+    'admin_create_approved_comodato_payment',
+    {
+      p_request_id: input.requestId,
+      p_partner_id: input.partnerId,
+      p_movement_id: input.movementId,
+      p_payment_date: input.paymentDate,
+      p_amount: input.amount,
+      p_payment_method: input.paymentMethod,
+      p_payment_reference: input.paymentReference ?? null,
+      p_notes: input.notes ?? null,
+      p_proof_path: input.proofPath ?? null,
+      p_proof_file_name: input.proofFileName ?? null,
+      p_proof_mime_type: input.proofMimeType ?? null,
+      p_proof_size_bytes: input.proofSizeBytes ?? null,
+    }
+  );
+
+  if (error) {
+    console.error('Error registering approved Comodato payment as admin:', error);
+    throw error;
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.request_id || !row?.approved_payment_id) {
+    throw new Error('La RPC administrativa no devolvió el pago aprobado.');
+  }
+
+  return {
+    requestId: row.request_id,
+    folio: row.folio,
+    approvedPaymentId: row.approved_payment_id,
+    amount: Number(row.amount),
+    status: row.status,
+    reviewedAt: row.reviewed_at,
+  };
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. CREATE PAYMENT VERIFICATION REQUEST (Draft)
 // ═════════════════════════════════════════════════════════════════════════════

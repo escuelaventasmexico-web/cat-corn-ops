@@ -6,8 +6,8 @@ import { exportCustomersToExcel } from '../lib/exportCustomers';
 import { PROMOTIONS, clearPromoDiscounts, countEligible, getPromoEmoji, getPromotion, isTodayWeekday } from '../lib/promotions';
 import type { PromotionCode } from '../lib/promotions';
 import { Search, Plus, Minus, CreditCard, Banknote, Landmark, User, ShoppingBag, ScanBarcode, X, Gift, Phone, UserPlus, Tag, Sparkles, Users, Printer, Settings, Package, Truck } from 'lucide-react';
-import { fetchCashStatus, getOpenSessionIdForBranch, EMPTY_CASH_STATUS } from '../lib/cashRegister';
-import type { CashRegisterStatus } from '../lib/cashRegister';
+import { fetchCashInventoryControlForBranch, fetchCashStatus, getOpenSessionIdForBranch, EMPTY_CASH_STATUS } from '../lib/cashRegister';
+import type { CashInventoryContractState, CashRegisterStatus } from '../lib/cashRegister';
 import { CashRegisterStatusPanel } from '../components/CashRegisterStatus';
 import { printSaleReceipt } from '../lib/printReceipt';
 import type { ReceiptData } from '../components/TicketReceipt';
@@ -82,6 +82,7 @@ export const POS = () => {
 
   // Cash register state
   const [cashStatus, setCashStatus] = useState<CashRegisterStatus>(EMPTY_CASH_STATUS);
+  const [cashControlState, setCashControlState] = useState<CashInventoryContractState>({ status: 'loading' });
   const [cashLoading, setCashLoading] = useState(true);
   const [showOpenCashModal, setShowOpenCashModal] = useState(false);
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
@@ -106,9 +107,22 @@ export const POS = () => {
       cashRequestBranchRef.current = null;
       setCashStatus(EMPTY_CASH_STATUS);
       setCashLoading(false);
+      setCashControlState({ status: 'loading' });
       return;
     }
     void loadCashStatus(selectedBranch.id);
+    let cancelled = false;
+    setCashControlState({ status: 'loading' });
+    void fetchCashInventoryControlForBranch(selectedBranch.id)
+      .then((contract) => {
+        if (!cancelled) setCashControlState({ status: 'ready', contract });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : 'No se pudo consultar el control de caja';
+        setCashControlState({ status: 'error', error: message });
+      });
+    return () => { cancelled = true; };
   }, [selectedBranch?.id]);
 
   const loadCashStatus = async (branchId = selectedBranch?.id) => {
@@ -487,8 +501,19 @@ export const POS = () => {
     }
     if (!deliveryPlatform && !isPaymentSufficient) return;
 
-    // Block if no cash register is open (delivery is allowed without an open session)
-    if (!cashRegisterOpen && !deliveryPlatform) {
+    if (cashControlState.status !== 'ready') {
+      alert(cashControlState.status === 'error'
+        ? cashControlState.error
+        : 'Espera a que termine de cargar el control de caja de la sucursal.');
+      return;
+    }
+
+    // The server-provided contract decides whether delivery must join a
+    // controlled cash session. Direct POS sales always require an open session.
+    const requiresControlledSession = cashControlState.contract.control_enabled
+      && cashControlState.contract.requires_opening_counts;
+    const requiresOpenCashSession = !deliveryPlatform || requiresControlledSession;
+    if (!cashRegisterOpen && requiresOpenCashSession) {
       alert('Debes abrir una caja antes de registrar ventas.');
       return;
     }
@@ -524,7 +549,7 @@ export const POS = () => {
 
         // Fetch the current open session id to link the sale
         const cashSessionId = await getOpenSessionIdForBranch(selectedBranch.id);
-        if (!deliveryPlatform && !cashSessionId) {
+        if (requiresOpenCashSession && !cashSessionId) {
           throw new Error(`No hay una caja abierta en ${selectedBranch.name}.`);
         }
         console.log('[CASH] sale linked to session', cashSessionId);
@@ -1023,6 +1048,11 @@ export const POS = () => {
             {branchError || 'No tienes una sucursal autorizada; no puedes operar el punto de venta.'}
           </div>
         )}
+        {selectedBranch && cashControlState.status === 'error' && (
+          <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+            {cashControlState.error}
+          </div>
+        )}
         {/* Barcode Scanner + Search */}
         <div className="mb-4 space-y-2">
           {/* Barcode input */}
@@ -1081,9 +1111,10 @@ export const POS = () => {
               <button
                 key={p.key}
                 onClick={() => toggleDeliveryPlatform(p.key)}
+                disabled={cashControlState.status !== 'ready'}
                 className={`flex items-center gap-1 px-3 py-2 rounded-xl border text-xs font-bold transition-all ${
                   deliveryPlatform === p.key ? p.active : p.color
-                }`}
+                } disabled:cursor-not-allowed disabled:opacity-40`}
                 title={`Venta delivery ${p.label}`}
               >
                 <Truck size={12} />{p.label}
@@ -1552,6 +1583,14 @@ export const POS = () => {
             {deliveryPlatform ? (
               /* ── DELIVERY MODE ── */
               <div className="space-y-2">
+                {!cashRegisterOpen
+                  && cashControlState.status === 'ready'
+                  && cashControlState.contract.control_enabled
+                  && cashControlState.contract.requires_opening_counts && (
+                  <p className="text-center text-xs font-medium text-red-400">
+                    Abre la caja de Chipitlán y registra el conteo inicial para vender por delivery.
+                  </p>
+                )}
                 <div className="bg-orange-500/10 border border-orange-500/25 rounded-xl px-4 py-3 flex items-center gap-3">
                   <Truck size={18} className="text-orange-300 shrink-0" />
                   <div>
@@ -1573,7 +1612,12 @@ export const POS = () => {
                 </div>
                 <button
                   onClick={() => handleCheckout()}
-                  disabled={processing || cart.length === 0}
+                  disabled={processing
+                    || cart.length === 0
+                    || cashControlState.status !== 'ready'
+                    || (!cashRegisterOpen
+                      && cashControlState.contract.control_enabled
+                      && cashControlState.contract.requires_opening_counts)}
                   className="w-full py-3 bg-orange-500 hover:bg-orange-400 text-white rounded-lg text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {processing ? (

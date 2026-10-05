@@ -1,6 +1,7 @@
 import { supabase } from '../supabase';
 import { printCorteDeCaja, buildProductSummary } from './printReceipt';
 import type { CorteDeCajaData, CorteTransaction } from './printReceipt';
+import { supabaseError } from './supabaseError';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,6 +44,10 @@ export interface CashSessionSummary {
   closed_by: string | null;
   notes: string | null;
   close_notes: string | null;
+  inventory_opening_corn_kg?: number | null;
+  inventory_closing_corn_kg?: number | null;
+  inventory_opening_oil_liters?: number | null;
+  inventory_closing_oil_liters?: number | null;
 }
 
 /** Result from close_cash_register_session RPC */
@@ -50,6 +55,83 @@ export interface CloseResult {
   expected_cash: number;
   counted_cash: number;
   difference: number;
+}
+
+export interface CashInventoryInput {
+  cornKg: number;
+  oilLiters: number;
+}
+
+export interface CashInventoryControlContract {
+  branch_id: string;
+  control_enabled: boolean;
+  requires_opening_counts: boolean;
+  requires_closing_counts: boolean;
+  corn_label: string;
+  corn_unit: string;
+  oil_label: string;
+  oil_unit: string;
+}
+
+export type CashInventoryContractState =
+  | { status: 'loading' }
+  | { status: 'error'; error: string }
+  | { status: 'ready'; contract: CashInventoryControlContract };
+
+export type CashInventoryPhase = 'opening' | 'closing';
+
+export function resolveCashInventoryFlow(
+  state: CashInventoryContractState,
+  branchId: string,
+  phase: CashInventoryPhase,
+): 'controlled' | 'legacy' {
+  if (state.status !== 'ready') {
+    throw new Error('El contrato de control de caja todavía no está disponible');
+  }
+  if (state.contract.branch_id !== branchId) {
+    throw new Error('El contrato de control de caja no corresponde a la sucursal seleccionada');
+  }
+
+  const required = phase === 'opening'
+    ? state.contract.requires_opening_counts
+    : state.contract.requires_closing_counts;
+  return state.contract.control_enabled && required ? 'controlled' : 'legacy';
+}
+
+export interface CashInventoryCountPhase {
+  corn_kg: number | null;
+  oil_liters: number | null;
+  counted_at: string | null;
+}
+
+export interface CashInventorySessionState {
+  controlled: boolean;
+  opening: CashInventoryCountPhase;
+  closing: CashInventoryCountPhase;
+  close_summary: Record<string, unknown> | null;
+}
+
+export interface CashInventoryHistoryRow {
+  cash_session_id: string;
+  branch_id: string;
+  branch_code: string;
+  branch_name: string;
+  session_status: string;
+  opened_at: string;
+  closed_at: string | null;
+  phase: 'opening' | 'closing';
+  counted_at: string;
+  counted_by: string;
+  counted_by_name: string;
+  corn_kg: number;
+  oil_liters: number;
+  corn_g: number;
+  oil_ml: number;
+  opening_cash: number;
+  counted_cash: number | null;
+  expected_cash: number | null;
+  cash_difference: number | null;
+  close_summary: Record<string, unknown> | null;
 }
 
 /** A sale belonging to a cash session (detail view) */
@@ -88,6 +170,39 @@ export const EMPTY_CASH_STATUS: CashRegisterStatus = {
   notes: null,
 };
 
+export async function fetchCashInventoryControlForBranch(
+  branchId: string,
+): Promise<CashInventoryControlContract> {
+  if (!supabase) throw new Error('Supabase no configurado');
+
+  const { data, error } = await supabase.rpc('get_cash_inventory_control_for_branch', {
+    p_branch_id: branchId,
+  });
+  if (error) {
+    console.error('[CASH] Error fetching branch cash-control contract:', error);
+    throw supabaseError(error, 'No se pudo consultar el control de caja de la sucursal');
+  }
+  if (!data || typeof data !== 'object') {
+    throw new Error('La RPC de control de caja devolvió un contrato vacío');
+  }
+
+  const value = data as Record<string, unknown>;
+  if (
+    String(value.branch_id || '') !== branchId
+    || typeof value.control_enabled !== 'boolean'
+    || typeof value.requires_opening_counts !== 'boolean'
+    || typeof value.requires_closing_counts !== 'boolean'
+    || typeof value.corn_label !== 'string'
+    || typeof value.corn_unit !== 'string'
+    || typeof value.oil_label !== 'string'
+    || typeof value.oil_unit !== 'string'
+  ) {
+    throw new Error('La RPC de control de caja devolvió un contrato inválido');
+  }
+
+  return value as unknown as CashInventoryControlContract;
+}
+
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 /** Fetch the current open session strictly for one authorized branch. */
@@ -98,11 +213,13 @@ export async function fetchCashStatus(branchId: string): Promise<CashRegisterSta
     .from('cash_register_sessions')
     .select('*')
     .eq('branch_id', branchId)
+    .eq('status', 'open')
     .is('closed_at', null)
     .maybeSingle();
 
   if (sessionErr) {
-    throw new Error(`No se pudo consultar la caja de la sucursal: ${sessionErr.message}`);
+    console.error('[CASH] Error fetching branch register:', sessionErr);
+    throw supabaseError(sessionErr, 'No se pudo consultar la caja de la sucursal');
   }
 
   if (!sessionRow) {
@@ -180,7 +297,9 @@ export async function fetchCashStatus(branchId: string): Promise<CashRegisterSta
 export async function openCashRegisterForBranch(
   branchId: string,
   openingCash: number,
+  contract: CashInventoryControlContract,
   notes?: string,
+  inventory?: CashInventoryInput,
 ): Promise<void> {
   if (!supabase) throw new Error('Supabase no configurado');
 
@@ -189,16 +308,32 @@ export async function openCashRegisterForBranch(
   } = await supabase.auth.getUser();
   if (!user) throw new Error('No hay usuario autenticado');
 
-  const { error } = await supabase.rpc('open_cash_register_session_for_branch', {
-    p_branch_id: branchId,
-    p_opening_cash: openingCash,
-    p_opened_by: user.id,
-    p_notes: notes || null,
-  });
+  const flow = resolveCashInventoryFlow({ status: 'ready', contract }, branchId, 'opening');
+  if (flow === 'controlled' && !inventory) {
+    throw new Error('Los conteos de maíz y aceite son obligatorios para abrir esta sucursal');
+  }
+  if (flow === 'legacy' && inventory) {
+    throw new Error('La sucursal seleccionada no usa conteos de inventario en la apertura');
+  }
+
+  const { error } = flow === 'controlled'
+    ? await supabase.rpc('open_cash_register_with_inventory_for_branch', {
+        p_branch_id: branchId,
+        p_opening_cash: openingCash,
+        p_corn_kg: inventory!.cornKg,
+        p_oil_liters: inventory!.oilLiters,
+        p_notes: notes || null,
+      })
+    : await supabase.rpc('open_cash_register_session_for_branch', {
+        p_branch_id: branchId,
+        p_opening_cash: openingCash,
+        p_opened_by: user.id,
+        p_notes: notes || null,
+      });
 
   if (error) {
-    console.error('[CASH] Error opening register:', error.message);
-    throw new Error(error.message);
+    console.error('[CASH] Error opening register:', error);
+    throw supabaseError(error, 'No se pudo abrir la caja');
   }
 }
 
@@ -216,7 +351,8 @@ export async function getOpenSessionIdForBranch(branchId: string): Promise<strin
   });
 
   if (error) {
-    throw new Error(`No se pudo consultar la caja de la sucursal: ${error.message}`);
+    console.error('[CASH] Error fetching open session:', error);
+    throw supabaseError(error, 'No se pudo consultar la caja de la sucursal');
   }
 
   // The RPC may return a UUID string or an object with an id field
@@ -254,8 +390,8 @@ export async function registerWithdrawalForBranch(
   });
 
   if (error) {
-    console.error('[CASH] Error registering withdrawal:', error.message);
-    throw new Error(error.message);
+    console.error('[CASH] Error registering withdrawal:', error);
+    throw supabaseError(error, 'No se pudo registrar el retiro');
   }
 }
 
@@ -269,24 +405,43 @@ export async function closeCashRegisterForBranch(
   branchId: string,
   sessionId: string,
   countedCash: number,
+  contract: CashInventoryControlContract,
   notes?: string,
+  inventory?: CashInventoryInput,
 ): Promise<CloseResult> {
   if (!supabase) throw new Error('Supabase no configurado');
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('No hay usuario autenticado');
 
-  const { data, error } = await supabase.rpc('close_cash_register_session_for_branch', {
-    p_branch_id: branchId,
-    p_session_id: sessionId,
-    p_counted_cash: countedCash,
-    p_closed_by: user.id,
-    p_notes: notes || null,
-  });
+  const flow = resolveCashInventoryFlow({ status: 'ready', contract }, branchId, 'closing');
+  if (flow === 'controlled' && !inventory) {
+    throw new Error('Los conteos de maíz y aceite son obligatorios para cerrar esta sucursal');
+  }
+  if (flow === 'legacy' && inventory) {
+    throw new Error('La sucursal seleccionada no usa conteos de inventario en el cierre');
+  }
+
+  const { data, error } = flow === 'controlled'
+    ? await supabase.rpc('close_cash_register_with_inventory_for_branch', {
+        p_branch_id: branchId,
+        p_session_id: sessionId,
+        p_counted_cash: countedCash,
+        p_corn_kg: inventory!.cornKg,
+        p_oil_liters: inventory!.oilLiters,
+        p_notes: notes || null,
+      })
+    : await supabase.rpc('close_cash_register_session_for_branch', {
+        p_branch_id: branchId,
+        p_session_id: sessionId,
+        p_counted_cash: countedCash,
+        p_closed_by: user.id,
+        p_notes: notes || null,
+      });
 
   if (error) {
-    console.error('[CASH] Error closing register:', error.message);
-    throw new Error(error.message);
+    console.error('[CASH] Error closing register:', error);
+    throw supabaseError(error, 'No se pudo cerrar la caja');
   }
 
   // The RPC might return a JSON object or void – normalise
@@ -301,6 +456,68 @@ export async function closeCashRegisterForBranch(
   // If the RPC doesn't return data, build a synthetic result from the status we
   // already had before close (caller can pass it in via the UI).
   return { expected_cash: 0, counted_cash: countedCash, difference: 0 };
+}
+
+export async function fetchCashInventorySessionState(
+  branchId: string,
+  sessionId: string,
+): Promise<CashInventorySessionState> {
+  if (!supabase) throw new Error('Supabase no configurado');
+
+  const { data, error } = await supabase.rpc('get_cash_inventory_session_state', {
+    p_branch_id: branchId,
+    p_session_id: sessionId,
+  });
+  if (error) {
+    console.error('[CASH] Error fetching inventory session state:', error);
+    throw supabaseError(error, 'No se pudieron consultar los conteos de la sesión');
+  }
+
+  const value = (data || {}) as Record<string, any>;
+  const normalizePhase = (phase: Record<string, unknown> | null | undefined): CashInventoryCountPhase => ({
+    corn_kg: phase?.corn_kg == null ? null : Number(phase.corn_kg),
+    oil_liters: phase?.oil_liters == null ? null : Number(phase.oil_liters),
+    counted_at: phase?.counted_at ? String(phase.counted_at) : null,
+  });
+
+  return {
+    controlled: Boolean(value.controlled),
+    opening: normalizePhase(value.opening),
+    closing: normalizePhase(value.closing),
+    close_summary: value.close_summary || null,
+  };
+}
+
+export async function fetchCashInventoryHistoryAdmin(): Promise<CashInventoryHistoryRow[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.rpc('get_cash_inventory_history_admin');
+  if (error) {
+    console.error('[CASH] Error fetching inventory history:', error);
+    throw supabaseError(error, 'No se pudo consultar el historial de conteos');
+  }
+
+  return ((data || []) as Record<string, unknown>[]).map((row) => ({
+    cash_session_id: String(row.cash_session_id),
+    branch_id: String(row.branch_id),
+    branch_code: String(row.branch_code),
+    branch_name: String(row.branch_name),
+    session_status: String(row.session_status),
+    opened_at: String(row.opened_at),
+    closed_at: row.closed_at ? String(row.closed_at) : null,
+    phase: String(row.phase) as 'opening' | 'closing',
+    counted_at: String(row.counted_at),
+    counted_by: String(row.counted_by),
+    counted_by_name: String(row.counted_by_name || 'Usuario'),
+    corn_kg: Number(row.corn_kg),
+    oil_liters: Number(row.oil_liters),
+    corn_g: Number(row.corn_g),
+    oil_ml: Number(row.oil_ml),
+    opening_cash: Number(row.opening_cash),
+    counted_cash: row.counted_cash == null ? null : Number(row.counted_cash),
+    expected_cash: row.expected_cash == null ? null : Number(row.expected_cash),
+    cash_difference: row.cash_difference == null ? null : Number(row.cash_difference),
+    close_summary: (row.close_summary as Record<string, unknown> | null) || null,
+  }));
 }
 
 // ─── History ──────────────────────────────────────────────────────────────────
@@ -319,11 +536,11 @@ export async function fetchSessionsHistory(branchId: string): Promise<CashSessio
     .limit(50);
 
   if (error) {
-    console.error('[CASH] Error fetching sessions history:', error.message);
-    return [];
+    console.error('[CASH] Error fetching sessions history:', error);
+    throw supabaseError(error, 'No se pudo consultar el historial de cortes');
   }
 
-  return (data || []).map((d: Record<string, unknown>) => {
+  const sessions = (data || []).map((d: Record<string, unknown>) => {
     // Prefer calculated_* columns from the view; fall back to old column names
     const cashSales = Number(d.calculated_cash_sales ?? d.cash_sales_total ?? 0);
     const cardSales = Number(d.calculated_card_sales ?? d.card_sales_total ?? 0);
@@ -357,6 +574,31 @@ export async function fetchSessionsHistory(branchId: string): Promise<CashSessio
       close_notes: d.close_notes ? String(d.close_notes) : null,
     };
   });
+
+  // The count history is administrative and optional. Legacy sessions keep
+  // rendering even when the incremental migration has not been installed yet.
+  try {
+    const countRows = await fetchCashInventoryHistoryAdmin();
+    const countsBySession = new Map<string, Partial<CashSessionSummary>>();
+    countRows.forEach((row) => {
+      const current = countsBySession.get(row.cash_session_id) || {};
+      if (row.phase === 'opening') {
+        current.inventory_opening_corn_kg = row.corn_kg;
+        current.inventory_opening_oil_liters = row.oil_liters;
+      } else {
+        current.inventory_closing_corn_kg = row.corn_kg;
+        current.inventory_closing_oil_liters = row.oil_liters;
+      }
+      countsBySession.set(row.cash_session_id, current);
+    });
+    return sessions.map((session) => ({
+      ...session,
+      ...(countsBySession.get(session.session_id) || {}),
+    }));
+  } catch (inventoryError) {
+    console.warn('[CASH] Inventory count history unavailable:', inventoryError);
+    return sessions;
+  }
 }
 
 // ─── Session detail ───────────────────────────────────────────────────────────

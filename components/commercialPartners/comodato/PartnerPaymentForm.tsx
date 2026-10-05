@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, AlertCircle, CreditCard } from 'lucide-react';
 import { supabase } from '../../../supabase';
+import { useAuth } from '../../../contexts/AuthContext';
 import {
   PartnerOperationalSummary,
   PAYMENT_METHODS,
@@ -12,6 +13,7 @@ import {
   fmtCurrency,
 } from './types';
 import {
+  createApprovedComodatoPaymentAsAdmin,
   createPaymentVerificationRequest,
   submitPaymentVerificationRequest,
   uploadPaymentProof,
@@ -43,7 +45,39 @@ interface PaymentOptionsResponse {
   }>;
 }
 
+const formatSupabaseError = (error: unknown, fallback: string) => {
+  if (!error || typeof error !== 'object') {
+    return error instanceof Error ? error.message : fallback;
+  }
+
+  const candidate = error as {
+    message?: string;
+    details?: string;
+    hint?: string;
+    code?: string;
+  };
+  const parts = [
+    candidate.message,
+    candidate.details && `Detalles: ${candidate.details}`,
+    candidate.hint && `Sugerencia: ${candidate.hint}`,
+    candidate.code && `Código: ${candidate.code}`,
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(' · ') : fallback;
+};
+
 const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) => {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === 'admin' && profile.is_active;
+  const adminRequestIdRef = useRef(crypto.randomUUID());
+  const adminProofRef = useRef<{
+    file: File;
+    path: string;
+    mimeType: string;
+    fileName: string;
+    sizeBytes: number;
+  } | null>(null);
+  const adminRpcAttemptedRef = useRef(false);
   const [summary, setSummary] = useState<PartnerOperationalSummary | null>(null);
   const [date, setDate] = useState(todayISO());
   const [amount, setAmount] = useState('');
@@ -53,7 +87,11 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<Step>('form');
-  const [successData, setSuccessData] = useState<{ folio: string; amount: number } | null>(null);
+  const [successData, setSuccessData] = useState<{
+    folio: string;
+    amount: number;
+    approved: boolean;
+  } | null>(null);
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [selectedMovementId, setSelectedMovementId] = useState<string | null>(null);
   const [movements, setMovements] = useState<PendingSettlement[]>([]);
@@ -170,76 +208,119 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
     setError(null);
 
     try {
-      const freshState = await loadPaymentOptions();
-      const freshSelected = freshState?.movements.find(
-        movement => movement.id === selectedMovementId,
-      );
-      if (!freshState?.reconciled || !freshSelected || freshSelected.hasActiveRequest) {
-        setError('El saldo cambió o la liquidación ya tiene una solicitud activa. Revisa los datos actualizados.');
-        return;
-      }
-      if (Math.abs(freshSelected.pending - selectedSnapshot.pending) > 0.01) {
-        setAmount(freshSelected.pending.toFixed(2));
-        setError(`El saldo de la liquidación cambió a ${fmtCurrency(freshSelected.pending)}. Revisa el monto antes de continuar.`);
-        return;
-      }
-      if (amountNum > freshSelected.pending + 0.005) {
-        setError(`Monto no puede exceder el saldo actualizado de la liquidación (${fmtCurrency(freshSelected.pending)}).`);
-        return;
+      const isAdminRetry = isAdmin && adminRpcAttemptedRef.current;
+      if (!isAdminRetry) {
+        const freshState = await loadPaymentOptions();
+        const freshSelected = freshState?.movements.find(
+          movement => movement.id === selectedMovementId,
+        );
+        if (!freshState?.reconciled || !freshSelected || freshSelected.hasActiveRequest) {
+          setError('El saldo cambió o la liquidación ya tiene una solicitud activa. Revisa los datos actualizados.');
+          return;
+        }
+        if (Math.abs(freshSelected.pending - selectedSnapshot.pending) > 0.01) {
+          setAmount(freshSelected.pending.toFixed(2));
+          setError(`El saldo de la liquidación cambió a ${fmtCurrency(freshSelected.pending)}. Revisa el monto antes de continuar.`);
+          return;
+        }
+        if (amountNum > freshSelected.pending + 0.005) {
+          setError(`Monto no puede exceder el saldo actualizado de la liquidación (${fmtCurrency(freshSelected.pending)}).`);
+          return;
+        }
       }
 
       // Get current user
       const { data: { user } } = await supabase!.auth.getUser();
       if (!user) throw new Error('No authenticated user');
 
-      // Step 1: Create payment verification request
-      const createResult = await createPaymentVerificationRequest(
-        'comodato',
-        partnerId,
-        date,
-        amountNum,
-        method as 'cash' | 'transfer',
-        selectedMovementId,
-        null,
-        reference.trim() || null,
-        notes.trim() || null
-      );
-
-      if (!createResult || !createResult.requestId) {
-        throw new Error('Failed to create payment verification request');
-      }
-
-      // Step 2: Handle proof upload if transfer
       let proofPath = null;
       let proofMimeType = null;
       let proofFileName = null;
       let proofSizeBytes = null;
 
-      if (method === 'transfer' && proofFile) {
-        proofPath = await uploadPaymentProof(
-          user.id,
-          createResult.requestId,
-          proofFile
+      if (isAdmin) {
+        const requestId = adminRequestIdRef.current;
+        if (method === 'transfer' && proofFile) {
+          const cachedProof = adminProofRef.current;
+          if (cachedProof?.file === proofFile) {
+            proofPath = cachedProof.path;
+            proofMimeType = cachedProof.mimeType;
+            proofFileName = cachedProof.fileName;
+            proofSizeBytes = cachedProof.sizeBytes;
+          } else {
+            proofPath = await uploadPaymentProof(user.id, requestId, proofFile);
+            proofMimeType = proofFile.type;
+            proofFileName = proofFile.name;
+            proofSizeBytes = proofFile.size;
+            adminProofRef.current = {
+              file: proofFile,
+              path: proofPath,
+              mimeType: proofMimeType,
+              fileName: proofFileName,
+              sizeBytes: proofSizeBytes,
+            };
+          }
+        }
+
+        adminRpcAttemptedRef.current = true;
+        const result = await createApprovedComodatoPaymentAsAdmin({
+          requestId,
+          partnerId,
+          movementId: selectedMovementId,
+          paymentDate: date,
+          amount: amountNum,
+          paymentMethod: method as 'cash' | 'transfer',
+          paymentReference: reference.trim() || null,
+          notes: notes.trim() || null,
+          proofPath,
+          proofFileName,
+          proofMimeType,
+          proofSizeBytes,
+        });
+
+        setSuccessData({
+          folio: result.folio,
+          amount: amountNum,
+          approved: true,
+        });
+      } else {
+        const createResult = await createPaymentVerificationRequest(
+          'comodato',
+          partnerId,
+          date,
+          amountNum,
+          method as 'cash' | 'transfer',
+          selectedMovementId,
+          null,
+          reference.trim() || null,
+          notes.trim() || null
         );
-        proofMimeType = proofFile.type;
-        proofFileName = proofFile.name;
-        proofSizeBytes = proofFile.size;
+
+        if (!createResult?.requestId) {
+          throw new Error('No fue posible crear la solicitud de cobro.');
+        }
+
+        if (method === 'transfer' && proofFile) {
+          proofPath = await uploadPaymentProof(user.id, createResult.requestId, proofFile);
+          proofMimeType = proofFile.type;
+          proofFileName = proofFile.name;
+          proofSizeBytes = proofFile.size;
+        }
+
+        await submitPaymentVerificationRequest(
+          createResult.requestId,
+          proofPath,
+          proofFileName,
+          proofMimeType,
+          proofSizeBytes
+        );
+
+        setSuccessData({
+          folio: createResult.folio,
+          amount: amountNum,
+          approved: false,
+        });
       }
-
-      // Step 3: Submit payment verification request
-      await submitPaymentVerificationRequest(
-        createResult.requestId,
-        proofPath,
-        proofFileName,
-        proofMimeType,
-        proofSizeBytes
-      );
-
-      // Success!
-      setSuccessData({
-        folio: createResult.folio,
-        amount: amountNum,
-      });
       setStep('success');
 
       // Close after 3 seconds and refresh
@@ -249,7 +330,9 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
       }, 3000);
     } catch (err) {
       console.error('Payment submission error:', err);
-      setError(err instanceof Error ? err.message : 'Error al reportar pago');
+      setError(formatSupabaseError(err, isAdmin
+        ? 'Error al registrar el pago aprobado.'
+        : 'Error al reportar el pago.'));
     } finally {
       setSaving(false);
     }
@@ -265,10 +348,12 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
               <CreditCard className="w-8 h-8 text-green-600" />
             </div>
             <h2 className="text-xl font-bold text-green-600 mb-2">
-              ¡Cobro Reportado!
+              {successData.approved ? '¡Pago registrado!' : '¡Cobro reportado!'}
             </h2>
             <p className="text-gray-700 mb-4">
-              El pago ha sido reportado. Está en espera de revisión para liberar la comisión.
+              {successData.approved
+                ? 'El pago quedó aprobado y aplicado al saldo del socio.'
+                : 'El pago ha sido reportado. Está en espera de revisión para liberar la comisión.'}
             </p>
             <div className={CARD_CLS}>
               <div className="text-sm text-gray-600">Folio</div>
@@ -276,10 +361,14 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
               <div className="text-sm text-gray-600 mt-2">Monto</div>
               <div className="font-bold text-lg">{fmtCurrency(successData.amount)}</div>
               <div className="text-sm text-gray-600 mt-2">Estado</div>
-              <div className="font-semibold text-yellow-600">Pendiente de revisión</div>
+              <div className={`font-semibold ${successData.approved ? 'text-green-600' : 'text-yellow-600'}`}>
+                {successData.approved ? 'Aprobado' : 'Pendiente de revisión'}
+              </div>
             </div>
             <p className="text-xs text-gray-500 mt-4">
-              El saldo y comisión se actualizarán cuando se confirme el cobro.
+              {successData.approved
+                ? 'El saldo, historial y comisiones se actualizarán automáticamente.'
+                : 'El saldo y comisión se actualizarán cuando se confirme el cobro.'}
             </p>
           </div>
         </div>
@@ -334,7 +423,7 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
                 disabled={saving || !proofFile}
               >
-                {saving ? 'Reportando...' : 'Reportar Cobro'}
+                {saving ? (isAdmin ? 'Registrando...' : 'Reportando...') : (isAdmin ? 'Registrar Pago' : 'Reportar Cobro')}
               </button>
             </div>
           </form>
@@ -347,7 +436,7 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg max-w-md w-full p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold">Reportar Cobro</h2>
+          <h2 className="text-lg font-bold">{isAdmin ? 'Registrar Pago' : 'Reportar Cobro'}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <X className="w-5 h-5" />
           </button>
@@ -506,10 +595,10 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
               {saving ? (
                 <>
                   <span className="animate-spin">⏳</span>
-                  Reportando...
+                  {isAdmin ? 'Registrando...' : 'Reportando...'}
                 </>
               ) : (
-                'Reportar Cobro'
+                isAdmin ? 'Registrar Pago' : 'Reportar Cobro'
               )}
             </button>
           </div>
