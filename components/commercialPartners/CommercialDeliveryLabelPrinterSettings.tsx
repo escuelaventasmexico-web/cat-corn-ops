@@ -7,14 +7,21 @@ import {
   saveCommercialDeliveryLabelPrinterName,
 } from '../../lib/qzService';
 import {
-  DEFAULT_LABEL_SIZE_ID,
-  getSavedLabelSizeId,
+  DEFAULT_LABEL_ALIGNMENT,
+  DEFAULT_LABEL_OFFSET_MM,
   isYichipLabelPrinter,
   LABEL_SIZE_CATALOG,
+  LABEL_OFFSET_STEP_MM,
   LabelSizeId,
+  LabelHorizontalAlignment,
+  MAX_LABEL_OFFSET_MM,
+  MIN_LABEL_OFFSET_MM,
+  resolveHorizontalPlacement,
+  resolveLabelPrinterProfile,
   resolveLabelSize,
-  saveLabelSizeId,
+  saveLabelPrinterProfile,
 } from '../../lib/commercialLabelSize';
+import { printCommercialDeliveryAlignmentTest } from '../../lib/printReceipt';
 
 interface Props {
   open: boolean;
@@ -35,9 +42,13 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
   const [selectedPrinter, setSelectedPrinter] = useState(savedPrinter);
   const [selectedSizeId, setSelectedSizeId] = useState<LabelSizeId | ''>(() => (
     savedPrinter && isYichipLabelPrinter(savedPrinter)
-      ? getSavedLabelSizeId(savedPrinter) ?? DEFAULT_LABEL_SIZE_ID
+      ? resolveLabelPrinterProfile(savedPrinter).sizeId
       : ''
   ));
+  const [horizontalAlignment, setHorizontalAlignment] = useState<LabelHorizontalAlignment>(DEFAULT_LABEL_ALIGNMENT);
+  const [horizontalOffsetMm, setHorizontalOffsetMm] = useState(DEFAULT_LABEL_OFFSET_MM);
+  const [testingAlignment, setTestingAlignment] = useState(false);
+  const [testMessage, setTestMessage] = useState<string | null>(null);
   const [printers, setPrinters] = useState<string[]>([]);
   const [detecting, setDetecting] = useState(false);
   const [detected, setDetected] = useState(false);
@@ -70,18 +81,24 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
     const configuredPrinter = getSavedCommercialDeliveryLabelPrinterName() || '';
     setSavedPrinter(configuredPrinter);
     setSelectedPrinter(configuredPrinter);
-    setSelectedSizeId(configuredPrinter && isYichipLabelPrinter(configuredPrinter)
-      ? getSavedLabelSizeId(configuredPrinter) ?? DEFAULT_LABEL_SIZE_ID
-      : '');
+    const profile = configuredPrinter && isYichipLabelPrinter(configuredPrinter)
+      ? resolveLabelPrinterProfile(configuredPrinter)
+      : null;
+    setSelectedSizeId(profile?.sizeId ?? '');
+    setHorizontalAlignment(profile?.horizontalAlignment ?? DEFAULT_LABEL_ALIGNMENT);
+    setHorizontalOffsetMm(profile?.horizontalOffsetMm ?? DEFAULT_LABEL_OFFSET_MM);
+    setTestMessage(null);
     void detectPrinters(configuredPrinter);
   }, [open]);
 
   const selectPrinter = (printer: string) => {
     setSelectedPrinter(printer);
-    setSelectedSizeId(isYichipLabelPrinter(printer)
-      ? getSavedLabelSizeId(printer) ?? DEFAULT_LABEL_SIZE_ID
-      : '');
+    const profile = isYichipLabelPrinter(printer) ? resolveLabelPrinterProfile(printer) : null;
+    setSelectedSizeId(profile?.sizeId ?? '');
+    setHorizontalAlignment(profile?.horizontalAlignment ?? DEFAULT_LABEL_ALIGNMENT);
+    setHorizontalOffsetMm(profile?.horizontalOffsetMm ?? DEFAULT_LABEL_OFFSET_MM);
     setError(null);
+    setTestMessage(null);
   };
 
   const saveSelection = () => {
@@ -101,20 +118,57 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
       setError('Selecciona el tamaño de etiqueta antes de guardar.');
       return;
     }
-    saveCommercialDeliveryLabelPrinterName(selectedPrinter);
     if (isYichipLabelPrinter(selectedPrinter)) {
-      saveLabelSizeId(selectedPrinter, selectedSizeId as LabelSizeId);
+      const profile = {
+        sizeId: selectedSizeId as LabelSizeId,
+        horizontalAlignment,
+        horizontalOffsetMm,
+      };
+      try {
+        resolveHorizontalPlacement(LABEL_SIZE_CATALOG[profile.sizeId], profile);
+        saveLabelPrinterProfile(selectedPrinter, profile);
+      } catch (profileError) {
+        setError(profileError instanceof Error ? profileError.message : String(profileError));
+        return;
+      }
     }
+    saveCommercialDeliveryLabelPrinterName(selectedPrinter);
     setSavedPrinter(selectedPrinter);
     setError(null);
     onConfigured?.();
     onOpenChange(false);
   };
 
+  const printAlignmentTest = async () => {
+    if (!selectedPrinter || !isYichipLabelPrinter(selectedPrinter) || !selectedSizeId) return;
+    if (!detected || !printers.includes(selectedPrinter)) {
+      setError('Detecta y selecciona una impresora disponible antes de imprimir la prueba.');
+      return;
+    }
+    setTestingAlignment(true);
+    setError(null);
+    setTestMessage(null);
+    try {
+      await printCommercialDeliveryAlignmentTest(selectedPrinter, {
+        sizeId: selectedSizeId,
+        horizontalAlignment,
+        horizontalOffsetMm,
+      });
+      setTestMessage('Prueba de alineación aceptada por QZ Tray. No se modificaron datos ni entregas.');
+    } catch (testError) {
+      setError(testError instanceof Error ? testError.message : String(testError));
+    } finally {
+      setTestingAlignment(false);
+    }
+  };
+
   const connected = detected && isQZConnected();
   const savedAvailable = !savedPrinter || !detected || printers.includes(savedPrinter);
   const savedSize = savedPrinter && isYichipLabelPrinter(savedPrinter)
     ? resolveLabelSize(savedPrinter)
+    : null;
+  const savedProfile = savedPrinter && isYichipLabelPrinter(savedPrinter)
+    ? resolveLabelPrinterProfile(savedPrinter)
     : null;
 
   return <>
@@ -125,6 +179,7 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
           {savedPrinter ? <>
             <p className="truncate text-xs font-semibold text-[#4a2c0a]" title={savedPrinter}>{savedPrinter}</p>
             {savedSize && <p className="mt-0.5 text-xs font-bold text-[#4a2c0a]">Tamaño: {savedSize.label}</p>}
+            {savedProfile && <p className="text-xs text-[#4a2c0a]">Alineación: {savedProfile.horizontalAlignment === 'left' ? 'Izquierda' : savedProfile.horizontalAlignment === 'center' ? 'Centro' : 'Derecha'} · ajuste {savedProfile.horizontalOffsetMm >= 0 ? '+' : ''}{savedProfile.horizontalOffsetMm.toFixed(1)} mm</p>}
             <p className={`mt-1 flex items-center gap-1 text-xs ${connected && savedAvailable ? 'text-green-700' : 'text-amber-800'}`}>
               {connected && savedAvailable ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
               {connected && savedAvailable ? 'Conectada' : savedAvailable ? 'Pendiente de verificación con QZ Tray' : 'Impresora guardada no disponible'}
@@ -172,6 +227,36 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
                   {size.label}
                 </label>
               ))}
+            </div>
+            <div className="mt-4 border-t border-white/10 pt-3">
+              <p className="text-xs font-bold text-[#ffe6a3]">Alineación del rollo</p>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                {(['left', 'center', 'right'] as LabelHorizontalAlignment[]).map(alignment => (
+                  <label key={alignment} className="flex cursor-pointer items-center gap-1.5 text-xs capitalize text-[#fff8e6]">
+                    <input type="radio" name="commercial-label-alignment" checked={horizontalAlignment === alignment} onChange={() => setHorizontalAlignment(alignment)} className="accent-[#D6A23A]" />
+                    {alignment === 'left' ? 'Izquierda' : alignment === 'center' ? 'Centro' : 'Derecha'}
+                  </label>
+                ))}
+              </div>
+              <label className="mt-3 block text-xs font-bold text-[#ffe6a3]" htmlFor="commercial-label-offset">Ajuste horizontal fino</label>
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  id="commercial-label-offset"
+                  type="number"
+                  min={MIN_LABEL_OFFSET_MM}
+                  max={MAX_LABEL_OFFSET_MM}
+                  step={LABEL_OFFSET_STEP_MM}
+                  value={horizontalOffsetMm}
+                  onChange={event => setHorizontalOffsetMm(Number(event.target.value))}
+                  className="w-full rounded-lg border border-white/20 bg-white px-3 py-2 text-sm text-black"
+                />
+                <span className="text-xs text-[#dbc9a0]">mm</span>
+              </div>
+              <p className="mt-1 text-[11px] text-[#dbc9a0]">Rango: {MIN_LABEL_OFFSET_MM.toFixed(1)} a +{MAX_LABEL_OFFSET_MM.toFixed(1)} mm · pasos de {LABEL_OFFSET_STEP_MM.toFixed(1)} mm</p>
+              <button type="button" onClick={() => void printAlignmentTest()} disabled={testingAlignment || !selectedSizeId} className="mt-3 w-full rounded-lg border border-[#D6A23A] bg-white/10 px-3 py-2 text-xs font-bold text-[#ffe6a3] hover:bg-white/15 disabled:opacity-50">
+                {testingAlignment ? 'Imprimiendo prueba…' : 'Imprimir prueba de alineación'}
+              </button>
+              {testMessage && <p className="mt-2 text-xs text-green-300">{testMessage}</p>}
             </div>
           </fieldset>
         )}

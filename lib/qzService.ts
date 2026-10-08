@@ -16,8 +16,8 @@
  * persistent "Anonymous request" because Vercel served a cached placeholder.
  */
 import qz from 'qz-tray';
-import type { LabelSizeConfig } from './commercialLabelSize';
-import { resolveLabelSize } from './commercialLabelSize';
+import type { ResolvedLabelPrinterProfile } from './commercialLabelSize';
+import { resolveSavedLabelPrinterProfile } from './commercialLabelSize';
 
 // ─── Constants ───────────────────────────────────────────────────────
 
@@ -295,15 +295,21 @@ const getPngBase64 = (dataUrl: string): string => {
  */
 export async function printCommercialDeliveryLabelImages(
   printerName: string,
-  labelSize: LabelSizeConfig,
+  labelConfig: ResolvedLabelPrinterProfile,
   imageDataUrls: string[],
+  requireSavedProfile: boolean,
 ): Promise<void> {
-  if (!printerName || printerName !== getSavedCommercialDeliveryLabelPrinterName()) {
+  if (!printerName || (requireSavedProfile && printerName !== getSavedCommercialDeliveryLabelPrinterName())) {
     throw new Error('La impresora seleccionada no corresponde a la preferencia B2B guardada.');
   }
-  const savedLabelSize = resolveLabelSize(printerName);
-  if (savedLabelSize.id !== labelSize.id) {
-    throw new Error('El tamaño de la etiqueta no corresponde a la preferencia guardada para esta impresora.');
+  const { size: labelSize, profile, placement } = labelConfig;
+  if (requireSavedProfile) {
+    const saved = resolveSavedLabelPrinterProfile(printerName);
+    if (saved.profile.sizeId !== profile.sizeId
+      || saved.profile.horizontalAlignment !== profile.horizontalAlignment
+      || saved.profile.horizontalOffsetMm !== profile.horizontalOffsetMm) {
+      throw new Error('El perfil de la etiqueta no corresponde a la preferencia guardada para esta impresora.');
+    }
   }
   if (imageDataUrls.length === 0) throw new Error('No hay imágenes de etiquetas B2B para imprimir.');
   const pngBase64 = imageDataUrls.map(getPngBase64);
@@ -325,6 +331,8 @@ export async function printCommercialDeliveryLabelImages(
       options: {
         language: 'ESCPOS' as const,
         dotDensity: 'double' as const,
+        x: placement.xPx,
+        y: 0,
       },
     },
     '\x1B\x4A' + String.fromCharCode(gapFeedDots),

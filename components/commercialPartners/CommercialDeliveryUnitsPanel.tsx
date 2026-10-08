@@ -15,7 +15,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { verifyFinancialAccessPassword } from '../../lib/financialAccessPassword';
 import CommercialDeliveryLabelPrinterSettings from './CommercialDeliveryLabelPrinterSettings';
-import { describeLabelPixels, LabelSizeConfig, resolveLabelSize } from '../../lib/commercialLabelSize';
+import { describeLabelPixels, ResolvedLabelPrinterProfile, resolveSavedLabelPrinterProfile } from '../../lib/commercialLabelSize';
 
 interface Props {
   partnerId: string;
@@ -53,7 +53,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
   const [loading, setLoading] = useState(true);
   const [printing, setPrinting] = useState(false);
   const [printerSettingsOpen, setPrinterSettingsOpen] = useState(false);
-  const [preview, setPreview] = useState<{ image: string; size: LabelSizeConfig } | null>(null);
+  const [preview, setPreview] = useState<{ image: string; config: ResolvedLabelPrinterProfile } | null>(null);
   const [adminAction, setAdminAction] = useState<AdminAction>(null);
   const [adminReason, setAdminReason] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
@@ -195,7 +195,8 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
       setPrinterSettingsOpen(true);
       return;
     }
-    const labelSize = resolveLabelSize(printerName);
+    const labelConfig = resolveSavedLabelPrinterProfile(printerName);
+    const labelSize = labelConfig.size;
     const sample = nextPrintBatch[0];
     try {
       const rendered = sample
@@ -211,7 +212,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
           generatedAt: '2026-09-19T12:00:00-06:00',
         }, labelSize);
       setError(null);
-      setPreview({ image: rendered.previewImageDataUrl, size: labelSize });
+      setPreview({ image: rendered.previewImageDataUrl, config: labelConfig });
     } catch (err: any) {
       setError(err.message || 'No se pudo generar la vista previa de la etiqueta.');
     }
@@ -393,8 +394,27 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
     </div>}
     {preview && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPreview(null)}>
       <div className="w-full max-w-[440px] rounded-xl border border-[#c49330] bg-[#fff8e6] p-4 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="font-bold text-[#111111]">Vista previa de etiqueta</h3><p className="text-xs text-[#6b5c40]">{preview.size.label} · {describeLabelPixels(preview.size)} · no imprime ni modifica datos</p></div><button type="button" onClick={() => setPreview(null)} aria-label="Cerrar vista previa" className="text-[#4a2c0a]"><X size={18} /></button></div>
-        <img src={preview.image} width={preview.size.widthPx} height={preview.size.heightPx} alt={`Vista previa de etiqueta B2B ${preview.size.label}`} className="mx-auto block h-auto max-w-full border border-[#c49330] bg-white" />
+        <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="font-bold text-[#111111]">Vista previa de etiqueta</h3><p className="text-xs text-[#6b5c40]">{preview.config.size.label} · {describeLabelPixels(preview.config.size)} · no imprime ni modifica datos</p><p className="text-xs font-semibold text-[#4a2c0a]">Orientación: {preview.config.profile.horizontalAlignment === 'left' ? 'Izquierda' : preview.config.profile.horizontalAlignment === 'center' ? 'Centro' : 'Derecha'} · desplazamiento total: {preview.config.placement.totalOffsetMm >= 0 ? '+' : ''}{preview.config.placement.totalOffsetMm.toFixed(1)} mm</p></div><button type="button" onClick={() => setPreview(null)} aria-label="Cerrar vista previa" className="text-[#4a2c0a]"><X size={18} /></button></div>
+        <div className="relative mx-auto w-full overflow-hidden border-2 border-dashed border-blue-700 bg-blue-50" style={{ aspectRatio: `${preview.config.size.printableWidthPx} / ${preview.config.size.heightPx}` }}>
+          <div className="absolute inset-0 pointer-events-none"><span className="absolute left-1 top-1 z-10 rounded bg-blue-700 px-1 text-[9px] text-white">Ancho imprimible del cabezal</span></div>
+          <div
+            className="absolute top-0 h-full border border-[#c49330] bg-white"
+            style={{
+              left: `${((preview.config.placement.xPx - preview.config.size.sourceCropXPx) / preview.config.size.printableWidthPx) * 100}%`,
+              width: `${(preview.config.size.widthPx / preview.config.size.printableWidthPx) * 100}%`,
+            }}
+          >
+            <img src={preview.image} alt={`Vista previa de etiqueta B2B ${preview.config.size.label}`} className="block h-full w-full" />
+            <div
+              className="pointer-events-none absolute top-0 h-full border-2 border-dotted border-green-700"
+              style={{
+                left: `${(preview.config.size.sourceCropXPx / preview.config.size.widthPx) * 100}%`,
+                width: `${(preview.config.size.printWidthPx / preview.config.size.widthPx) * 100}%`,
+              }}
+            />
+          </div>
+        </div>
+        <div className="mt-2 flex gap-4 text-[10px] text-[#6b5c40]"><span className="text-blue-700">- - Cabezal</span><span className="text-green-700">·· Área segura</span></div>
       </div>
     </div>}
     <div className="rounded-xl border border-[#c49330] bg-[#fff8e6] p-4 flex flex-wrap justify-between gap-3">

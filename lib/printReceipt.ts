@@ -15,8 +15,12 @@ import {
 import {
   describeLabelPixels,
   getContentVerticalOffset,
+  isYichipLabelPrinter,
+  LABEL_SIZE_CATALOG,
+  LabelPrinterProfile,
   LabelSizeConfig,
-  resolveLabelSize,
+  resolveHorizontalPlacement,
+  resolveSavedLabelPrinterProfile,
 } from './commercialLabelSize';
 
 // ─── 58 mm thermal: 32 chars per line at normal font ─────────────────
@@ -521,7 +525,8 @@ export async function printLabelViaQZ(
     throw new Error('La cantidad de etiquetas debe ser un entero mayor que cero.');
   }
 
-  const labelSize = resolveLabelSize(printerName);
+  const labelConfig = resolveSavedLabelPrinterProfile(printerName);
+  const labelSize = labelConfig.size;
   const rendered = renderProductLabel(label, labelSize);
   if (!hasExpectedDimensions(rendered, labelSize)) {
     throw new Error(`No se pudo renderizar la etiqueta de producto en ${describeLabelPixels(labelSize)}.`);
@@ -534,7 +539,7 @@ export async function printLabelViaQZ(
 
   await ensurePrinterAvailable(printerName);
   console.info(TAG, `🏷️ Etiqueta producto × ${images.length} → "${label.barcodeValue}" en "${printerName}"`);
-  await printCommercialDeliveryLabelImages(printerName, labelSize, images);
+  await printCommercialDeliveryLabelImages(printerName, labelConfig, images, true);
   console.info(TAG, `✅ ${images.length} etiqueta(s) de producto enviada(s)`);
 }
 
@@ -601,7 +606,7 @@ const createYichipPrintImage = (canvas: HTMLCanvasElement, labelSize: LabelSizeC
   if (!printContext) throw new Error('El navegador no pudo preparar la imagen física de la etiqueta.');
   printContext.drawImage(
     canvas,
-    labelSize.safeMarginXPx, 0, labelSize.printWidthPx, labelSize.heightPx,
+    labelSize.sourceCropXPx, 0, labelSize.printWidthPx, labelSize.heightPx,
     0, 0, labelSize.printWidthPx, labelSize.heightPx,
   );
   return printCanvas;
@@ -792,7 +797,8 @@ export async function printCommercialDeliveryUnitLabels(labels: CommercialDelive
   if (new Set(labels.map(label => label.unitId)).size !== labels.length) throw new Error('No se puede imprimir una misma unidad más de una vez en el mismo lote.');
   if (new Set(labels.map(label => label.scanCode)).size !== labels.length) throw new Error('Cada etiqueta debe tener un scan_code distinto.');
 
-  const labelSize = resolveLabelSize(printerName);
+  const labelConfig = resolveSavedLabelPrinterProfile(printerName);
+  const labelSize = labelConfig.size;
   const rendered = labels.map(label => renderCommercialDeliveryLabel(label, labelSize));
   if (rendered.length !== labels.length || rendered.some(label =>
     !hasExpectedDimensions(label, labelSize)
@@ -801,7 +807,7 @@ export async function printCommercialDeliveryUnitLabels(labels: CommercialDelive
   }
 
   await ensurePrinterAvailable(printerName);
-  await printCommercialDeliveryLabelImages(printerName, labelSize, rendered.map(label => label.printImageDataUrl));
+  await printCommercialDeliveryLabelImages(printerName, labelConfig, rendered.map(label => label.printImageDataUrl), true);
   return rendered.map(label => label.unitId);
 }
 
@@ -809,7 +815,8 @@ export async function printCommercialDeliveryUnitLabels(labels: CommercialDelive
 export async function printCommercialDeliveryLabelTest(): Promise<void> {
   const printerName = getSavedCommercialDeliveryLabelPrinterName();
   if (!printerName) throw new Error('No hay impresora de etiquetas B2B configurada. Configúrala antes de imprimir la prueba.');
-  const labelSize = resolveLabelSize(printerName);
+  const labelConfig = resolveSavedLabelPrinterProfile(printerName);
+  const labelSize = labelConfig.size;
   const rendered = renderCommercialDeliveryLabel({
     unitId: 'prueba',
     scanCode: '1234567890123456',
@@ -824,7 +831,87 @@ export async function printCommercialDeliveryLabelTest(): Promise<void> {
     throw new Error(`La etiqueta de prueba no tiene las dimensiones requeridas de ${describeLabelPixels(labelSize)}.`);
   }
   await ensurePrinterAvailable(printerName);
-  await printCommercialDeliveryLabelImages(printerName, labelSize, [rendered.printImageDataUrl]);
+  await printCommercialDeliveryLabelImages(printerName, labelConfig, [rendered.printImageDataUrl], true);
+}
+
+const alignmentLabel = (alignment: LabelPrinterProfile['horizontalAlignment']) =>
+  alignment === 'left' ? 'Izquierda' : alignment === 'center' ? 'Centro' : 'Derecha';
+
+/** Prints a calibration-only raster using an unsaved profile and no database state. */
+export async function printCommercialDeliveryAlignmentTest(
+  printerName: string,
+  profile: LabelPrinterProfile,
+): Promise<void> {
+  if (!isYichipLabelPrinter(printerName)) {
+    throw new Error('La prueba de alineación sólo está disponible para la impresora YICHIP de etiquetas.');
+  }
+  const labelSize = LABEL_SIZE_CATALOG[profile.sizeId];
+  const placement = resolveHorizontalPlacement(labelSize, profile);
+  const canvas = document.createElement('canvas');
+  canvas.width = labelSize.widthPx;
+  canvas.height = labelSize.heightPx;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('El navegador no pudo preparar la prueba de alineación.');
+
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = '#000000';
+  context.strokeStyle = '#000000';
+  context.lineWidth = 1;
+  context.textAlign = 'center';
+  context.textBaseline = 'alphabetic';
+  context.save();
+  context.translate(0, getContentVerticalOffset(labelSize));
+
+  const left = labelSize.sourceCropXPx;
+  const right = left + labelSize.printWidthPx - 1;
+  const center = Math.round((left + right) / 2);
+  const top = 4;
+  const bottom = labelSize.contentHeightPx - 5;
+  context.strokeRect(left, top, labelSize.printWidthPx - 1, bottom - top);
+  [left, center, right].forEach(x => {
+    context.beginPath();
+    context.moveTo(x, top);
+    context.lineTo(x, bottom);
+    context.stroke();
+  });
+  const cornerSize = 9;
+  [[left, top], [right, top], [left, bottom], [right, bottom]].forEach(([x, y]) => {
+    context.fillRect(x === right ? x - cornerSize : x, y === bottom ? y - 1 : y, cornerSize, 2);
+    context.fillRect(x === right ? x - 1 : x, y === bottom ? y - cornerSize : y, 2, cornerSize);
+  });
+
+  drawFittedText(context, `Alineación: ${alignmentLabel(profile.horizontalAlignment)}`, 29, { maxFontSize: 15, minFontSize: 11, weight: 700 }, labelSize);
+  const signedOffset = `${profile.horizontalOffsetMm >= 0 ? '+' : ''}${profile.horizontalOffsetMm.toFixed(1)} mm`;
+  drawFittedText(context, `Ajuste: ${signedOffset}`, 48, { maxFontSize: 14, minFontSize: 10, weight: 700 }, labelSize);
+  drawFittedText(context, `Tamaño: ${labelSize.label}`, 66, { maxFontSize: 13, minFontSize: 10 }, labelSize);
+
+  const barcodeCanvas = document.createElement('canvas');
+  JsBarcode(barcodeCanvas, 'ALIGN5030', {
+    format: 'CODE128',
+    displayValue: false,
+    width: 2,
+    height: 72,
+    margin: 0,
+    background: '#ffffff',
+    lineColor: '#000000',
+  });
+  if (barcodeCanvas.width > labelSize.printWidthPx - labelSize.safeMarginXPx * 2) {
+    throw new Error('El código de prueba no cabe dentro del área segura.');
+  }
+  context.drawImage(barcodeCanvas, Math.round((labelSize.widthPx - barcodeCanvas.width) / 2), 86);
+  drawFittedText(context, 'ALINEACIÓN DE CABEZAL', 181, { maxFontSize: 13, minFontSize: 10, weight: 700 }, labelSize);
+  drawFittedText(context, `Total: ${placement.totalOffsetMm >= 0 ? '+' : ''}${placement.totalOffsetMm.toFixed(1)} mm`, 201, { maxFontSize: 12, minFontSize: 9 }, labelSize);
+  context.restore();
+
+  const printCanvas = createYichipPrintImage(canvas, labelSize);
+  await ensurePrinterAvailable(printerName);
+  await printCommercialDeliveryLabelImages(
+    printerName,
+    { profile, size: labelSize, placement },
+    [printCanvas.toDataURL('image/png')],
+    false,
+  );
 }
 
 // ─── Order bag label ─────────────────────────────────────────────────
@@ -975,7 +1062,8 @@ export async function printOrderLabel(label: OrderLabelData): Promise<void> {
     throw new Error('Configura primero la impresora de etiquetas YICHIP en Socios Comerciales.');
   }
 
-  const labelSize = resolveLabelSize(printerName);
+  const labelConfig = resolveSavedLabelPrinterProfile(printerName);
+  const labelSize = labelConfig.size;
   const rendered = renderOrderLabel(label, labelSize);
   if (!hasExpectedDimensions(rendered, labelSize)) {
     throw new Error(`No se pudo renderizar la etiqueta de pedido en ${describeLabelPixels(labelSize)}.`);
@@ -983,7 +1071,7 @@ export async function printOrderLabel(label: OrderLabelData): Promise<void> {
 
   await ensurePrinterAvailable(printerName);
   console.info(TAG, `🏷️ Etiqueta pedido → "${label.customerName}" en la impresora de etiquetas B2B "${printerName}"`);
-  await printCommercialDeliveryLabelImages(printerName, labelSize, [rendered.printImageDataUrl]);
+  await printCommercialDeliveryLabelImages(printerName, labelConfig, [rendered.printImageDataUrl], true);
   console.info(TAG, `✅ Etiqueta de pedido enviada — ${label.customerName}`);
 }
 
@@ -1003,7 +1091,8 @@ export async function printGenericLabelViaQZ(
   if (!Number.isInteger(quantity) || quantity < 1) throw new Error('La cantidad de etiquetas debe ser un entero mayor que cero.');
 
   const name = productName.trim();
-  const labelSize = resolveLabelSize(printerName);
+  const labelConfig = resolveSavedLabelPrinterProfile(printerName);
+  const labelSize = labelConfig.size;
   const canvas = document.createElement('canvas');
   canvas.width = labelSize.widthPx;
   canvas.height = labelSize.heightPx;
@@ -1023,6 +1112,6 @@ export async function printGenericLabelViaQZ(
   const images = Array.from({ length: quantity }, () => printCanvas.toDataURL('image/png'));
   await ensurePrinterAvailable(printerName);
   console.info(TAG, `🏷️ Etiqueta genérica × ${images.length} → "${name}" $${price} en "${printerName}"`);
-  await printCommercialDeliveryLabelImages(printerName, labelSize, images);
+  await printCommercialDeliveryLabelImages(printerName, labelConfig, images, true);
   console.info(TAG, `✅ ${images.length} etiqueta(s) genérica(s) enviada(s) — ${name}`);
 }
