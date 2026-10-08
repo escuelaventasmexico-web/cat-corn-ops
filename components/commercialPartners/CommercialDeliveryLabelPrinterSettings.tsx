@@ -6,6 +6,15 @@ import {
   listPrinters,
   saveCommercialDeliveryLabelPrinterName,
 } from '../../lib/qzService';
+import {
+  DEFAULT_LABEL_SIZE_ID,
+  getSavedLabelSizeId,
+  isYichipLabelPrinter,
+  LABEL_SIZE_CATALOG,
+  LabelSizeId,
+  resolveLabelSize,
+  saveLabelSizeId,
+} from '../../lib/commercialLabelSize';
 
 interface Props {
   open: boolean;
@@ -24,6 +33,11 @@ const qzUnavailableMessage = (error: unknown) => {
 export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenChange, onConfigured }: Props) {
   const [savedPrinter, setSavedPrinter] = useState(() => getSavedCommercialDeliveryLabelPrinterName() || '');
   const [selectedPrinter, setSelectedPrinter] = useState(savedPrinter);
+  const [selectedSizeId, setSelectedSizeId] = useState<LabelSizeId | ''>(() => (
+    savedPrinter && isYichipLabelPrinter(savedPrinter)
+      ? getSavedLabelSizeId(savedPrinter) ?? DEFAULT_LABEL_SIZE_ID
+      : ''
+  ));
   const [printers, setPrinters] = useState<string[]>([]);
   const [detecting, setDetecting] = useState(false);
   const [detected, setDetected] = useState(false);
@@ -56,8 +70,19 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
     const configuredPrinter = getSavedCommercialDeliveryLabelPrinterName() || '';
     setSavedPrinter(configuredPrinter);
     setSelectedPrinter(configuredPrinter);
+    setSelectedSizeId(configuredPrinter && isYichipLabelPrinter(configuredPrinter)
+      ? getSavedLabelSizeId(configuredPrinter) ?? DEFAULT_LABEL_SIZE_ID
+      : '');
     void detectPrinters(configuredPrinter);
   }, [open]);
+
+  const selectPrinter = (printer: string) => {
+    setSelectedPrinter(printer);
+    setSelectedSizeId(isYichipLabelPrinter(printer)
+      ? getSavedLabelSizeId(printer) ?? DEFAULT_LABEL_SIZE_ID
+      : '');
+    setError(null);
+  };
 
   const saveSelection = () => {
     if (!selectedPrinter) {
@@ -72,7 +97,14 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
       setError(`La impresora seleccionada "${selectedPrinter}" ya no está disponible en QZ Tray.`);
       return;
     }
+    if (isYichipLabelPrinter(selectedPrinter) && !selectedSizeId) {
+      setError('Selecciona el tamaño de etiqueta antes de guardar.');
+      return;
+    }
     saveCommercialDeliveryLabelPrinterName(selectedPrinter);
+    if (isYichipLabelPrinter(selectedPrinter)) {
+      saveLabelSizeId(selectedPrinter, selectedSizeId as LabelSizeId);
+    }
     setSavedPrinter(selectedPrinter);
     setError(null);
     onConfigured?.();
@@ -81,6 +113,9 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
 
   const connected = detected && isQZConnected();
   const savedAvailable = !savedPrinter || !detected || printers.includes(savedPrinter);
+  const savedSize = savedPrinter && isYichipLabelPrinter(savedPrinter)
+    ? resolveLabelSize(savedPrinter)
+    : null;
 
   return <>
     <div className="rounded-xl border border-[#c49330] bg-[#fff8e6] p-3">
@@ -89,6 +124,7 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
           <p className="flex items-center gap-2 text-sm font-bold text-[#111111]"><Printer size={16} />Impresora de etiquetas B2B</p>
           {savedPrinter ? <>
             <p className="truncate text-xs font-semibold text-[#4a2c0a]" title={savedPrinter}>{savedPrinter}</p>
+            {savedSize && <p className="mt-0.5 text-xs font-bold text-[#4a2c0a]">Tamaño: {savedSize.label}</p>}
             <p className={`mt-1 flex items-center gap-1 text-xs ${connected && savedAvailable ? 'text-green-700' : 'text-amber-800'}`}>
               {connected && savedAvailable ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
               {connected && savedAvailable ? 'Conectada' : savedAvailable ? 'Pendiente de verificación con QZ Tray' : 'Impresora guardada no disponible'}
@@ -113,13 +149,33 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
         </button>
         {error && <p className="mb-3 rounded-lg border border-red-400/40 bg-red-500/15 p-2 text-xs text-red-200">{error}</p>}
         {printers.length > 0 && <div className="mb-3 max-h-52 space-y-1.5 overflow-y-auto">
-          {printers.map(printer => <button key={printer} type="button" onClick={() => setSelectedPrinter(printer)} className={`w-full rounded-lg border px-3 py-2 text-left text-xs ${selectedPrinter === printer ? 'border-[#D6A23A] bg-[#D6A23A]/20 font-bold text-[#ffe6a3]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
+          {printers.map(printer => <button key={printer} type="button" onClick={() => selectPrinter(printer)} className={`w-full rounded-lg border px-3 py-2 text-left text-xs ${selectedPrinter === printer ? 'border-[#D6A23A] bg-[#D6A23A]/20 font-bold text-[#ffe6a3]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
             {printer}{selectedPrinter === printer ? ' ✓' : ''}
           </button>)}
         </div>}
         {!detecting && detected && printers.length === 0 && <p className="mb-3 text-xs text-amber-200">QZ Tray está conectado, pero no encontró impresoras disponibles.</p>}
         <p className="text-xs text-[#dbc9a0]">Selección: <strong className="text-[#ffe6a3]">{selectedPrinter || 'Ninguna'}</strong></p>
-        <button type="button" onClick={saveSelection} disabled={!selectedPrinter} className="mt-4 w-full rounded-lg bg-[#D6A23A] px-4 py-2 text-sm font-bold text-[#2d1a00] hover:bg-[#e6b24a] disabled:opacity-50">Guardar</button>
+        {isYichipLabelPrinter(selectedPrinter) && (
+          <fieldset className="mt-4 rounded-lg border border-[#c49330]/50 bg-white/5 p-3">
+            <legend className="px-1 text-xs font-bold text-[#ffe6a3]">Tamaño de etiqueta</legend>
+            <div className="mt-1 space-y-2">
+              {(Object.values(LABEL_SIZE_CATALOG) as Array<(typeof LABEL_SIZE_CATALOG)[LabelSizeId]>).map(size => (
+                <label key={size.id} className="flex cursor-pointer items-center gap-2 text-sm text-[#fff8e6]">
+                  <input
+                    type="radio"
+                    name="commercial-label-size"
+                    value={size.id}
+                    checked={selectedSizeId === size.id}
+                    onChange={() => setSelectedSizeId(size.id)}
+                    className="accent-[#D6A23A]"
+                  />
+                  {size.label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
+        <button type="button" onClick={saveSelection} disabled={!selectedPrinter || (isYichipLabelPrinter(selectedPrinter) && !selectedSizeId)} className="mt-4 w-full rounded-lg bg-[#D6A23A] px-4 py-2 text-sm font-bold text-[#2d1a00] hover:bg-[#e6b24a] disabled:opacity-50">Guardar</button>
       </div>
     </div>}
   </>;

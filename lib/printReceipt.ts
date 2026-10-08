@@ -6,13 +6,18 @@ import type { ReceiptData } from '../components/TicketReceipt';
 import JsBarcode from 'jsbarcode';
 import { resolveCommercialDeliveryLabelDates } from './commercialDeliveryLabelDate';
 import {
-  COMMERCIAL_DELIVERY_LABEL_CALIBRATION,
   ensurePrinterAvailable,
   getSavedCommercialDeliveryLabelPrinterName,
   getSavedPrinterName,
   printCommercialDeliveryLabelImages,
   printRaw,
 } from './qzService';
+import {
+  describeLabelPixels,
+  getContentVerticalOffset,
+  LabelSizeConfig,
+  resolveLabelSize,
+} from './commercialLabelSize';
 
 // ─── 58 mm thermal: 32 chars per line at normal font ─────────────────
 const LINE_W = 32;
@@ -497,10 +502,10 @@ export function buildLabelCommands(label: LabelPrintData): string[] {
 }
 
 /**
- * Print product labels via QZ Tray ESC/POS.
+ * Print product labels through QZ Tray's PNG-to-ESC/POS RAW conversion.
  *
  * Sends `quantity` identical labels to the configured thermal printer.
- * Uses native ESC/POS CODE128 barcode commands — no image rendering.
+ * Renders CODE128 into the same raster pipeline used by B2B labels.
  *
  * @throws if no printer configured or QZ Tray is not running
  */
@@ -516,30 +521,37 @@ export async function printLabelViaQZ(
     throw new Error('La cantidad de etiquetas debe ser un entero mayor que cero.');
   }
 
-  const rendered = renderProductLabel(label);
-  if (rendered.previewWidth !== LABEL_WIDTH || rendered.previewHeight !== LABEL_HEIGHT
-    || rendered.printWidth !== LABEL_PRINT_WIDTH || rendered.printHeight !== LABEL_HEIGHT) {
-    throw new Error('No se pudo renderizar la etiqueta de producto en 400 × 240 px y 384 × 240 px.');
+  const labelSize = resolveLabelSize(printerName);
+  const rendered = renderProductLabel(label, labelSize);
+  if (!hasExpectedDimensions(rendered, labelSize)) {
+    throw new Error(`No se pudo renderizar la etiqueta de producto en ${describeLabelPixels(labelSize)}.`);
   }
 
   // One entry per requested copy: QZ converts every PNG independently and
-  // applies the calibrated 24-dot feed after each image, including the last.
+  // applies the catalogued gap feed after each image, including the last.
   const images = Array.from({ length: quantity }, () => rendered.printImageDataUrl);
   if (images.length !== quantity) throw new Error('No se pudo preparar la cantidad solicitada de etiquetas.');
 
   await ensurePrinterAvailable(printerName);
   console.info(TAG, `🏷️ Etiqueta producto × ${images.length} → "${label.barcodeValue}" en "${printerName}"`);
-  await printCommercialDeliveryLabelImages(printerName, images);
+  await printCommercialDeliveryLabelImages(printerName, labelSize, images);
   console.info(TAG, `✅ ${images.length} etiqueta(s) de producto enviada(s)`);
 }
 
 const SCAN_CODE_PATTERN = /^\d{16}$/;
-const LABEL_WIDTH = COMMERCIAL_DELIVERY_LABEL_CALIBRATION.pixelWidth;
-const LABEL_HEIGHT = COMMERCIAL_DELIVERY_LABEL_CALIBRATION.pixelHeight;
-// The physical roll is 400 × 240 dots. Keep every printed element inside the
-// centered 384-dot printable area, leaving eight dots clear on each side.
-const LABEL_SAFE_MARGIN = 8;
-const LABEL_PRINT_WIDTH = LABEL_WIDTH - LABEL_SAFE_MARGIN * 2;
+
+type RenderedLabelDimensions = {
+  previewWidth: number;
+  previewHeight: number;
+  printWidth: number;
+  printHeight: number;
+};
+
+const hasExpectedDimensions = (rendered: RenderedLabelDimensions, labelSize: LabelSizeConfig) =>
+  rendered.previewWidth === labelSize.widthPx
+  && rendered.previewHeight === labelSize.heightPx
+  && rendered.printWidth === labelSize.printWidthPx
+  && rendered.printHeight === labelSize.heightPx;
 
 const truncateToWidth = (context: CanvasRenderingContext2D, value: string, maxWidth: number) => {
   if (context.measureText(value).width <= maxWidth) return value;
@@ -556,15 +568,16 @@ const drawFittedText = (
   value: string,
   y: number,
   options: { maxWidth?: number; maxFontSize: number; minFontSize: number; weight?: number },
+  labelSize: LabelSizeConfig,
 ) => {
-  const maxWidth = options.maxWidth ?? LABEL_WIDTH - LABEL_SAFE_MARGIN * 2;
+  const maxWidth = options.maxWidth ?? labelSize.printWidthPx;
   let size = options.maxFontSize;
   do {
     context.font = `${options.weight ?? 400} ${size}px Arial, sans-serif`;
     if (context.measureText(value).width <= maxWidth || size === options.minFontSize) break;
     size -= 1;
   } while (size > options.minFontSize);
-  context.fillText(truncateToWidth(context, value, maxWidth), LABEL_WIDTH / 2, y);
+  context.fillText(truncateToWidth(context, value, maxWidth), labelSize.widthPx / 2, y);
 };
 
 const formatScanCode = (scanCode: string) => scanCode.replace(/(\d{4})(?=\d)/g, '$1 ');
@@ -576,20 +589,20 @@ const formatDeliveryDate = (date: string) => {
 };
 
 /**
- * Removes only the blank eight-dot gutters from a 400 × 240 logical label.
- * The resulting 384 × 240 PNG keeps its original 1:1 dot geometry for the
+ * Removes only the blank side gutters from the logical label.
+ * The resulting PNG keeps its original 1:1 dot geometry for the
  * YICHIP RAW-image path; it is never scaled or otherwise transformed.
  */
-const createYichipPrintImage = (canvas: HTMLCanvasElement): HTMLCanvasElement => {
+const createYichipPrintImage = (canvas: HTMLCanvasElement, labelSize: LabelSizeConfig): HTMLCanvasElement => {
   const printCanvas = document.createElement('canvas');
-  printCanvas.width = LABEL_PRINT_WIDTH;
-  printCanvas.height = LABEL_HEIGHT;
+  printCanvas.width = labelSize.printWidthPx;
+  printCanvas.height = labelSize.heightPx;
   const printContext = printCanvas.getContext('2d');
   if (!printContext) throw new Error('El navegador no pudo preparar la imagen física de la etiqueta.');
   printContext.drawImage(
     canvas,
-    LABEL_SAFE_MARGIN, 0, LABEL_PRINT_WIDTH, LABEL_HEIGHT,
-    0, 0, LABEL_PRINT_WIDTH, LABEL_HEIGHT,
+    labelSize.safeMarginXPx, 0, labelSize.printWidthPx, labelSize.heightPx,
+    0, 0, labelSize.printWidthPx, labelSize.heightPx,
   );
   return printCanvas;
 };
@@ -606,13 +619,14 @@ const drawFullBarcodeValue = (
   context: CanvasRenderingContext2D,
   value: string,
   y: number,
+  labelSize: LabelSizeConfig,
 ) => {
   let fontSize = 18;
-  const maxWidth = LABEL_PRINT_WIDTH - 16;
+  const maxWidth = labelSize.printWidthPx - 16;
   while (fontSize >= 11) {
     context.font = `600 ${fontSize}px Arial, sans-serif`;
     if (context.measureText(value).width <= maxWidth) {
-      context.fillText(value, LABEL_WIDTH / 2, y);
+      context.fillText(value, labelSize.widthPx / 2, y);
       return;
     }
     fontSize -= 1;
@@ -622,25 +636,27 @@ const drawFullBarcodeValue = (
 
 /**
  * Renders the product label used exclusively by Imprimir Etiquetas.
- * Its 400 × 240 logical canvas deliberately leaves eight blank dots on each
- * side; only that blank gutter is cropped for the 384 × 240 YICHIP image.
+ * Its logical canvas leaves the catalogued blank dots on each side; only that
+ * blank gutter is cropped for the YICHIP image.
  */
-export function renderProductLabel(label: LabelPrintData): RenderedProductLabel {
+export function renderProductLabel(label: LabelPrintData, labelSize: LabelSizeConfig): RenderedProductLabel {
   const barcodeValue = label.barcodeValue.trim();
   if (!barcodeValue) throw new Error('El producto no tiene un código de barras para imprimir.');
   if (!Number.isFinite(label.price)) throw new Error('El producto no tiene un precio de venta válido para imprimir.');
 
   const canvas = document.createElement('canvas');
-  canvas.width = LABEL_WIDTH;
-  canvas.height = LABEL_HEIGHT;
+  canvas.width = labelSize.widthPx;
+  canvas.height = labelSize.heightPx;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('El navegador no pudo preparar el lienzo de la etiqueta.');
 
   context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, LABEL_WIDTH, LABEL_HEIGHT);
+  context.fillRect(0, 0, labelSize.widthPx, labelSize.heightPx);
   context.fillStyle = '#000000';
   context.textAlign = 'center';
   context.textBaseline = 'alphabetic';
+  context.save();
+  context.translate(0, getContentVerticalOffset(labelSize));
 
   // Price: the same products.price value selected by PrintLabels.
   const price = `$${label.price.toFixed(2)}`;
@@ -648,7 +664,7 @@ export function renderProductLabel(label: LabelPrintData): RenderedProductLabel 
     maxFontSize: 48,
     minFontSize: 32,
     weight: 700,
-  });
+  }, labelSize);
 
   const barcodeCanvas = document.createElement('canvas');
   JsBarcode(barcodeCanvas, barcodeValue, {
@@ -662,16 +678,17 @@ export function renderProductLabel(label: LabelPrintData): RenderedProductLabel 
     background: '#ffffff',
     lineColor: '#000000',
   });
-  if (barcodeCanvas.width > LABEL_PRINT_WIDTH - 16 || barcodeCanvas.height > 112) {
+  if (barcodeCanvas.width > labelSize.printWidthPx - 16 || barcodeCanvas.height > 112) {
     throw new Error('El código de barras no cabe completo en el área segura de la etiqueta.');
   }
 
-  context.drawImage(barcodeCanvas, Math.round((LABEL_WIDTH - barcodeCanvas.width) / 2), 66);
+  context.drawImage(barcodeCanvas, Math.round((labelSize.widthPx - barcodeCanvas.width) / 2), 66);
   // The legacy label showed its HRI value below the bars. Keep that exact
   // barcode value readable; it is never regenerated or reformatted.
-  drawFullBarcodeValue(context, barcodeValue, 211);
+  drawFullBarcodeValue(context, barcodeValue, 211, labelSize);
+  context.restore();
 
-  const printCanvas = createYichipPrintImage(canvas);
+  const printCanvas = createYichipPrintImage(canvas, labelSize);
   return {
     previewWidth: canvas.width,
     previewHeight: canvas.height,
@@ -691,8 +708,11 @@ export interface RenderedCommercialDeliveryLabel {
   printImageDataUrl: string;
 }
 
-/** Renders the complete 50 × 30 mm label as one monochrome 400 × 240 page. */
-export function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData): RenderedCommercialDeliveryLabel {
+/** Renders one complete B2B label using the resolved physical label size. */
+export function renderCommercialDeliveryLabel(
+  label: CommercialDeliveryLabelData,
+  labelSize: LabelSizeConfig,
+): RenderedCommercialDeliveryLabel {
   const scanCode = label.scanCode?.trim() ?? '';
   if (!SCAN_CODE_PATTERN.test(scanCode)) {
     throw new Error(`La etiqueta ${label.unitId} no tiene un scan_code válido de 16 dígitos.`);
@@ -702,29 +722,31 @@ export function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData
   }
 
   const canvas = document.createElement('canvas');
-  canvas.width = LABEL_WIDTH;
-  canvas.height = LABEL_HEIGHT;
+  canvas.width = labelSize.widthPx;
+  canvas.height = labelSize.heightPx;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('El navegador no pudo preparar el lienzo de la etiqueta.');
 
   context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, LABEL_WIDTH, LABEL_HEIGHT);
+  context.fillRect(0, 0, labelSize.widthPx, labelSize.heightPx);
   context.fillStyle = '#000000';
   context.textAlign = 'center';
   context.textBaseline = 'alphabetic';
   const labelDates = resolveCommercialDeliveryLabelDates(label);
+  context.save();
+  context.translate(0, getContentVerticalOffset(labelSize));
 
-  drawFittedText(context, `CAT CORN · ${label.sourceLabel.toUpperCase()}`, 26, { maxWidth: 280, maxFontSize: 18, minFontSize: 13, weight: 700 });
+  drawFittedText(context, `CAT CORN · ${label.sourceLabel.toUpperCase()}`, 26, { maxWidth: 280, maxFontSize: 18, minFontSize: 13, weight: 700 }, labelSize);
   context.strokeStyle = '#000000';
   context.lineWidth = 1;
   context.strokeRect(342, 7, 42, 31);
   context.font = '700 22px Arial, sans-serif';
   context.fillText(labelDates.expirationDay, 363, 30);
-  drawFittedText(context, 'SOCIOS COMERCIALES', 49, { maxFontSize: 16, minFontSize: 11, weight: 700 });
-  drawFittedText(context, label.productName.trim(), 69, { maxFontSize: 14, minFontSize: 10, weight: 600 });
+  drawFittedText(context, 'SOCIOS COMERCIALES', 49, { maxFontSize: 16, minFontSize: 11, weight: 700 }, labelSize);
+  drawFittedText(context, label.productName.trim(), 69, { maxFontSize: 14, minFontSize: 10, weight: 600 }, labelSize);
   const presentation = [label.variant, label.size].filter(Boolean).join(' · ') || 'Presentación no especificada';
-  drawFittedText(context, presentation, 86, { maxFontSize: 12, minFontSize: 9 });
-  drawFittedText(context, labelDates.elaborationDate, 103, { maxFontSize: 11, minFontSize: 9 });
+  drawFittedText(context, presentation, 86, { maxFontSize: 12, minFontSize: 9 }, labelSize);
+  drawFittedText(context, labelDates.elaborationDate, 103, { maxFontSize: 11, minFontSize: 9 }, labelSize);
 
   const barcodeCanvas = document.createElement('canvas');
   JsBarcode(barcodeCanvas, scanCode, {
@@ -738,15 +760,15 @@ export function renderCommercialDeliveryLabel(label: CommercialDeliveryLabelData
     background: '#ffffff',
     lineColor: '#000000',
   });
-  if (barcodeCanvas.width > LABEL_PRINT_WIDTH || barcodeCanvas.height > 76) {
-    throw new Error(`El CODE128 de la etiqueta ${label.unitId} no cabe en el área segura de 48 × 30 mm.`);
+  if (barcodeCanvas.width > labelSize.printWidthPx || barcodeCanvas.height > 76) {
+    throw new Error(`El CODE128 de la etiqueta ${label.unitId} no cabe en el área segura de ${labelSize.label}.`);
   }
-  context.drawImage(barcodeCanvas, Math.round((LABEL_WIDTH - barcodeCanvas.width) / 2), 110);
-  drawFittedText(context, formatScanCode(scanCode), 207, { maxFontSize: 16, minFontSize: 13, weight: 700 });
+  context.drawImage(barcodeCanvas, Math.round((labelSize.widthPx - barcodeCanvas.width) / 2), 110);
+  drawFittedText(context, formatScanCode(scanCode), 207, { maxFontSize: 16, minFontSize: 13, weight: 700 }, labelSize);
+  context.restore();
 
-  // YICHIP prints 384 dots across. This crops only the intentionally blank
-  // eight-pixel gutters and preserves the 1:1 dot geometry of the 400 px view.
-  const printCanvas = createYichipPrintImage(canvas);
+  // Crop only the catalogued blank gutters and preserve 1:1 dot geometry.
+  const printCanvas = createYichipPrintImage(canvas, labelSize);
 
   return {
     unitId: label.unitId,
@@ -770,16 +792,16 @@ export async function printCommercialDeliveryUnitLabels(labels: CommercialDelive
   if (new Set(labels.map(label => label.unitId)).size !== labels.length) throw new Error('No se puede imprimir una misma unidad más de una vez en el mismo lote.');
   if (new Set(labels.map(label => label.scanCode)).size !== labels.length) throw new Error('Cada etiqueta debe tener un scan_code distinto.');
 
-  const rendered = labels.map(renderCommercialDeliveryLabel);
+  const labelSize = resolveLabelSize(printerName);
+  const rendered = labels.map(label => renderCommercialDeliveryLabel(label, labelSize));
   if (rendered.length !== labels.length || rendered.some(label =>
-    label.previewWidth !== LABEL_WIDTH || label.previewHeight !== LABEL_HEIGHT
-    || label.printWidth !== LABEL_PRINT_WIDTH || label.printHeight !== LABEL_HEIGHT
+    !hasExpectedDimensions(label, labelSize)
   )) {
-    throw new Error('No se pudo renderizar una vista previa de 400 × 240 px y una imagen física de 384 × 240 px para cada etiqueta seleccionada.');
+    throw new Error(`No se pudo renderizar cada etiqueta seleccionada en ${describeLabelPixels(labelSize)}.`);
   }
 
   await ensurePrinterAvailable(printerName);
-  await printCommercialDeliveryLabelImages(printerName, rendered.map(label => label.printImageDataUrl));
+  await printCommercialDeliveryLabelImages(printerName, labelSize, rendered.map(label => label.printImageDataUrl));
   return rendered.map(label => label.unitId);
 }
 
@@ -787,22 +809,22 @@ export async function printCommercialDeliveryUnitLabels(labels: CommercialDelive
 export async function printCommercialDeliveryLabelTest(): Promise<void> {
   const printerName = getSavedCommercialDeliveryLabelPrinterName();
   if (!printerName) throw new Error('No hay impresora de etiquetas B2B configurada. Configúrala antes de imprimir la prueba.');
+  const labelSize = resolveLabelSize(printerName);
   const rendered = renderCommercialDeliveryLabel({
     unitId: 'prueba',
     scanCode: '1234567890123456',
     partnerName: 'PRUEBA DE CALIBRACIÓN',
-    productName: 'ETIQUETA DE PRUEBA',
-    variant: '50 × 30 mm',
-    size: '400 × 240 px',
-    sourceLabel: 'COMODATO',
+    productName: printerName,
+    variant: labelSize.label,
+    size: describeLabelPixels(labelSize),
+    sourceLabel: 'PRUEBA',
     generatedAt: '2026-09-19T12:00:00-06:00',
-  });
-  if (rendered.previewWidth !== LABEL_WIDTH || rendered.previewHeight !== LABEL_HEIGHT
-    || rendered.printWidth !== LABEL_PRINT_WIDTH || rendered.printHeight !== LABEL_HEIGHT) {
-    throw new Error('La etiqueta de prueba no tiene las dimensiones requeridas de 400 × 240 y 384 × 240 px.');
+  }, labelSize);
+  if (!hasExpectedDimensions(rendered, labelSize)) {
+    throw new Error(`La etiqueta de prueba no tiene las dimensiones requeridas de ${describeLabelPixels(labelSize)}.`);
   }
   await ensurePrinterAvailable(printerName);
-  await printCommercialDeliveryLabelImages(printerName, [rendered.printImageDataUrl]);
+  await printCommercialDeliveryLabelImages(printerName, labelSize, [rendered.printImageDataUrl]);
 }
 
 // ─── Order bag label ─────────────────────────────────────────────────
@@ -858,38 +880,44 @@ const drawOrderLabelText = (
   value: string,
   y: number,
   options: { maxWidth: number; fontSize: number; lineHeight: number; weight?: number },
+  labelSize: LabelSizeConfig,
 ) => {
   context.font = `${options.weight ?? 400} ${options.fontSize}px Arial, sans-serif`;
   const lines = orderLabelLines(context, value, options.maxWidth);
-  lines.forEach((line, index) => context.fillText(line, LABEL_WIDTH / 2, y + index * options.lineHeight));
+  lines.forEach((line, index) => context.fillText(line, labelSize.widthPx / 2, y + index * options.lineHeight));
   return lines.length;
 };
 
 /**
- * Renders the selected order only as a 50 × 30 mm bag label. Unlike the B2B
+ * Renders the selected order using the resolved bag-label size. Unlike the B2B
  * delivery label it contains no barcode and has no database side effects.
  */
-export function renderOrderLabel(label: OrderLabelData): RenderedCommercialDeliveryLabel {
+export function renderOrderLabel(
+  label: OrderLabelData,
+  labelSize: LabelSizeConfig,
+): RenderedCommercialDeliveryLabel {
   const customerName = label.customerName.trim().toUpperCase();
   if (!customerName) throw new Error('No hay nombre de cliente para imprimir la etiqueta.');
 
   const canvas = document.createElement('canvas');
-  canvas.width = LABEL_WIDTH;
-  canvas.height = LABEL_HEIGHT;
+  canvas.width = labelSize.widthPx;
+  canvas.height = labelSize.heightPx;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('El navegador no pudo preparar el lienzo de la etiqueta.');
 
   context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, LABEL_WIDTH, LABEL_HEIGHT);
+  context.fillRect(0, 0, labelSize.widthPx, labelSize.heightPx);
   context.fillStyle = '#000000';
   context.textAlign = 'center';
   context.textBaseline = 'alphabetic';
+  context.save();
+  context.translate(0, getContentVerticalOffset(labelSize));
 
-  const contentWidth = LABEL_PRINT_WIDTH;
+  const contentWidth = labelSize.printWidthPx;
   context.font = '700 15px Arial, sans-serif';
-  context.fillText('PEDIDO', LABEL_WIDTH / 2, 19);
+  context.fillText('PEDIDO', labelSize.widthPx / 2, 19);
   context.font = '400 9px Arial, sans-serif';
-  context.fillText('CLIENTE', LABEL_WIDTH / 2, 33);
+  context.fillText('CLIENTE', labelSize.widthPx / 2, 33);
 
   let y = 57;
   const customerLines = drawOrderLabelText(context, customerName, y, {
@@ -897,9 +925,9 @@ export function renderOrderLabel(label: OrderLabelData): RenderedCommercialDeliv
     fontSize: 22,
     lineHeight: 23,
     weight: 700,
-  });
+  }, labelSize);
   y += Math.max(customerLines, 1) * 23 + 6;
-  context.fillRect(LABEL_SAFE_MARGIN, y, LABEL_PRINT_WIDTH, 1);
+  context.fillRect(labelSize.safeMarginXPx, y, labelSize.printWidthPx, 1);
   y += 16;
 
   const productLines = drawOrderLabelText(context, label.productName.trim() || 'Producto no especificado', y, {
@@ -907,27 +935,28 @@ export function renderOrderLabel(label: OrderLabelData): RenderedCommercialDeliv
     fontSize: 14,
     lineHeight: 16,
     weight: 700,
-  });
+  }, labelSize);
   y += Math.max(productLines, 1) * 16 + 13;
 
   const deliveryDate = label.deliveryDate?.trim() ? formatDeliveryDate(label.deliveryDate) : '—';
   context.font = '700 12px Arial, sans-serif';
-  context.fillText(`CANTIDAD: ${label.quantity}   ·   ENTREGA: ${deliveryDate}`, LABEL_WIDTH / 2, y);
+  context.fillText(`CANTIDAD: ${label.quantity}   ·   ENTREGA: ${deliveryDate}`, labelSize.widthPx / 2, y);
   y += 16;
 
   const notes = label.notes?.trim();
   if (notes) {
     context.font = '700 10px Arial, sans-serif';
-    context.fillText('NOTAS / SABOR', LABEL_WIDTH / 2, y);
+    context.fillText('NOTAS / SABOR', labelSize.widthPx / 2, y);
     y += 13;
     drawOrderLabelText(context, notes, y, {
       maxWidth: contentWidth,
       fontSize: 10,
       lineHeight: 12,
-    });
+    }, labelSize);
   }
+  context.restore();
 
-  const printCanvas = createYichipPrintImage(canvas);
+  const printCanvas = createYichipPrintImage(canvas, labelSize);
   return {
     unitId: 'pedido',
     previewWidth: canvas.width,
@@ -946,15 +975,15 @@ export async function printOrderLabel(label: OrderLabelData): Promise<void> {
     throw new Error('Configura primero la impresora de etiquetas YICHIP en Socios Comerciales.');
   }
 
-  const rendered = renderOrderLabel(label);
-  if (rendered.previewWidth !== LABEL_WIDTH || rendered.previewHeight !== LABEL_HEIGHT
-    || rendered.printWidth !== LABEL_PRINT_WIDTH || rendered.printHeight !== LABEL_HEIGHT) {
-    throw new Error('No se pudo renderizar la etiqueta de pedido en 400 × 240 px y 384 × 240 px.');
+  const labelSize = resolveLabelSize(printerName);
+  const rendered = renderOrderLabel(label, labelSize);
+  if (!hasExpectedDimensions(rendered, labelSize)) {
+    throw new Error(`No se pudo renderizar la etiqueta de pedido en ${describeLabelPixels(labelSize)}.`);
   }
 
   await ensurePrinterAvailable(printerName);
   console.info(TAG, `🏷️ Etiqueta pedido → "${label.customerName}" en la impresora de etiquetas B2B "${printerName}"`);
-  await printCommercialDeliveryLabelImages(printerName, [rendered.printImageDataUrl]);
+  await printCommercialDeliveryLabelImages(printerName, labelSize, [rendered.printImageDataUrl]);
   console.info(TAG, `✅ Etiqueta de pedido enviada — ${label.customerName}`);
 }
 
@@ -974,22 +1003,26 @@ export async function printGenericLabelViaQZ(
   if (!Number.isInteger(quantity) || quantity < 1) throw new Error('La cantidad de etiquetas debe ser un entero mayor que cero.');
 
   const name = productName.trim();
+  const labelSize = resolveLabelSize(printerName);
   const canvas = document.createElement('canvas');
-  canvas.width = LABEL_WIDTH;
-  canvas.height = LABEL_HEIGHT;
+  canvas.width = labelSize.widthPx;
+  canvas.height = labelSize.heightPx;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('El navegador no pudo preparar el lienzo de la etiqueta.');
   context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, LABEL_WIDTH, LABEL_HEIGHT);
+  context.fillRect(0, 0, labelSize.widthPx, labelSize.heightPx);
   context.fillStyle = '#000000';
   context.textAlign = 'center';
   context.textBaseline = 'alphabetic';
-  drawFittedText(context, `$${price.toFixed(2)}`, 134, { maxFontSize: 60, minFontSize: 36, weight: 700 });
+  context.save();
+  context.translate(0, getContentVerticalOffset(labelSize));
+  drawFittedText(context, `$${price.toFixed(2)}`, 134, { maxFontSize: 60, minFontSize: 36, weight: 700 }, labelSize);
+  context.restore();
 
-  const printCanvas = createYichipPrintImage(canvas);
+  const printCanvas = createYichipPrintImage(canvas, labelSize);
   const images = Array.from({ length: quantity }, () => printCanvas.toDataURL('image/png'));
   await ensurePrinterAvailable(printerName);
   console.info(TAG, `🏷️ Etiqueta genérica × ${images.length} → "${name}" $${price} en "${printerName}"`);
-  await printCommercialDeliveryLabelImages(printerName, images);
+  await printCommercialDeliveryLabelImages(printerName, labelSize, images);
   console.info(TAG, `✅ ${images.length} etiqueta(s) genérica(s) enviada(s) — ${name}`);
 }

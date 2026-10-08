@@ -15,6 +15,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { verifyFinancialAccessPassword } from '../../lib/financialAccessPassword';
 import CommercialDeliveryLabelPrinterSettings from './CommercialDeliveryLabelPrinterSettings';
+import { describeLabelPixels, LabelSizeConfig, resolveLabelSize } from '../../lib/commercialLabelSize';
 
 interface Props {
   partnerId: string;
@@ -52,7 +53,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
   const [loading, setLoading] = useState(true);
   const [printing, setPrinting] = useState(false);
   const [printerSettingsOpen, setPrinterSettingsOpen] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ image: string; size: LabelSizeConfig } | null>(null);
   const [adminAction, setAdminAction] = useState<AdminAction>(null);
   const [adminReason, setAdminReason] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
@@ -188,22 +189,29 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
   };
 
   const openLabelPreview = () => {
+    const printerName = getSavedCommercialDeliveryLabelPrinterName();
+    if (!printerName) {
+      setError('Configura una impresora de etiquetas B2B antes de generar la vista previa.');
+      setPrinterSettingsOpen(true);
+      return;
+    }
+    const labelSize = resolveLabelSize(printerName);
     const sample = nextPrintBatch[0];
     try {
       const rendered = sample
-        ? renderCommercialDeliveryLabel(labelData(sample))
+        ? renderCommercialDeliveryLabel(labelData(sample), labelSize)
         : renderCommercialDeliveryLabel({
           unitId: 'vista-previa',
           scanCode: '1234567890123456',
           partnerName: 'SOCIO DE PRUEBA',
           productName: 'ETIQUETA DE PRUEBA',
-          variant: '50 × 30 mm',
-          size: '400 × 240 px',
+          variant: labelSize.label,
+          size: describeLabelPixels(labelSize),
           sourceLabel: 'COMODATO',
           generatedAt: '2026-09-19T12:00:00-06:00',
-        });
+        }, labelSize);
       setError(null);
-      setPreviewImage(rendered.previewImageDataUrl);
+      setPreview({ image: rendered.previewImageDataUrl, size: labelSize });
     } catch (err: any) {
       setError(err.message || 'No se pudo generar la vista previa de la etiqueta.');
     }
@@ -366,7 +374,10 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
     <CommercialDeliveryLabelPrinterSettings
       open={printerSettingsOpen}
       onOpenChange={setPrinterSettingsOpen}
-      onConfigured={() => setError(null)}
+      onConfigured={() => {
+        setError(null);
+        setPreview(null);
+      }}
     />
     {adminAction && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => !adminProcessing && closeAdminAction()}>
       <div className="w-full max-w-lg rounded-xl border border-red-300 bg-white p-5 shadow-2xl" onClick={event => event.stopPropagation()}>
@@ -380,10 +391,10 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
         <button type="button" disabled={adminProcessing || !adminConfirmed || adminReason.trim().length < 10 || !adminPassword} onClick={() => void runAdminAction()} className={`mt-4 w-full rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-50 ${adminAction.kind === 'release' ? 'bg-amber-700 hover:bg-amber-800' : 'bg-red-700 hover:bg-red-800'}`}>{adminProcessing ? 'Procesando…' : adminAction.kind === 'release' ? 'Confirmar liberación administrativa' : 'Cancelar entrega'}</button>
       </div>
     </div>}
-    {previewImage && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPreviewImage(null)}>
+    {preview && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPreview(null)}>
       <div className="w-full max-w-[440px] rounded-xl border border-[#c49330] bg-[#fff8e6] p-4 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="font-bold text-[#111111]">Vista previa de etiqueta</h3><p className="text-xs text-[#6b5c40]">400 × 240 px · no imprime ni modifica datos</p></div><button type="button" onClick={() => setPreviewImage(null)} aria-label="Cerrar vista previa" className="text-[#4a2c0a]"><X size={18} /></button></div>
-        <img src={previewImage} width={400} height={240} alt="Vista previa de etiqueta B2B" className="mx-auto block h-auto max-w-full border border-[#c49330] bg-white" />
+        <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="font-bold text-[#111111]">Vista previa de etiqueta</h3><p className="text-xs text-[#6b5c40]">{preview.size.label} · {describeLabelPixels(preview.size)} · no imprime ni modifica datos</p></div><button type="button" onClick={() => setPreview(null)} aria-label="Cerrar vista previa" className="text-[#4a2c0a]"><X size={18} /></button></div>
+        <img src={preview.image} width={preview.size.widthPx} height={preview.size.heightPx} alt={`Vista previa de etiqueta B2B ${preview.size.label}`} className="mx-auto block h-auto max-w-full border border-[#c49330] bg-white" />
       </div>
     </div>}
     <div className="rounded-xl border border-[#c49330] bg-[#fff8e6] p-4 flex flex-wrap justify-between gap-3">

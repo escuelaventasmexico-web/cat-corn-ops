@@ -16,29 +16,14 @@
  * persistent "Anonymous request" because Vercel served a cached placeholder.
  */
 import qz from 'qz-tray';
+import type { LabelSizeConfig } from './commercialLabelSize';
+import { resolveLabelSize } from './commercialLabelSize';
 
 // ─── Constants ───────────────────────────────────────────────────────
 
 const TAG = '[QZ]';
 const PRINTER_KEY = 'catcorn_thermal_printer';
 const COMMERCIAL_DELIVERY_LABEL_PRINTER_KEY = 'catcorn_commercial_delivery_label_printer';
-
-/**
- * Physical calibration for the YICHIP-compatible B2B label roll.
- * Keep these values together so the first on-printer calibration can adjust
- * position or spacing without changing the label renderer.
- */
-export const COMMERCIAL_DELIVERY_LABEL_CALIBRATION = {
-  widthMm: 50,
-  heightMm: 30,
-  horizontalOffsetMm: 0,
-  verticalOffsetMm: 0,
-  gapMm: 3,
-  dpi: 203,
-  dotsPerMm: 8,
-  pixelWidth: 400,
-  pixelHeight: 240,
-} as const;
 
 /** Endpoint for the Vercel serverless signing function */
 const SIGN_ENDPOINT = '/api/qz-sign';
@@ -310,24 +295,26 @@ const getPngBase64 = (dataUrl: string): string => {
  */
 export async function printCommercialDeliveryLabelImages(
   printerName: string,
+  labelSize: LabelSizeConfig,
   imageDataUrls: string[],
 ): Promise<void> {
   if (!printerName || printerName !== getSavedCommercialDeliveryLabelPrinterName()) {
     throw new Error('La impresora seleccionada no corresponde a la preferencia B2B guardada.');
   }
+  const savedLabelSize = resolveLabelSize(printerName);
+  if (savedLabelSize.id !== labelSize.id) {
+    throw new Error('El tamaño de la etiqueta no corresponde a la preferencia guardada para esta impresora.');
+  }
   if (imageDataUrls.length === 0) throw new Error('No hay imágenes de etiquetas B2B para imprimir.');
   const pngBase64 = imageDataUrls.map(getPngBase64);
-  const gapFeedDots = Math.round(
-    COMMERCIAL_DELIVERY_LABEL_CALIBRATION.gapMm
-      * COMMERCIAL_DELIVERY_LABEL_CALIBRATION.dotsPerMm,
-  );
+  const gapFeedDots = Math.round(labelSize.gapMm * labelSize.dotsPerMm);
 
   await connectQZ();
   const config = qz.configs.create(printerName, {
     encoding: 'ISO-8859-1',
     forceRaw: true,
     spool: { size: 1 },
-    jobName: 'Cat Corn - Etiquetas B2B',
+    jobName: `Cat Corn - Etiquetas ${labelSize.label}`,
   });
   const printData = pngBase64.flatMap(data => [
     {
