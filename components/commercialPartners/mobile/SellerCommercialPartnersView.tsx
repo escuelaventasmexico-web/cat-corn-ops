@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../../supabase';
-import { CommercialPartner } from '../types';
+import {
+  CommercialDirectoryRecord,
+  CommercialPartner,
+  CommercialProspectDirectoryRecord,
+} from '../types';
 import { SellerMobileHeader } from './SellerMobileHeader';
 import { SellerMobileNavigation } from './SellerMobileNavigation';
 import { SellerMobileHome } from './SellerMobileHome';
@@ -27,7 +31,7 @@ export const SellerCommercialPartnersView = ({
   onLogout,
 }: SellerCommercialPartnersViewProps) => {
   const [activeTab, setActiveTab] = useState<MobilePageTab>('inicio');
-  const [partners, setPartners] = useState<CommercialPartner[]>([]);
+  const [directoryRecords, setDirectoryRecords] = useState<CommercialDirectoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showNewForm, setShowNewForm] = useState(false);
@@ -95,13 +99,60 @@ export const SellerCommercialPartnersView = ({
     setLoading(true);
     setError(null);
     try {
-      const { data, error: dbErr } = await supabase
-        .from('v_commercial_partner_directory')
-        .select('id, record_type, folio, business_name, responsible_name, phone, business_type, partner_model, status, assigned_to, originator_user_id, originator_name, created_at, updated_at')
-        .order('business_name', { ascending: true });
+      if (!user?.id) throw new Error('No se encontró el usuario autenticado.');
 
-      if (dbErr) throw dbErr;
-      setPartners((data as CommercialPartner[]) ?? []);
+      const [partnerResult, prospectResult] = await Promise.all([
+        supabase
+          .from('commercial_partners')
+          .select('*')
+          .order('business_name', { ascending: true }),
+        supabase
+          .from('v_commercial_prospect_details')
+          .select('id, business_name, contact_name, phone, address, location_reference, business_type, status, originator_name, assigned_to, next_follow_up_at, proposed_visit_at, created_at, commercial_partner_id')
+          .eq('assigned_to', user.id)
+          .is('commercial_partner_id', null)
+          .neq('status', 'convertido')
+          .neq('status', 'archivado')
+          .order('business_name', { ascending: true }),
+      ]);
+
+      if (partnerResult.error) throw partnerResult.error;
+      if (prospectResult.error) throw prospectResult.error;
+
+      const partnerRecords: CommercialDirectoryRecord[] = ((partnerResult.data as CommercialPartner[]) ?? [])
+        .map(partner => ({
+          recordKind: 'commercial_partner' as const,
+          id: partner.id,
+          partner,
+        }));
+      const prospectRecords: CommercialProspectDirectoryRecord[] = (prospectResult.data ?? [])
+        .map(prospect => ({
+          recordKind: 'commercial_prospect' as const,
+          id: prospect.id,
+          prospectId: prospect.id,
+          businessName: prospect.business_name,
+          contactName: prospect.contact_name,
+          phone: prospect.phone,
+          address: prospect.address,
+          locationReference: prospect.location_reference,
+          businessType: prospect.business_type,
+          status: prospect.status,
+          originatorAlias: prospect.originator_name,
+          assignedTo: prospect.assigned_to,
+          nextFollowUpAt: prospect.next_follow_up_at,
+          proposedVisitAt: prospect.proposed_visit_at,
+          createdAt: prospect.created_at,
+        }));
+
+      setDirectoryRecords([...partnerRecords, ...prospectRecords].sort((left, right) => {
+        const leftName = left.recordKind === 'commercial_partner'
+          ? left.partner.business_name
+          : left.businessName;
+        const rightName = right.recordKind === 'commercial_partner'
+          ? right.partner.business_name
+          : right.businessName;
+        return leftName.localeCompare(rightName, 'es-MX');
+      }));
       
       // Refresh home tarjeta
       if (activeTab === 'inicio') {
@@ -112,7 +163,7 @@ export const SellerCommercialPartnersView = ({
     } finally {
       setLoading(false);
     }
-  }, [activeTab]);
+  }, [activeTab, user?.id]);
 
   useEffect(() => {
     loadPartners();
@@ -131,9 +182,16 @@ export const SellerCommercialPartnersView = ({
 
   /* ── Callbacks ─────────────────────────────────────────────– */
   const handleCreated = (newPartner: CommercialPartner) => {
-    setPartners(prev => {
-      const next = [...prev, newPartner];
-      next.sort((a, b) => a.business_name.localeCompare(b.business_name));
+    setDirectoryRecords(prev => {
+      const next: CommercialDirectoryRecord[] = [
+        ...prev,
+        { recordKind: 'commercial_partner', id: newPartner.id, partner: newPartner },
+      ];
+      next.sort((left, right) => {
+        const leftName = left.recordKind === 'commercial_partner' ? left.partner.business_name : left.businessName;
+        const rightName = right.recordKind === 'commercial_partner' ? right.partner.business_name : right.businessName;
+        return leftName.localeCompare(rightName, 'es-MX');
+      });
       return next;
     });
     setShowNewForm(false);
@@ -142,8 +200,12 @@ export const SellerCommercialPartnersView = ({
   };
 
   const handleUpdated = (updated: CommercialPartner) => {
-    setPartners(prev =>
-      prev.map(p => (p.id === updated.id ? updated : p))
+    setDirectoryRecords(prev =>
+      prev.map(record => (
+        record.recordKind === 'commercial_partner' && record.partner.id === updated.id
+          ? { recordKind: 'commercial_partner', id: updated.id, partner: updated }
+          : record
+      ))
     );
     showToast('✓ Socio actualizado');
   };
@@ -156,7 +218,7 @@ export const SellerCommercialPartnersView = ({
           <SellerMobileHome
             commissionPending={commissionData.pending}
             commissionAvailable={commissionData.available}
-            partnersCount={partners.filter(partner => partner.record_type !== 'prospecto').length}
+            partnersCount={directoryRecords.filter(record => record.recordKind === 'commercial_partner').length}
             sellerId={user?.id}
             refreshKey={homeRefreshKey}
             onNavigate={(page) => setActiveTab(page)}
@@ -165,15 +227,15 @@ export const SellerCommercialPartnersView = ({
       case 'socios':
         return (
           <SellerMobilePartners
-            partners={partners}
+            records={directoryRecords}
             loading={loading}
             error={error}
-            onSelectPartner={partner => {
-              if (partner.record_type === 'prospecto') {
-                window.location.href = '/prospectos-comerciales';
+            onSelectRecord={record => {
+              if (record.recordKind === 'commercial_prospect') {
+                window.location.href = `/prospectos-comerciales?prospectId=${encodeURIComponent(record.prospectId)}`;
                 return;
               }
-              setSelectedPartner(partner);
+              setSelectedPartner(record.partner);
             }}
             onNewPartner={() => setShowNewForm(true)}
           />

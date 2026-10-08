@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { Search, X, Plus, Store, Phone, User, Loader2, AlertCircle, HeartHandshake } from 'lucide-react';
-import { CommercialPartner, STATUS_BADGE, MODEL_BADGE, BUSINESS_TYPES } from '../types';
+import { Search, X, Plus, Store, Phone, User, Loader2, AlertCircle, HeartHandshake, MapPin, CalendarClock } from 'lucide-react';
+import { CommercialDirectoryRecord, CommercialPartner, STATUS_BADGE, MODEL_BADGE, BUSINESS_TYPES } from '../types';
 
 interface SellerMobilePartnersProps {
-  partners: CommercialPartner[];
+  records: CommercialDirectoryRecord[];
   loading: boolean;
-  onSelectPartner: (partner: CommercialPartner) => void;
+  onSelectRecord: (record: CommercialDirectoryRecord) => void;
   onNewPartner: () => void;
   error?: string | null;
 }
@@ -16,17 +16,28 @@ const getBusinessTypeLabel = (p: CommercialPartner) => {
 };
 
 export const SellerMobilePartners = ({
-  partners,
+  records,
   loading,
-  onSelectPartner,
+  onSelectRecord,
   onNewPartner,
   error,
 }: SellerMobilePartnersProps) => {
   const [searchQuery, setSearchQuery] = useState('');
 
-  const filtered = partners.filter(p => {
+  const filtered = records.filter(record => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.trim().toLowerCase();
+    if (record.recordKind === 'commercial_prospect') {
+      return [
+        record.businessName,
+        record.contactName,
+        record.phone,
+        record.address,
+        record.locationReference,
+        record.originatorAlias,
+      ].some(value => (value ?? '').toLowerCase().includes(q));
+    }
+    const p = record.partner;
     return (
       (p.folio ?? '').toLowerCase().includes(q) ||
       p.business_name.toLowerCase().includes(q) ||
@@ -34,6 +45,8 @@ export const SellerMobilePartners = ({
       (p.phone ?? '').toLowerCase().includes(q)
     );
   });
+  const filteredPartnerCount = filtered.filter(record => record.recordKind === 'commercial_partner').length;
+  const filteredProspectCount = filtered.length - filteredPartnerCount;
 
   return (
     <div className="pb-24 space-y-3">
@@ -113,7 +126,38 @@ export const SellerMobilePartners = ({
       {/* Partners list */}
       {!loading && filtered.length > 0 && (
         <div className="divide-y divide-white/5 px-4 space-y-0">
-          {filtered.map(p => {
+          {filtered.map(record => {
+            if (record.recordKind === 'commercial_prospect') {
+              const followUp = record.proposedVisitAt || record.nextFollowUpAt;
+              return (
+                <button
+                  key={`${record.recordKind}:${record.prospectId}`}
+                  onClick={() => onSelectRecord(record)}
+                  className="w-full space-y-2 py-4 text-left transition-colors hover:bg-white/3 active:scale-95"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-cc-text-main">{record.businessName}</p>
+                      <p className="mt-0.5 text-[11px] font-semibold text-cc-primary">
+                        PROSPECTO / {record.originatorAlias || 'SIN ALIAS'}
+                      </p>
+                    </div>
+                    <span className="inline-flex shrink-0 items-center rounded-full border border-purple-500/30 bg-purple-500/15 px-2 py-0.5 text-xs font-medium text-purple-300">
+                      {record.status.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                  <div className="space-y-1 text-xs text-cc-text-muted">
+                    <div className="flex items-center gap-2"><User size={12} className="shrink-0" /><span className="truncate">{record.contactName || 'Sin contacto'}</span></div>
+                    {record.phone && <div className="flex items-center gap-2"><Phone size={12} className="shrink-0" /><span>{record.phone}</span></div>}
+                    {(record.address || record.locationReference) && <div className="flex items-center gap-2"><MapPin size={12} className="shrink-0" /><span className="truncate">{record.address || record.locationReference}</span></div>}
+                    {followUp && <div className="flex items-center gap-2"><CalendarClock size={12} className="shrink-0" /><span>{record.proposedVisitAt ? 'Visita' : 'Seguimiento'}: {new Date(followUp).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })}</span></div>}
+                    <div className="flex items-center gap-2"><Store size={12} className="shrink-0" /><span>{BUSINESS_TYPES.find(type => type.value === record.businessType)?.label ?? record.businessType}</span></div>
+                  </div>
+                </button>
+              );
+            }
+
+            const p = record.partner;
             const statusCfg = STATUS_BADGE[p.status] ?? {
               label: p.status,
               className: 'bg-white/5 text-cc-text-muted border-white/10',
@@ -125,8 +169,8 @@ export const SellerMobilePartners = ({
 
             return (
               <button
-                key={p.id}
-                onClick={() => onSelectPartner(p)}
+                key={`${record.recordKind}:${p.id}`}
+                onClick={() => onSelectRecord(record)}
                 className="w-full text-left py-4 hover:bg-white/3 transition-colors active:scale-95 space-y-2"
               >
                 {/* Title row */}
@@ -138,11 +182,6 @@ export const SellerMobilePartners = ({
                     <p className="font-semibold text-cc-text-main truncate text-sm">
                       {p.business_name}
                     </p>
-                    {p.record_type === 'prospecto' && (
-                      <p className="mt-0.5 text-[11px] font-semibold text-cc-primary">
-                        PROSPECTO / {p.originator_name || 'SIN ALIAS'}
-                      </p>
-                    )}
                   </div>
                   <div className="flex flex-col gap-1 items-end shrink-0">
                     <span
@@ -188,7 +227,9 @@ export const SellerMobilePartners = ({
       {/* Count */}
       {!loading && filtered.length > 0 && (
         <div className="px-4 py-2 text-xs text-cc-text-muted text-center">
-          {filtered.length} socio{filtered.length !== 1 ? 's' : ''}
+          {filteredPartnerCount} socio{filteredPartnerCount !== 1 ? 's' : ''}
+          {' · '}
+          {filteredProspectCount} prospecto{filteredProspectCount !== 1 ? 's' : ''}
           {searchQuery ? ' (filtrado)' : ''}
         </div>
       )}

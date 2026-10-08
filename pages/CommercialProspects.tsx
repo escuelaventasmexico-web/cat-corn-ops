@@ -73,7 +73,7 @@ const statusClasses: Record<ProspectStatus, string> = {
   visita_programada: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
   convertido: 'bg-green-500/15 text-green-300 border-green-500/30',
   no_interesado: 'bg-red-500/15 text-red-300 border-red-500/30',
-  archivado: 'bg-white/5 text-cc-text-muted border-white/10',
+  archivado: 'bg-white/5 text-neutral-300 border-white/15',
 };
 
 const formatDateTime = (value?: string | null) => {
@@ -272,6 +272,18 @@ export const CommercialProspects = () => {
   }, [loadProspects, loadSellers]);
 
   useEffect(() => {
+    const url = new URL(window.location.href);
+    const requestedProspectId = url.searchParams.get('prospectId');
+    if (!requestedProspectId || selected) return;
+    const requestedProspect = prospects.find(prospect => prospect.id === requestedProspectId);
+    if (requestedProspect) {
+      setSelected(requestedProspect);
+      url.searchParams.delete('prospectId');
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, [prospects, selected]);
+
+  useEffect(() => {
     if (!selected) return;
     setDetailForm({
       address: selected.address || '',
@@ -450,7 +462,7 @@ export const CommercialProspects = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="commercial-prospects-module space-y-6">
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-cc-primary">
@@ -500,20 +512,20 @@ export const CommercialProspects = () => {
             ))}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 rounded-xl border border-white/5 bg-cc-surface p-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 rounded-xl border border-white/10 bg-cc-surface p-4">
             <label className="relative md:col-span-1">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-cc-text-muted" />
-              <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar negocio, teléfono…" className="w-full rounded-lg border border-white/10 bg-cc-bg py-2.5 pl-9 pr-3 text-sm text-cc-text-main outline-none focus:border-cc-primary/50" />
+              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-300" />
+              <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar negocio, teléfono…" className="commercial-prospects-control w-full rounded-lg py-2.5 pl-9 pr-3 text-sm" />
             </label>
-            <select value={statusFilter} onChange={event => setStatusFilter(event.target.value as typeof statusFilter)} className="rounded-lg border border-white/10 bg-cc-bg px-3 py-2.5 text-sm text-cc-text-main">
+            <select value={statusFilter} onChange={event => setStatusFilter(event.target.value as typeof statusFilter)} className="commercial-prospects-control rounded-lg px-3 py-2.5 text-sm">
               <option value="todos">Todos los estados</option>
               {Object.entries(PROSPECT_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
-            <select value={resultFilter} onChange={event => setResultFilter(event.target.value as typeof resultFilter)} className="rounded-lg border border-white/10 bg-cc-bg px-3 py-2.5 text-sm text-cc-text-main">
+            <select value={resultFilter} onChange={event => setResultFilter(event.target.value as typeof resultFilter)} className="commercial-prospects-control rounded-lg px-3 py-2.5 text-sm">
               <option value="todos">Todos los resultados</option>
               {Object.entries(PROSPECT_RESULT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
-            <select value={followUpFilter} onChange={event => setFollowUpFilter(event.target.value as FollowUpFilter)} className="rounded-lg border border-white/10 bg-cc-bg px-3 py-2.5 text-sm text-cc-text-main">
+            <select value={followUpFilter} onChange={event => setFollowUpFilter(event.target.value as FollowUpFilter)} className="commercial-prospects-control rounded-lg px-3 py-2.5 text-sm">
               <option value="todos">Cualquier seguimiento</option>
               <option value="vencidos">Vencidos</option>
               <option value="hoy">Para hoy</option>
@@ -530,17 +542,17 @@ export const CommercialProspects = () => {
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
               {filtered.map(prospect => (
-                <button key={prospect.id} onClick={() => setSelected(prospect)} className="rounded-xl border border-white/5 bg-cc-surface p-4 text-left hover:border-cc-primary/30 hover:bg-white/[0.03] transition-colors">
+                <button key={prospect.id} onClick={() => setSelected(prospect)} className="rounded-xl border border-white/15 bg-cc-surface p-4 text-left hover:border-cc-primary/50 hover:bg-white/[0.04] transition-colors">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="font-semibold text-cc-text-main truncate">{prospect.business_name}</p>
-                      <p className="text-xs text-cc-primary mt-0.5">PROSPECTO / {prospect.originator_name || 'SIN ALIAS'}</p>
+                      <p className="font-semibold text-white truncate">{prospect.business_name}</p>
+                      <p className="text-xs font-medium text-cc-primary mt-0.5">PROSPECTO / {prospect.originator_name || 'SIN ALIAS'}</p>
                     </div>
                     <span className={`shrink-0 rounded-full border px-2 py-1 text-xs ${statusClasses[prospect.status]}`}>
                       {PROSPECT_STATUS_LABELS[prospect.status]}
                     </span>
                   </div>
-                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-cc-text-muted">
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-neutral-300">
                     <span className="flex items-center gap-2"><Phone size={13} />{prospect.phone}</span>
                     <span className="flex items-center gap-2"><Store size={13} />{prospect.business_type}</span>
                     <span className="flex items-center gap-2"><CalendarClock size={13} />{formatDateTime(prospect.next_follow_up_at)}</span>
@@ -555,20 +567,20 @@ export const CommercialProspects = () => {
 
       {showCreate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <form onSubmit={handleCreate} className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/10 bg-cc-surface p-6 space-y-4 shadow-2xl">
+          <form onSubmit={handleCreate} className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-white/15 bg-[#2a2a2a] p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <div><h2 className="text-xl font-bold text-cc-cream">Nuevo prospecto</h2><p className="text-xs text-cc-text-muted">Registro comercial simplificado.</p></div>
               <button type="button" onClick={() => setShowCreate(false)} className="text-cc-text-muted hover:text-white"><X /></button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <label className="text-xs text-cc-text-muted">Negocio *<input required value={form.business_name} onChange={event => setForm({ ...form, business_name: event.target.value })} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2.5 text-sm text-cc-text-main" /></label>
-              <label className="text-xs text-cc-text-muted">Teléfono *<input required value={form.phone} onChange={event => setForm({ ...form, phone: event.target.value })} onBlur={() => checkDuplicates().catch(() => undefined)} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2.5 text-sm text-cc-text-main" /></label>
-              <label className="text-xs text-cc-text-muted">Tipo<select value={form.business_type} onChange={event => setForm({ ...form, business_type: event.target.value })} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2.5 text-sm text-cc-text-main">{PROSPECT_BUSINESS_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label>
-              <label className="text-xs text-cc-text-muted">Contacto<input value={form.contact_name} onChange={event => setForm({ ...form, contact_name: event.target.value })} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2.5 text-sm text-cc-text-main" /></label>
-              <label className="text-xs text-cc-text-muted">Referencia de ubicación<input value={form.location_reference} onChange={event => setForm({ ...form, location_reference: event.target.value })} onBlur={() => checkDuplicates().catch(() => undefined)} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2.5 text-sm text-cc-text-main" /></label>
-              <label className="text-xs text-cc-text-muted">¿Vende botanas?<select value={form.sells_snacks} onChange={event => setForm({ ...form, sells_snacks: event.target.value })} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2.5 text-sm text-cc-text-main"><option value="unknown">No se sabe</option><option value="yes">Sí</option><option value="no">No</option></select></label>
-              <label className="md:col-span-2 text-xs text-cc-text-muted">Dirección<input value={form.address} onChange={event => setForm({ ...form, address: event.target.value })} placeholder="Obligatoria antes de solicitar/programar visita" className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2.5 text-sm text-cc-text-main" /></label>
-              <label className="md:col-span-2 text-xs text-cc-text-muted">Notas<textarea value={form.general_notes} onChange={event => setForm({ ...form, general_notes: event.target.value })} rows={3} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2.5 text-sm text-cc-text-main" /></label>
+              <label className="text-xs text-neutral-300">Negocio *<input required value={form.business_name} onChange={event => setForm({ ...form, business_name: event.target.value })} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2.5 text-sm" /></label>
+              <label className="text-xs text-neutral-300">Teléfono *<input required value={form.phone} onChange={event => setForm({ ...form, phone: event.target.value })} onBlur={() => checkDuplicates().catch(() => undefined)} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2.5 text-sm" /></label>
+              <label className="text-xs text-neutral-300">Tipo<select value={form.business_type} onChange={event => setForm({ ...form, business_type: event.target.value })} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2.5 text-sm">{PROSPECT_BUSINESS_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label>
+              <label className="text-xs text-neutral-300">Contacto<input value={form.contact_name} onChange={event => setForm({ ...form, contact_name: event.target.value })} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2.5 text-sm" /></label>
+              <label className="text-xs text-neutral-300">Referencia de ubicación<input value={form.location_reference} onChange={event => setForm({ ...form, location_reference: event.target.value })} onBlur={() => checkDuplicates().catch(() => undefined)} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2.5 text-sm" /></label>
+              <label className="text-xs text-neutral-300">¿Vende botanas?<select value={form.sells_snacks} onChange={event => setForm({ ...form, sells_snacks: event.target.value })} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2.5 text-sm"><option value="unknown">No se sabe</option><option value="yes">Sí</option><option value="no">No</option></select></label>
+              <label className="md:col-span-2 text-xs text-neutral-300">Dirección<input value={form.address} onChange={event => setForm({ ...form, address: event.target.value })} placeholder="Obligatoria antes de solicitar/programar visita" className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2.5 text-sm" /></label>
+              <label className="md:col-span-2 text-xs text-neutral-300">Notas<textarea value={form.general_notes} onChange={event => setForm({ ...form, general_notes: event.target.value })} rows={3} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2.5 text-sm" /></label>
             </div>
             {duplicates.length > 0 && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200"><p className="font-semibold flex items-center gap-2"><AlertTriangle size={14} />Coincidencias detectadas</p>{duplicates.map((warning, index) => <p key={`${warning.source}-${warning.id}-${index}`} className="mt-1">{warning.label} · {warning.match_type}{warning.phone_hint ? ` · termina en ${warning.phone_hint}` : ''}</p>)}</div>}
             <div className="flex justify-end gap-2"><button type="button" onClick={() => setShowCreate(false)} className="rounded-lg border border-white/10 px-4 py-2 text-sm text-cc-text-main">Cancelar</button><button disabled={saving} className="rounded-lg bg-cc-primary px-4 py-2 text-sm font-semibold text-cc-bg disabled:opacity-50">{saving ? 'Guardando…' : 'Crear prospecto'}</button></div>
@@ -577,8 +589,8 @@ export const CommercialProspects = () => {
       )}
 
       {selected && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/60">
-          <div className="h-full w-full max-w-2xl overflow-y-auto border-l border-white/10 bg-cc-bg p-5 space-y-5 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/75">
+          <div className="relative isolate h-full w-full max-w-2xl overflow-y-auto border-l border-white/15 bg-[#1c1a1a] p-5 space-y-5 shadow-2xl">
             <div className="flex items-start justify-between gap-3">
               <div><p className="text-xs text-cc-primary">PROSPECTO / {selected.originator_name || 'SIN ALIAS'}</p><h2 className="text-xl font-bold text-cc-cream">{selected.business_name}</h2><p className="text-sm text-cc-text-muted">{selected.phone} · {selected.contact_name || 'Sin contacto'}</p></div>
               <button onClick={() => setSelected(null)} className="text-cc-text-muted hover:text-white"><X /></button>
@@ -587,11 +599,11 @@ export const CommercialProspects = () => {
             <section className="rounded-xl border border-white/5 bg-cc-surface p-4 space-y-3">
               <div className="flex items-center justify-between"><h3 className="font-semibold text-cc-cream">Datos comerciales</h3><span className={`rounded-full border px-2 py-1 text-xs ${statusClasses[selected.status]}`}>{PROSPECT_STATUS_LABELS[selected.status]}</span></div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <label className="text-xs text-cc-text-muted">Contacto<input value={detailForm.contact_name} onChange={event => setDetailForm({ ...detailForm, contact_name: event.target.value })} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2 text-sm text-cc-text-main" /></label>
-                <label className="text-xs text-cc-text-muted">Referencia<input value={detailForm.location_reference} onChange={event => setDetailForm({ ...detailForm, location_reference: event.target.value })} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2 text-sm text-cc-text-main" /></label>
-                <label className="md:col-span-2 text-xs text-cc-text-muted">Dirección<input value={detailForm.address} onChange={event => setDetailForm({ ...detailForm, address: event.target.value })} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2 text-sm text-cc-text-main" /></label>
-                <label className="md:col-span-2 text-xs text-cc-text-muted">Notas<textarea value={detailForm.general_notes} onChange={event => setDetailForm({ ...detailForm, general_notes: event.target.value })} rows={3} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2 text-sm text-cc-text-main" /></label>
-                {isAdmin && <label className="md:col-span-2 text-xs text-cc-text-muted">Asignado a<select value={assignedToId} onChange={event => setAssignedToId(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2 text-sm text-cc-text-main"><option value="">Sin asignar</option>{sellers.map(seller => <option key={seller.id} value={seller.id}>{seller.commercial_alias || seller.full_name}</option>)}</select></label>}
+                <label className="text-xs text-neutral-300">Contacto<input value={detailForm.contact_name} onChange={event => setDetailForm({ ...detailForm, contact_name: event.target.value })} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2 text-sm" /></label>
+                <label className="text-xs text-neutral-300">Referencia<input value={detailForm.location_reference} onChange={event => setDetailForm({ ...detailForm, location_reference: event.target.value })} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2 text-sm" /></label>
+                <label className="md:col-span-2 text-xs text-neutral-300">Dirección<input value={detailForm.address} onChange={event => setDetailForm({ ...detailForm, address: event.target.value })} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2 text-sm" /></label>
+                <label className="md:col-span-2 text-xs text-neutral-300">Notas<textarea value={detailForm.general_notes} onChange={event => setDetailForm({ ...detailForm, general_notes: event.target.value })} rows={3} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2 text-sm" /></label>
+                {isAdmin && <label className="md:col-span-2 text-xs text-neutral-300">Asignado a<select value={assignedToId} onChange={event => setAssignedToId(event.target.value)} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2 text-sm"><option value="">Sin asignar</option>{sellers.map(seller => <option key={seller.id} value={seller.id}>{seller.commercial_alias || seller.full_name}</option>)}</select></label>}
               </div>
               <button onClick={saveDetail} disabled={saving || selected.status === 'convertido'} className="rounded-lg border border-cc-primary/40 px-3 py-2 text-xs font-semibold text-cc-primary disabled:opacity-40">Guardar datos</button>
             </section>
@@ -600,11 +612,11 @@ export const CommercialProspects = () => {
               <form onSubmit={appendInteraction} className="rounded-xl border border-white/5 bg-cc-surface p-4 space-y-3">
                 <h3 className="font-semibold text-cc-cream">Registrar contacto</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <label className="text-xs text-cc-text-muted">Resultado<select value={interactionForm.result} onChange={event => setInteractionForm({ ...interactionForm, result: event.target.value as ProspectResult })} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2 text-sm text-cc-text-main">{Object.entries(PROSPECT_RESULT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                  <label className="text-xs text-cc-text-muted">Fecha del contacto<input type="datetime-local" value={interactionForm.occurred_at} onChange={event => setInteractionForm({ ...interactionForm, occurred_at: event.target.value })} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2 text-sm text-cc-text-main" /></label>
-                  <label className="text-xs text-cc-text-muted">Próxima llamada<input type="datetime-local" value={interactionForm.next_follow_up_at} onChange={event => setInteractionForm({ ...interactionForm, next_follow_up_at: event.target.value })} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2 text-sm text-cc-text-main" /></label>
-                  <label className="text-xs text-cc-text-muted">Visita propuesta<input type="datetime-local" value={interactionForm.proposed_visit_at} onChange={event => setInteractionForm({ ...interactionForm, proposed_visit_at: event.target.value })} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2 text-sm text-cc-text-main" /></label>
-                  <label className="md:col-span-2 text-xs text-cc-text-muted">Notas<textarea value={interactionForm.notes} onChange={event => setInteractionForm({ ...interactionForm, notes: event.target.value })} rows={2} className="mt-1 w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2 text-sm text-cc-text-main" /></label>
+                  <label className="text-xs text-neutral-300">Resultado<select value={interactionForm.result} onChange={event => setInteractionForm({ ...interactionForm, result: event.target.value as ProspectResult })} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2 text-sm">{Object.entries(PROSPECT_RESULT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                  <label className="text-xs text-neutral-300">Fecha del contacto<input type="datetime-local" value={interactionForm.occurred_at} onChange={event => setInteractionForm({ ...interactionForm, occurred_at: event.target.value })} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2 text-sm" /></label>
+                  <label className="text-xs text-neutral-300">Próxima llamada<input type="datetime-local" value={interactionForm.next_follow_up_at} onChange={event => setInteractionForm({ ...interactionForm, next_follow_up_at: event.target.value })} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2 text-sm" /></label>
+                  <label className="text-xs text-neutral-300">Visita propuesta<input type="datetime-local" value={interactionForm.proposed_visit_at} onChange={event => setInteractionForm({ ...interactionForm, proposed_visit_at: event.target.value })} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2 text-sm" /></label>
+                  <label className="md:col-span-2 text-xs text-neutral-300">Notas<textarea value={interactionForm.notes} onChange={event => setInteractionForm({ ...interactionForm, notes: event.target.value })} rows={2} className="commercial-prospects-control mt-1 w-full rounded-lg px-3 py-2 text-sm" /></label>
                 </div>
                 <button disabled={saving} className="rounded-lg bg-cc-primary px-4 py-2 text-sm font-semibold text-cc-bg disabled:opacity-50">Agregar al historial</button>
               </form>
@@ -613,7 +625,7 @@ export const CommercialProspects = () => {
             {canConvert && selected.status !== 'convertido' && selected.status !== 'archivado' && (
               <section className="rounded-xl border border-green-500/20 bg-green-500/5 p-4 space-y-3">
                 <div><h3 className="font-semibold text-green-300">Convertir a Comodato</h3><p className="text-xs text-cc-text-muted">Crea un socio activo y conserva quién originó el prospecto. El bono no se genera hasta liquidar el primer corte válido.</p></div>
-                <select value={responsibleSellerId} onChange={event => setResponsibleSellerId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-cc-bg px-3 py-2 text-sm text-cc-text-main"><option value="">Responsable comercial…</option>{sellers.filter(seller => seller.role === 'socios_comerciales').map(seller => <option key={seller.id} value={seller.id}>{seller.commercial_alias || seller.full_name}</option>)}</select>
+                <select value={responsibleSellerId} onChange={event => setResponsibleSellerId(event.target.value)} className="commercial-prospects-control w-full rounded-lg px-3 py-2 text-sm"><option value="">Responsable comercial…</option>{sellers.filter(seller => seller.role === 'socios_comerciales').map(seller => <option key={seller.id} value={seller.id}>{seller.commercial_alias || seller.full_name}</option>)}</select>
                 <button onClick={convertProspect} disabled={saving || !responsibleSellerId || !detailForm.address.trim()} className="flex items-center gap-2 rounded-lg bg-green-500 px-4 py-2 text-sm font-semibold text-black disabled:opacity-40"><CheckCircle2 size={16} /> Convertir</button>
                 {!detailForm.address.trim() && <p className="text-xs text-amber-300 flex items-center gap-1"><MapPin size={13} />Guarda una dirección antes de convertir.</p>}
               </section>

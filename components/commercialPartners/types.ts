@@ -2,9 +2,6 @@
 
 export interface CommercialPartner {
   id: string;
-  record_type?: 'socio' | 'prospecto';
-  originator_user_id?: string | null;
-  originator_name?: string | null;
   folio?: string | null;
   business_name: string;
   responsible_name: string;
@@ -34,6 +31,35 @@ export interface CommercialPartner {
   created_at?: string | null;
   updated_at?: string | null;
 }
+
+export interface CommercialPartnerDirectoryRecord {
+  recordKind: 'commercial_partner';
+  id: string;
+  partner: CommercialPartner;
+}
+
+export interface CommercialProspectDirectoryRecord {
+  recordKind: 'commercial_prospect';
+  id: string;
+  prospectId: string;
+  businessName: string;
+  contactName: string | null;
+  phone: string | null;
+  address: string | null;
+  locationReference: string | null;
+  businessType: string;
+  status: string;
+  originatorAlias: string | null;
+  assignedTo: string | null;
+  assignedToName?: string | null;
+  nextFollowUpAt: string | null;
+  proposedVisitAt: string | null;
+  createdAt: string | null;
+}
+
+export type CommercialDirectoryRecord =
+  | CommercialPartnerDirectoryRecord
+  | CommercialProspectDirectoryRecord;
 
 export const BUSINESS_TYPES = [
   { value: 'restaurante',        label: 'Restaurante' },

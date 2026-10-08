@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../supabase';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -15,13 +15,21 @@ import {
   ChevronDown,
   RefreshCw,
   BarChart3,
+  CalendarClock,
+  MapPin,
 } from 'lucide-react';
 import {
+  CommercialDirectoryRecord,
   CommercialPartner,
+  CommercialProspectDirectoryRecord,
   STATUS_BADGE,
   MODEL_BADGE,
   BUSINESS_TYPES,
 } from '../components/commercialPartners/types';
+import {
+  PROSPECT_STATUS_LABELS,
+  ProspectStatus,
+} from '../components/commercialProspects/types';
 import { CommercialPartnerForm } from '../components/commercialPartners/CommercialPartnerForm';
 import { CommercialPartnerDetail } from '../components/commercialPartners/CommercialPartnerDetail';
 import { B2BReports } from '../components/commercialPartners/reports/B2BReports';
@@ -61,11 +69,32 @@ const getBusinessTypeLabel = (p: CommercialPartner) => {
   return BUSINESS_TYPES.find(b => b.value === p.business_type)?.label ?? p.business_type;
 };
 
+const getProspectBusinessTypeLabel = (businessType: string) =>
+  BUSINESS_TYPES.find(type => type.value === businessType)?.label ?? businessType;
+
+const formatSupabaseError = (fallback: string, error: unknown) => {
+  if (!error || typeof error !== 'object') return fallback;
+  const source = error as Record<string, unknown>;
+  const details = [
+    typeof source.message === 'string' ? source.message : null,
+    typeof source.details === 'string' && source.details ? `Detalles: ${source.details}` : null,
+    typeof source.hint === 'string' && source.hint ? `Sugerencia: ${source.hint}` : null,
+    typeof source.code === 'string' && source.code ? `Código: ${source.code}` : null,
+  ].filter(Boolean);
+  return details.length > 0 ? details.join(' · ') : fallback;
+};
+
+const openProspect = (prospectId: string) => {
+  window.location.href = `/prospectos-comerciales?prospectId=${encodeURIComponent(prospectId)}`;
+};
+
 export const CommercialPartners = () => {
   const { profile, user } = useAuth();
   const [partners, setPartners] = useState<CommercialPartner[]>([]);
+  const [prospects, setProspects] = useState<CommercialProspectDirectoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [partnerError, setPartnerError] = useState<string | null>(null);
+  const [prospectError, setProspectError] = useState<string | null>(null);
   /* ── Page Tab ──────────────────────────────────────────────── */
   const [pageTab, setPageTab] = useState<PageTab>('socios');
   /* ── Search / filter / sort ────────────────────────────────── */
@@ -90,17 +119,58 @@ export const CommercialPartners = () => {
   const loadPartners = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    setError(null);
+    setPartnerError(null);
+    setProspectError(null);
     try {
-      const { data, error: dbErr } = await supabase
-        .from('commercial_partners')
-        .select('*')
-        .order('business_name', { ascending: true });
+      const [partnerResult, prospectResult] = await Promise.all([
+        supabase
+          .from('commercial_partners')
+          .select('*')
+          .order('business_name', { ascending: true }),
+        supabase
+          .from('v_commercial_prospect_details')
+          .select('id, business_name, contact_name, phone, address, location_reference, business_type, status, originator_name, assigned_to, assigned_to_name, next_follow_up_at, proposed_visit_at, created_at, commercial_partner_id')
+          .is('commercial_partner_id', null)
+          .neq('status', 'convertido')
+          .neq('status', 'archivado')
+          .order('business_name', { ascending: true }),
+      ]);
 
-      if (dbErr) throw dbErr;
-      setPartners((data as CommercialPartner[]) ?? []);
-    } catch (e: any) {
-      setError(e?.message || 'Error al cargar socios');
+      if (partnerResult.error) {
+        console.error('Error completo al cargar socios comerciales:', partnerResult.error);
+        setPartnerError(formatSupabaseError('Error al cargar socios comerciales', partnerResult.error));
+      } else {
+        setPartners((partnerResult.data as CommercialPartner[]) ?? []);
+      }
+
+      if (prospectResult.error) {
+        console.error('Error completo al cargar prospectos para administración:', prospectResult.error);
+        setProspectError(formatSupabaseError('Error al cargar prospectos comerciales', prospectResult.error));
+      } else {
+        setProspects((prospectResult.data ?? []).map(prospect => ({
+          recordKind: 'commercial_prospect' as const,
+          id: prospect.id,
+          prospectId: prospect.id,
+          businessName: prospect.business_name,
+          contactName: prospect.contact_name,
+          phone: prospect.phone,
+          address: prospect.address,
+          locationReference: prospect.location_reference,
+          businessType: prospect.business_type,
+          status: prospect.status,
+          originatorAlias: prospect.originator_name,
+          assignedTo: prospect.assigned_to,
+          assignedToName: prospect.assigned_to_name,
+          nextFollowUpAt: prospect.next_follow_up_at,
+          proposedVisitAt: prospect.proposed_visit_at,
+          createdAt: prospect.created_at,
+        })));
+      }
+    } catch (loadError: unknown) {
+      console.error('Error inesperado al cargar el directorio comercial:', loadError);
+      const message = formatSupabaseError('Error al cargar el directorio comercial', loadError);
+      setPartnerError(message);
+      setProspectError(message);
     } finally {
       setLoading(false);
     }
@@ -111,36 +181,66 @@ export const CommercialPartners = () => {
   }, [loadPartners]);
 
   /* ── Filter + search + sort ────────────────────────────────── */
-  const filtered = partners
-    .filter(p => {
-      if (activeFilter === 'prospecto')  return p.partner_model === 'prospecto';
-      if (activeFilter === 'comodato')   return p.partner_model === 'comodato';
-      if (activeFilter === 'mayoreo')    return p.partner_model === 'mayoreo';
-      if (activeFilter === 'activos')    return p.status === 'activo';
-      if (activeFilter === 'inactivos')  return p.status === 'inactivo' || p.active === false;
+  const directoryRecords = useMemo<CommercialDirectoryRecord[]>(() => [
+    ...partners.map(partner => ({
+      recordKind: 'commercial_partner' as const,
+      id: partner.id,
+      partner,
+    })),
+    ...prospects,
+  ], [partners, prospects]);
+
+  const filtered = directoryRecords
+    .filter(record => {
+      if (activeFilter === 'prospecto') {
+        return record.recordKind === 'commercial_prospect' || record.partner.partner_model === 'prospecto';
+      }
+      if (record.recordKind === 'commercial_prospect') return activeFilter === 'todos';
+      const partner = record.partner;
+      if (activeFilter === 'comodato')   return partner.partner_model === 'comodato';
+      if (activeFilter === 'mayoreo')    return partner.partner_model === 'mayoreo';
+      if (activeFilter === 'activos')    return partner.status === 'activo';
+      if (activeFilter === 'inactivos')  return partner.status === 'inactivo' || partner.active === false;
       return true;
     })
-    .filter(p => {
+    .filter(record => {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.trim().toLowerCase();
-      return (
-        (p.folio ?? '').toLowerCase().includes(q) ||
-        p.business_name.toLowerCase().includes(q) ||
-        p.responsible_name.toLowerCase().includes(q) ||
-        (p.phone ?? '').toLowerCase().includes(q)
-      );
+      if (record.recordKind === 'commercial_partner') {
+        const partner = record.partner;
+        return (
+          (partner.folio ?? '').toLowerCase().includes(q) ||
+          partner.id.toLowerCase().includes(q) ||
+          partner.business_name.toLowerCase().includes(q) ||
+          partner.responsible_name.toLowerCase().includes(q) ||
+          (partner.phone ?? '').toLowerCase().includes(q)
+        );
+      }
+      return [
+        record.prospectId,
+        record.businessName,
+        record.contactName,
+        record.phone,
+        record.address,
+        record.locationReference,
+        record.originatorAlias,
+        record.assignedToName,
+      ].some(value => value?.toLowerCase().includes(q));
     })
     .sort((a, b) => {
       const aVal = sortField === 'created_at'
-        ? (a.created_at ?? '')
-        : a.business_name.toLowerCase();
+        ? (a.recordKind === 'commercial_partner' ? a.partner.created_at ?? '' : a.createdAt ?? '')
+        : (a.recordKind === 'commercial_partner' ? a.partner.business_name : a.businessName).toLowerCase();
       const bVal = sortField === 'created_at'
-        ? (b.created_at ?? '')
-        : b.business_name.toLowerCase();
+        ? (b.recordKind === 'commercial_partner' ? b.partner.created_at ?? '' : b.createdAt ?? '')
+        : (b.recordKind === 'commercial_partner' ? b.partner.business_name : b.businessName).toLowerCase();
       if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
       if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
       return 0;
     });
+
+  const filteredPartnerCount = filtered.filter(record => record.recordKind === 'commercial_partner').length;
+  const filteredProspectCount = filtered.length - filteredPartnerCount;
 
   /* ── Sort toggle ───────────────────────────────────────────── */
   const toggleSort = (field: SortField) => {
@@ -290,7 +390,7 @@ export const CommercialPartners = () => {
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-cc-text-muted pointer-events-none" />
           <input
             type="text"
-            placeholder="Buscar por folio, negocio, responsable o teléfono..."
+            placeholder="Buscar por folio, UUID, negocio, contacto, vendedor, dirección o teléfono..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="w-full bg-cc-surface border border-white/10 rounded-lg pl-9 pr-8 py-2.5 text-sm text-cc-text-main placeholder:text-cc-text-muted focus:outline-none focus:border-cc-primary/50 transition-colors"
@@ -323,11 +423,17 @@ export const CommercialPartners = () => {
         ))}
       </div>
 
-      {/* ─── Error ──────────────────────────────────────────── */}
-      {error && (
-        <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-red-400 text-sm">
-          <AlertCircle size={16} />
-          {error}
+      {/* ─── Errors ─────────────────────────────────────────── */}
+      {partnerError && (
+        <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-red-300 text-sm">
+          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+          <span><strong>No se pudieron cargar los socios.</strong> {partnerError}</span>
+        </div>
+      )}
+      {prospectError && (
+        <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-red-300 text-sm">
+          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+          <span><strong>No se pudieron cargar los prospectos.</strong> {prospectError}</span>
         </div>
       )}
 
@@ -339,7 +445,7 @@ export const CommercialPartners = () => {
       )}
 
       {/* ─── Empty state ────────────────────────────────────── */}
-      {!loading && !error && filtered.length === 0 && (
+      {!loading && !partnerError && !prospectError && filtered.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 gap-3 text-cc-text-muted">
           <HeartHandshake size={36} className="opacity-30" />
           <p className="text-base">
@@ -365,7 +471,8 @@ export const CommercialPartners = () => {
           {/* Sort controls + count */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
             <p className="text-xs text-cc-text-muted">
-              {filtered.length} socio{filtered.length !== 1 ? 's' : ''}
+              {filteredPartnerCount} socio{filteredPartnerCount !== 1 ? 's' : ''}
+              {' · '}{filteredProspectCount} prospecto{filteredProspectCount !== 1 ? 's' : ''}
               {(searchQuery || activeFilter !== 'todos') ? ' (filtrado)' : ''}
             </p>
             <div className="flex items-center gap-1">
@@ -405,40 +512,60 @@ export const CommercialPartners = () => {
                   <th className="text-left px-4 py-3 font-medium">Giro</th>
                   <th className="text-left px-4 py-3 font-medium">Modelo</th>
                   <th className="text-left px-4 py-3 font-medium">Estado</th>
+                  <th className="text-left px-4 py-3 font-medium">Visita / seguimiento</th>
                   <th className="text-left px-4 py-3 font-medium">Alta</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(p => {
-                  const statusCfg = STATUS_BADGE[p.status] ?? {
-                    label: p.status,
-                    className: 'bg-white/5 text-cc-text-muted border-white/10',
-                  };
-                  const modelCfg = MODEL_BADGE[p.partner_model] ?? {
-                    label: p.partner_model,
-                    className: 'bg-white/5 text-cc-text-muted border-white/10',
-                  };
+                {filtered.map(record => {
+                  const isProspect = record.recordKind === 'commercial_prospect';
+                  const partner = !isProspect ? record.partner : null;
+                  const status = isProspect ? record.status : partner!.status;
+                  const statusCfg = isProspect
+                    ? {
+                        label: PROSPECT_STATUS_LABELS[status as ProspectStatus] ?? status,
+                        className: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+                      }
+                    : STATUS_BADGE[status] ?? {
+                        label: status,
+                        className: 'bg-white/5 text-cc-text-muted border-white/10',
+                      };
+                  const modelCfg = isProspect
+                    ? MODEL_BADGE.prospecto
+                    : MODEL_BADGE[partner!.partner_model] ?? {
+                        label: partner!.partner_model,
+                        className: 'bg-white/5 text-cc-text-muted border-white/10',
+                      };
+                  const businessName = isProspect ? record.businessName : partner!.business_name;
+                  const visitAt = isProspect ? record.proposedVisitAt ?? record.nextFollowUpAt : null;
                   return (
                     <tr
-                      key={p.id}
-                      onClick={() => setSelectedPartner(p)}
+                      key={`${record.recordKind}-${record.id}`}
+                      onClick={() => isProspect ? openProspect(record.prospectId) : setSelectedPartner(partner!)}
                       className="border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors group"
                     >
                       <td className="px-4 py-3">
                         <span className="font-mono text-xs text-cc-text-muted">
-                          {p.folio ?? '—'}
+                          {isProspect ? 'PROSPECTO' : partner!.folio ?? '—'}
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <span className="font-medium text-cc-text-main group-hover:text-cc-primary transition-colors">
-                          {p.business_name}
-                        </span>
+                        <div className="font-medium text-cc-text-main group-hover:text-cc-primary transition-colors">
+                          {businessName}
+                        </div>
+                        {isProspect && (
+                          <div className="mt-0.5 text-[11px] font-semibold tracking-wide text-purple-300">
+                            PROSPECTO / {(record.originatorAlias ?? 'SIN ORIGEN').toUpperCase()}
+                          </div>
+                        )}
                       </td>
-                      <td className="px-4 py-3 text-cc-text-muted">{p.responsible_name}</td>
-                      <td className="px-4 py-3 text-cc-text-muted">{p.phone ?? '—'}</td>
+                      <td className="px-4 py-3 text-cc-text-muted">
+                        {isProspect ? record.assignedToName ?? 'Sin asignar' : partner!.responsible_name}
+                      </td>
+                      <td className="px-4 py-3 text-cc-text-muted">{isProspect ? record.phone ?? '—' : partner!.phone ?? '—'}</td>
                       <td className="px-4 py-3 text-cc-text-muted capitalize">
-                        {getBusinessTypeLabel(p)}
+                        {isProspect ? getProspectBusinessTypeLabel(record.businessType) : getBusinessTypeLabel(partner!)}
                       </td>
                       <td className="px-4 py-3">
                         <span
@@ -455,11 +582,14 @@ export const CommercialPartners = () => {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-cc-text-muted text-xs whitespace-nowrap">
-                        {fmtDate(p.created_at)}
+                        {visitAt ? fmtDate(visitAt) : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-cc-text-muted text-xs whitespace-nowrap">
+                        {fmtDate(isProspect ? record.createdAt : partner!.created_at)}
                       </td>
                       <td className="px-4 py-3">
                         <span className="text-xs text-cc-primary opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                          Ver detalle →
+                          {isProspect ? 'Ver prospecto →' : 'Ver detalle →'}
                         </span>
                       </td>
                     </tr>
@@ -471,27 +601,44 @@ export const CommercialPartners = () => {
 
           {/* Mobile cards */}
           <div className="sm:hidden divide-y divide-white/5">
-            {filtered.map(p => {
-              const statusCfg = STATUS_BADGE[p.status] ?? {
-                label: p.status,
-                className: 'bg-white/5 text-cc-text-muted border-white/10',
-              };
-              const modelCfg = MODEL_BADGE[p.partner_model] ?? {
-                label: p.partner_model,
-                className: 'bg-white/5 text-cc-text-muted border-white/10',
-              };
+            {filtered.map(record => {
+              const isProspect = record.recordKind === 'commercial_prospect';
+              const partner = !isProspect ? record.partner : null;
+              const status = isProspect ? record.status : partner!.status;
+              const statusCfg = isProspect
+                ? {
+                    label: PROSPECT_STATUS_LABELS[status as ProspectStatus] ?? status,
+                    className: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+                  }
+                : STATUS_BADGE[status] ?? {
+                    label: status,
+                    className: 'bg-white/5 text-cc-text-muted border-white/10',
+                  };
+              const modelCfg = isProspect
+                ? MODEL_BADGE.prospecto
+                : MODEL_BADGE[partner!.partner_model] ?? {
+                    label: partner!.partner_model,
+                    className: 'bg-white/5 text-cc-text-muted border-white/10',
+                  };
               return (
                 <div
-                  key={p.id}
-                  onClick={() => setSelectedPartner(p)}
+                  key={`${record.recordKind}-${record.id}`}
+                  onClick={() => isProspect ? openProspect(record.prospectId) : setSelectedPartner(partner!)}
                   className="p-4 cursor-pointer hover:bg-white/3 transition-colors"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      {p.folio && (
-                        <p className="text-xs font-mono text-cc-text-muted mb-0.5">{p.folio}</p>
+                      {!isProspect && partner!.folio && (
+                        <p className="text-xs font-mono text-cc-text-muted mb-0.5">{partner!.folio}</p>
                       )}
-                      <p className="font-medium text-cc-text-main truncate">{p.business_name}</p>
+                      {isProspect && (
+                        <p className="text-[11px] font-semibold tracking-wide text-purple-300 mb-0.5">
+                          PROSPECTO / {(record.originatorAlias ?? 'SIN ORIGEN').toUpperCase()}
+                        </p>
+                      )}
+                      <p className="font-medium text-cc-text-main truncate">
+                        {isProspect ? record.businessName : partner!.business_name}
+                      </p>
                     </div>
                     <div className="flex flex-col gap-1 items-end shrink-0">
                       <span
@@ -509,20 +656,34 @@ export const CommercialPartners = () => {
                   <div className="mt-2 space-y-1">
                     <div className="flex items-center gap-1.5 text-xs text-cc-text-muted">
                       <User size={11} />
-                      {p.responsible_name}
+                      {isProspect ? `Asignado a: ${record.assignedToName ?? 'Sin asignar'}` : partner!.responsible_name}
                     </div>
-                    {p.phone && (
+                    {(isProspect ? record.phone : partner!.phone) && (
                       <div className="flex items-center gap-1.5 text-xs text-cc-text-muted">
                         <Phone size={11} />
-                        {p.phone}
+                        {isProspect ? record.phone : partner!.phone}
                       </div>
                     )}
                     <div className="flex items-center gap-1.5 text-xs text-cc-text-muted">
                       <Store size={11} />
-                      {getBusinessTypeLabel(p)}
+                      {isProspect ? getProspectBusinessTypeLabel(record.businessType) : getBusinessTypeLabel(partner!)}
                     </div>
+                    {isProspect && record.address && (
+                      <div className="flex items-center gap-1.5 text-xs text-cc-text-muted">
+                        <MapPin size={11} />
+                        <span className="truncate">{record.address}</span>
+                      </div>
+                    )}
+                    {isProspect && (record.proposedVisitAt || record.nextFollowUpAt) && (
+                      <div className="flex items-center gap-1.5 text-xs text-cc-text-muted">
+                        <CalendarClock size={11} />
+                        Próxima visita / seguimiento: {fmtDate(record.proposedVisitAt ?? record.nextFollowUpAt)}
+                      </div>
+                    )}
                   </div>
-                  <p className="text-xs text-cc-text-muted mt-1.5">Alta: {fmtDate(p.created_at)}</p>
+                  <p className="text-xs text-cc-text-muted mt-1.5">
+                    Alta: {fmtDate(isProspect ? record.createdAt : partner!.created_at)}
+                  </p>
                 </div>
               );
             })}

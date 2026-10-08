@@ -40,6 +40,80 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+/* Prospectos Comerciales: native controls must remain dark in every browser state. */
+.commercial-prospects-module .commercial-prospects-control {
+  color-scheme: dark;
+  background-color: #1c1a1a;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #f5f5f5;
+  caret-color: var(--cc-primary);
+  max-width: 100%;
+  min-width: 0;
+  opacity: 1;
+  outline: none;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.commercial-prospects-module .commercial-prospects-control::placeholder {
+  color: #b3b3b3;
+  opacity: 1;
+}
+
+.commercial-prospects-module .commercial-prospects-control:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.commercial-prospects-module .commercial-prospects-control:focus {
+  border-color: var(--cc-primary);
+  box-shadow: 0 0 0 3px rgba(244, 197, 66, 0.22);
+}
+
+.commercial-prospects-module .commercial-prospects-control:disabled,
+.commercial-prospects-module .commercial-prospects-control:read-only {
+  background-color: #343030;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #d6d3d1;
+  -webkit-text-fill-color: #d6d3d1;
+  opacity: 1;
+}
+
+.commercial-prospects-module .commercial-prospects-control:disabled {
+  cursor: not-allowed;
+}
+
+.commercial-prospects-module select.commercial-prospects-control option {
+  background-color: #1c1a1a;
+  color: #f5f5f5;
+}
+
+.commercial-prospects-module .commercial-prospects-control:-webkit-autofill,
+.commercial-prospects-module .commercial-prospects-control:-webkit-autofill:hover,
+.commercial-prospects-module .commercial-prospects-control:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #1c1a1a inset;
+  -webkit-text-fill-color: #f5f5f5;
+  caret-color: var(--cc-primary);
+}
+
+.commercial-prospects-module input[type='date'].commercial-prospects-control::-webkit-calendar-picker-indicator,
+.commercial-prospects-module input[type='datetime-local'].commercial-prospects-control::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  filter: invert(91%) sepia(9%) saturate(527%) hue-rotate(352deg) brightness(106%);
+  opacity: 0.9;
+}
+
+.commercial-prospects-module .commercial-prospects-control[aria-invalid='true'],
+.commercial-prospects-module .commercial-prospects-control:user-invalid,
+.commercial-prospects-module .commercial-prospects-control-error {
+  border-color: #f87171;
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.2);
+}
+
+@media (max-width: 640px) {
+  .commercial-prospects-module .commercial-prospects-control {
+    font-size: 16px;
+  }
+}
+
 /* ── POS total animation: brief scale-pulse when total changes ── */
 @keyframes posTotal {
   0%   { transform: scale(1.07); opacity: 0.7; }
