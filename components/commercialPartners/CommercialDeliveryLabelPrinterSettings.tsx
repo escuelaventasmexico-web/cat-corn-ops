@@ -8,10 +8,13 @@ import {
 } from '../../lib/qzService';
 import {
   DEFAULT_LABEL_ALIGNMENT,
+  DEFAULT_BARCODE_SIZE_ID,
   DEFAULT_LABEL_OFFSET_MM,
   isYichipLabelPrinter,
   LABEL_SIZE_CATALOG,
   LABEL_OFFSET_STEP_MM,
+  BARCODE_SIZE_CATALOG,
+  BarcodeSizeId,
   LabelSizeId,
   LabelHorizontalAlignment,
   MAX_LABEL_OFFSET_MM,
@@ -47,6 +50,7 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
   ));
   const [horizontalAlignment, setHorizontalAlignment] = useState<LabelHorizontalAlignment>(DEFAULT_LABEL_ALIGNMENT);
   const [horizontalOffsetMm, setHorizontalOffsetMm] = useState(DEFAULT_LABEL_OFFSET_MM);
+  const [barcodeSizeId, setBarcodeSizeId] = useState<BarcodeSizeId>(DEFAULT_BARCODE_SIZE_ID);
   const [testingAlignment, setTestingAlignment] = useState(false);
   const [testMessage, setTestMessage] = useState<string | null>(null);
   const [printers, setPrinters] = useState<string[]>([]);
@@ -87,6 +91,7 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
     setSelectedSizeId(profile?.sizeId ?? '');
     setHorizontalAlignment(profile?.horizontalAlignment ?? DEFAULT_LABEL_ALIGNMENT);
     setHorizontalOffsetMm(profile?.horizontalOffsetMm ?? DEFAULT_LABEL_OFFSET_MM);
+    setBarcodeSizeId(profile?.barcodeSizeId ?? DEFAULT_BARCODE_SIZE_ID);
     setTestMessage(null);
     void detectPrinters(configuredPrinter);
   }, [open]);
@@ -97,6 +102,7 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
     setSelectedSizeId(profile?.sizeId ?? '');
     setHorizontalAlignment(profile?.horizontalAlignment ?? DEFAULT_LABEL_ALIGNMENT);
     setHorizontalOffsetMm(profile?.horizontalOffsetMm ?? DEFAULT_LABEL_OFFSET_MM);
+    setBarcodeSizeId(profile?.barcodeSizeId ?? DEFAULT_BARCODE_SIZE_ID);
     setError(null);
     setTestMessage(null);
   };
@@ -123,6 +129,7 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
         sizeId: selectedSizeId as LabelSizeId,
         horizontalAlignment,
         horizontalOffsetMm,
+        barcodeSizeId,
       };
       try {
         resolveHorizontalPlacement(LABEL_SIZE_CATALOG[profile.sizeId], profile);
@@ -153,6 +160,7 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
         sizeId: selectedSizeId,
         horizontalAlignment,
         horizontalOffsetMm,
+        barcodeSizeId,
       });
       setTestMessage('Prueba de alineación aceptada por QZ Tray. No se modificaron datos ni entregas.');
     } catch (testError) {
@@ -178,8 +186,7 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
           <p className="flex items-center gap-2 text-sm font-bold text-[#111111]"><Printer size={16} />Impresora de etiquetas B2B</p>
           {savedPrinter ? <>
             <p className="truncate text-xs font-semibold text-[#4a2c0a]" title={savedPrinter}>{savedPrinter}</p>
-            {savedSize && <p className="mt-0.5 text-xs font-bold text-[#4a2c0a]">Tamaño: {savedSize.label}</p>}
-            {savedProfile && <p className="text-xs text-[#4a2c0a]">Alineación: {savedProfile.horizontalAlignment === 'left' ? 'Izquierda' : savedProfile.horizontalAlignment === 'center' ? 'Centro' : 'Derecha'} · ajuste {savedProfile.horizontalOffsetMm >= 0 ? '+' : ''}{savedProfile.horizontalOffsetMm.toFixed(1)} mm</p>}
+            {savedProfile && <p className="text-xs text-[#4a2c0a]">{savedSize?.label} · {savedProfile.horizontalAlignment === 'left' ? 'Izquierda' : savedProfile.horizontalAlignment === 'center' ? 'Centro' : 'Derecha'} · {savedProfile.horizontalOffsetMm >= 0 ? '+' : ''}{savedProfile.horizontalOffsetMm.toFixed(1)} mm · Código {BARCODE_SIZE_CATALOG[savedProfile.barcodeSizeId].label.toLowerCase()}</p>}
             <p className={`mt-1 flex items-center gap-1 text-xs ${connected && savedAvailable ? 'text-green-700' : 'text-amber-800'}`}>
               {connected && savedAvailable ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
               {connected && savedAvailable ? 'Conectada' : savedAvailable ? 'Pendiente de verificación con QZ Tray' : 'Impresora guardada no disponible'}
@@ -253,11 +260,23 @@ export default function CommercialDeliveryLabelPrinterSettings({ open, onOpenCha
                 <span className="text-xs text-[#dbc9a0]">mm</span>
               </div>
               <p className="mt-1 text-[11px] text-[#dbc9a0]">Rango: {MIN_LABEL_OFFSET_MM.toFixed(1)} a +{MAX_LABEL_OFFSET_MM.toFixed(1)} mm · pasos de {LABEL_OFFSET_STEP_MM.toFixed(1)} mm</p>
-              <button type="button" onClick={() => void printAlignmentTest()} disabled={testingAlignment || !selectedSizeId} className="mt-3 w-full rounded-lg border border-[#D6A23A] bg-white/10 px-3 py-2 text-xs font-bold text-[#ffe6a3] hover:bg-white/15 disabled:opacity-50">
-                {testingAlignment ? 'Imprimiendo prueba…' : 'Imprimir prueba de alineación'}
-              </button>
-              {testMessage && <p className="mt-2 text-xs text-green-300">{testMessage}</p>}
             </div>
+            <div className="mt-4 border-t border-white/10 pt-3">
+              <p className="text-xs font-bold text-[#ffe6a3]">Tamaño del código de barras</p>
+              <div className="mt-2 space-y-2">
+                {(Object.values(BARCODE_SIZE_CATALOG) as Array<(typeof BARCODE_SIZE_CATALOG)[BarcodeSizeId]>).map(barcodeSize => (
+                  <label key={barcodeSize.id} className="flex cursor-pointer items-center gap-2 text-xs text-[#fff8e6]">
+                    <input type="radio" name="commercial-barcode-size" checked={barcodeSizeId === barcodeSize.id} onChange={() => setBarcodeSizeId(barcodeSize.id)} className="accent-[#D6A23A]" />
+                    <span><strong>{barcodeSize.label}</strong> — {Math.round(barcodeSize.targetScale * 100)} %</span>
+                  </label>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] text-[#dbc9a0]">Usa Compacto o Reducido si las barras quedan cortadas en los costados.</p>
+            </div>
+            <button type="button" onClick={() => void printAlignmentTest()} disabled={testingAlignment || !selectedSizeId} className="mt-4 w-full rounded-lg border border-[#D6A23A] bg-white/10 px-3 py-2 text-xs font-bold text-[#ffe6a3] hover:bg-white/15 disabled:opacity-50">
+              {testingAlignment ? 'Imprimiendo prueba…' : 'Imprimir prueba de alineación y código'}
+            </button>
+            {testMessage && <p className="mt-2 text-xs text-green-300">{testMessage}</p>}
           </fieldset>
         )}
         <button type="button" onClick={saveSelection} disabled={!selectedPrinter || (isYichipLabelPrinter(selectedPrinter) && !selectedSizeId)} className="mt-4 w-full rounded-lg bg-[#D6A23A] px-4 py-2 text-sm font-bold text-[#2d1a00] hover:bg-[#e6b24a] disabled:opacity-50">Guardar</button>

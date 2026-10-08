@@ -15,7 +15,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { verifyFinancialAccessPassword } from '../../lib/financialAccessPassword';
 import CommercialDeliveryLabelPrinterSettings from './CommercialDeliveryLabelPrinterSettings';
-import { describeLabelPixels, ResolvedLabelPrinterProfile, resolveSavedLabelPrinterProfile } from '../../lib/commercialLabelSize';
+import { BARCODE_SIZE_CATALOG, describeLabelPixels, ResolvedLabelPrinterProfile, resolveSavedLabelPrinterProfile } from '../../lib/commercialLabelSize';
 
 interface Props {
   partnerId: string;
@@ -200,7 +200,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
     const sample = nextPrintBatch[0];
     try {
       const rendered = sample
-        ? renderCommercialDeliveryLabel(labelData(sample), labelSize)
+        ? renderCommercialDeliveryLabel(labelData(sample), labelSize, labelConfig.profile)
         : renderCommercialDeliveryLabel({
           unitId: 'vista-previa',
           scanCode: '1234567890123456',
@@ -210,7 +210,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
           size: describeLabelPixels(labelSize),
           sourceLabel: 'COMODATO',
           generatedAt: '2026-09-19T12:00:00-06:00',
-        }, labelSize);
+        }, labelSize, labelConfig.profile);
       setError(null);
       setPreview({ image: rendered.previewImageDataUrl, config: labelConfig });
     } catch (err: any) {
@@ -394,7 +394,7 @@ export default function CommercialDeliveryUnitsPanel({ partnerId, sourceType, on
     </div>}
     {preview && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setPreview(null)}>
       <div className="w-full max-w-[440px] rounded-xl border border-[#c49330] bg-[#fff8e6] p-4 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="font-bold text-[#111111]">Vista previa de etiqueta</h3><p className="text-xs text-[#6b5c40]">{preview.config.size.label} · {describeLabelPixels(preview.config.size)} · no imprime ni modifica datos</p><p className="text-xs font-semibold text-[#4a2c0a]">Orientación: {preview.config.profile.horizontalAlignment === 'left' ? 'Izquierda' : preview.config.profile.horizontalAlignment === 'center' ? 'Centro' : 'Derecha'} · desplazamiento total: {preview.config.placement.totalOffsetMm >= 0 ? '+' : ''}{preview.config.placement.totalOffsetMm.toFixed(1)} mm</p></div><button type="button" onClick={() => setPreview(null)} aria-label="Cerrar vista previa" className="text-[#4a2c0a]"><X size={18} /></button></div>
+        <div className="mb-3 flex items-center justify-between gap-3"><div><h3 className="font-bold text-[#111111]">Vista previa de etiqueta</h3><p className="text-xs text-[#6b5c40]">{preview.config.size.label} · {describeLabelPixels(preview.config.size)} · código {BARCODE_SIZE_CATALOG[preview.config.profile.barcodeSizeId].label.toLowerCase()} · no imprime ni modifica datos</p><p className="text-xs font-semibold text-[#4a2c0a]">Orientación: {preview.config.profile.horizontalAlignment === 'left' ? 'Izquierda' : preview.config.profile.horizontalAlignment === 'center' ? 'Centro' : 'Derecha'} · desplazamiento total: {preview.config.placement.totalOffsetMm >= 0 ? '+' : ''}{preview.config.placement.totalOffsetMm.toFixed(1)} mm</p></div><button type="button" onClick={() => setPreview(null)} aria-label="Cerrar vista previa" className="text-[#4a2c0a]"><X size={18} /></button></div>
         <div className="relative mx-auto w-full overflow-hidden border-2 border-dashed border-blue-700 bg-blue-50" style={{ aspectRatio: `${preview.config.size.printableWidthPx} / ${preview.config.size.heightPx}` }}>
           <div className="absolute inset-0 pointer-events-none"><span className="absolute left-1 top-1 z-10 rounded bg-blue-700 px-1 text-[9px] text-white">Ancho imprimible del cabezal</span></div>
           <div

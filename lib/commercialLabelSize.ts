@@ -1,10 +1,12 @@
 export type LabelSizeId = '50x30' | '50x40';
 export type LabelHorizontalAlignment = 'left' | 'center' | 'right';
+export type BarcodeSizeId = 'normal' | 'compact' | 'reduced';
 
 export interface LabelPrinterProfile {
   sizeId: LabelSizeId;
   horizontalAlignment: LabelHorizontalAlignment;
   horizontalOffsetMm: number;
+  barcodeSizeId: BarcodeSizeId;
 }
 
 export interface LabelSizeConfig {
@@ -20,6 +22,7 @@ export interface LabelSizeConfig {
   printWidthPx: number;
   sourceCropXPx: number;
   nativeOriginXPx: number;
+  configurableBarcode: boolean;
   gapMm: number;
   dpi: number;
   dotsPerMm: number;
@@ -47,6 +50,7 @@ const buildLabelSize = (
     printWidthPx: printableWidthPx - safeMarginXPx * 2,
     sourceCropXPx: widthPx - printableWidthPx + safeMarginXPx,
     nativeOriginXPx: safeMarginXPx,
+    configurableBarcode: true,
     gapMm: 3,
     dpi: 203,
     dotsPerMm: 8,
@@ -64,6 +68,18 @@ export const DEFAULT_LABEL_OFFSET_MM = 0;
 export const MIN_LABEL_OFFSET_MM = -5;
 export const MAX_LABEL_OFFSET_MM = 10;
 export const LABEL_OFFSET_STEP_MM = 0.5;
+export const DEFAULT_BARCODE_SIZE_ID: BarcodeSizeId = 'normal';
+export const BARCODE_QUIET_ZONE_MM = 3;
+export const BARCODE_RECOMMENDED_TOTAL_WIDTH_MM = 42;
+export const BARCODE_MAX_TOTAL_WIDTH_MM = 44;
+export const LEGACY_PRODUCT_BARCODE_QUIET_ZONE_PX = 12;
+export const LEGACY_B2B_BARCODE_QUIET_ZONE_PX = 14;
+
+export const BARCODE_SIZE_CATALOG: Record<BarcodeSizeId, { id: BarcodeSizeId; label: string; targetScale: number }> = {
+  normal: { id: 'normal', label: 'Normal', targetScale: 1 },
+  compact: { id: 'compact', label: 'Compacto', targetScale: 0.85 },
+  reduced: { id: 'reduced', label: 'Reducido', targetScale: 0.75 },
+};
 export const YICHIP_LABEL_PRINTER_NAME = 'YICHIP3121 POS-58 Printer etiquetas';
 
 const LABEL_SIZE_STORAGE_KEY = 'catcorn_commercial_delivery_label_sizes_v1';
@@ -82,10 +98,14 @@ export const isLabelSizeId = (value: unknown): value is LabelSizeId =>
 const isAlignment = (value: unknown): value is LabelHorizontalAlignment =>
   value === 'left' || value === 'center' || value === 'right';
 
+const isBarcodeSizeId = (value: unknown): value is BarcodeSizeId =>
+  value === 'normal' || value === 'compact' || value === 'reduced';
+
 const defaultProfile = (sizeId: LabelSizeId = DEFAULT_LABEL_SIZE_ID): LabelPrinterProfile => ({
   sizeId,
   horizontalAlignment: DEFAULT_LABEL_ALIGNMENT,
   horizontalOffsetMm: DEFAULT_LABEL_OFFSET_MM,
+  barcodeSizeId: DEFAULT_BARCODE_SIZE_ID,
 });
 
 const normalizeProfile = (value: unknown): LabelPrinterProfile | null => {
@@ -98,6 +118,7 @@ const normalizeProfile = (value: unknown): LabelPrinterProfile | null => {
     sizeId: source.sizeId,
     horizontalAlignment: source.horizontalAlignment,
     horizontalOffsetMm: source.horizontalOffsetMm,
+    barcodeSizeId: isBarcodeSizeId(source.barcodeSizeId) ? source.barcodeSizeId : DEFAULT_BARCODE_SIZE_ID,
   };
 };
 
@@ -165,6 +186,66 @@ export const describeLabelPixels = (size: LabelSizeConfig) =>
 export const getContentVerticalOffset = (size: LabelSizeConfig) =>
   Math.max(0, Math.round((size.heightPx - size.contentHeightPx) / 2));
 
+export interface BarcodeGeometry {
+  barsWidthPx: number;
+  totalWidthPx: number;
+  quietZonePx: number;
+  leftMarginPx: number;
+  rightMarginPx: number;
+  totalWidthMm: number;
+}
+
+export const resolveBarcodeGeometry = (
+  sourceBarsWidthPx: number,
+  size: LabelSizeConfig,
+  barcodeSizeId: BarcodeSizeId,
+  legacyQuietZonePx: number,
+): BarcodeGeometry => {
+  if (!Number.isInteger(sourceBarsWidthPx) || sourceBarsWidthPx <= 0) {
+    throw new Error('El código de barras no tiene un ancho raster válido.');
+  }
+  if (!size.configurableBarcode) {
+    return {
+      barsWidthPx: sourceBarsWidthPx,
+      totalWidthPx: sourceBarsWidthPx + legacyQuietZonePx * 2,
+      quietZonePx: legacyQuietZonePx,
+      leftMarginPx: legacyQuietZonePx,
+      rightMarginPx: legacyQuietZonePx,
+      totalWidthMm: (sourceBarsWidthPx + legacyQuietZonePx * 2) / size.dotsPerMm,
+    };
+  }
+  const selection = BARCODE_SIZE_CATALOG[barcodeSizeId];
+  const quietZonePx = Math.ceil(BARCODE_QUIET_ZONE_MM * size.dotsPerMm);
+  const recommendedTotalWidthPx = Math.floor(BARCODE_RECOMMENDED_TOTAL_WIDTH_MM * size.dotsPerMm);
+  const maximumTotalWidthPx = Math.floor(BARCODE_MAX_TOTAL_WIDTH_MM * size.dotsPerMm);
+  const maximumBarsWidthPx = Math.min(size.printWidthPx, recommendedTotalWidthPx) - quietZonePx * 2;
+  const targetBarsWidthPx = Math.min(
+    Math.round(sourceBarsWidthPx * selection.targetScale),
+    maximumBarsWidthPx,
+  );
+  const minimumSafeBarsWidthPx = Math.ceil(sourceBarsWidthPx / 2);
+  if (targetBarsWidthPx <= 0 || targetBarsWidthPx < minimumSafeBarsWidthPx) {
+    throw new Error('El código contiene demasiados caracteres para imprimirse de forma segura en este tamaño.');
+  }
+  const totalWidthPx = targetBarsWidthPx + quietZonePx * 2;
+  if (totalWidthPx > size.printWidthPx || totalWidthPx > maximumTotalWidthPx) {
+    throw new Error('El código contiene demasiados caracteres para imprimirse de forma segura en este tamaño.');
+  }
+  const leftMarginPx = Math.floor((size.printWidthPx - targetBarsWidthPx) / 2);
+  const rightMarginPx = size.printWidthPx - targetBarsWidthPx - leftMarginPx;
+  if (leftMarginPx < quietZonePx || rightMarginPx < quietZonePx) {
+    throw new Error('El código contiene demasiados caracteres para imprimirse de forma segura en este tamaño.');
+  }
+  return {
+    barsWidthPx: targetBarsWidthPx,
+    totalWidthPx,
+    quietZonePx,
+    leftMarginPx,
+    rightMarginPx,
+    totalWidthMm: totalWidthPx / size.dotsPerMm,
+  };
+};
+
 export interface LabelHorizontalPlacement {
   xPx: number;
   totalOffsetMm: number;
@@ -218,6 +299,7 @@ export const resolveSavedLabelPrinterProfile = (printerName: string): ResolvedLa
       printWidthPx: catalogSize.printableWidthPx,
       sourceCropXPx: catalogSize.safeMarginXPx,
       nativeOriginXPx: 0,
+      configurableBarcode: false,
     };
     return {
       profile,

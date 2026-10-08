@@ -16,9 +16,13 @@ import {
   describeLabelPixels,
   getContentVerticalOffset,
   isYichipLabelPrinter,
+  BARCODE_SIZE_CATALOG,
   LABEL_SIZE_CATALOG,
+  LEGACY_B2B_BARCODE_QUIET_ZONE_PX,
+  LEGACY_PRODUCT_BARCODE_QUIET_ZONE_PX,
   LabelPrinterProfile,
   LabelSizeConfig,
+  resolveBarcodeGeometry,
   resolveHorizontalPlacement,
   resolveSavedLabelPrinterProfile,
 } from './commercialLabelSize';
@@ -527,7 +531,7 @@ export async function printLabelViaQZ(
 
   const labelConfig = resolveSavedLabelPrinterProfile(printerName);
   const labelSize = labelConfig.size;
-  const rendered = renderProductLabel(label, labelSize);
+  const rendered = renderProductLabel(label, labelSize, labelConfig.profile);
   if (!hasExpectedDimensions(rendered, labelSize)) {
     throw new Error(`No se pudo renderizar la etiqueta de producto en ${describeLabelPixels(labelSize)}.`);
   }
@@ -639,12 +643,66 @@ const drawFullBarcodeValue = (
   throw new Error('El valor legible del código de barras no cabe completo en la etiqueta.');
 };
 
+type BarcodeFormat = 'CODE128' | 'CODE128C';
+
+const renderBarcodeForLabel = (
+  value: string,
+  format: BarcodeFormat,
+  height: number,
+  labelSize: LabelSizeConfig,
+  profile: LabelPrinterProfile,
+) => {
+  const sourceCanvas = document.createElement('canvas');
+  JsBarcode(sourceCanvas, value, {
+    format,
+    displayValue: false,
+    width: 2,
+    height,
+    margin: 0,
+    background: '#ffffff',
+    lineColor: '#000000',
+  });
+  const legacyQuietZonePx = format === 'CODE128C'
+    ? LEGACY_B2B_BARCODE_QUIET_ZONE_PX
+    : LEGACY_PRODUCT_BARCODE_QUIET_ZONE_PX;
+  const geometry = resolveBarcodeGeometry(
+    sourceCanvas.width,
+    labelSize,
+    profile.barcodeSizeId,
+    legacyQuietZonePx,
+  );
+  const barcodeCanvas = document.createElement('canvas');
+  barcodeCanvas.width = geometry.totalWidthPx;
+  barcodeCanvas.height = sourceCanvas.height;
+  const barcodeContext = barcodeCanvas.getContext('2d');
+  if (!barcodeContext) throw new Error('El navegador no pudo preparar el código de barras.');
+  barcodeContext.fillStyle = '#ffffff';
+  barcodeContext.fillRect(0, 0, barcodeCanvas.width, barcodeCanvas.height);
+  barcodeContext.imageSmoothingEnabled = false;
+  barcodeContext.drawImage(
+    sourceCanvas,
+    0,
+    0,
+    sourceCanvas.width,
+    sourceCanvas.height,
+    geometry.quietZonePx,
+    0,
+    geometry.barsWidthPx,
+    sourceCanvas.height,
+  );
+  return { canvas: barcodeCanvas, geometry };
+};
+
 /**
  * Renders the product label used exclusively by Imprimir Etiquetas.
  * Its logical canvas leaves the catalogued blank dots on each side; only that
  * blank gutter is cropped for the YICHIP image.
  */
-export function renderProductLabel(label: LabelPrintData, labelSize: LabelSizeConfig): RenderedProductLabel {
+export function renderProductLabel(
+  label: LabelPrintData,
+  labelSize: LabelSizeConfig,
+  profile: LabelPrinterProfile,
+): RenderedProductLabel {
   const barcodeValue = label.barcodeValue.trim();
   if (!barcodeValue) throw new Error('El producto no tiene un código de barras para imprimir.');
   if (!Number.isFinite(label.price)) throw new Error('El producto no tiene un precio de venta válido para imprimir.');
@@ -671,18 +729,7 @@ export function renderProductLabel(label: LabelPrintData, labelSize: LabelSizeCo
     weight: 700,
   }, labelSize);
 
-  const barcodeCanvas = document.createElement('canvas');
-  JsBarcode(barcodeCanvas, barcodeValue, {
-    format: 'CODE128',
-    displayValue: false,
-    width: 2,
-    height: 112,
-    margin: 0,
-    marginLeft: 12,
-    marginRight: 12,
-    background: '#ffffff',
-    lineColor: '#000000',
-  });
+  const { canvas: barcodeCanvas } = renderBarcodeForLabel(barcodeValue, 'CODE128', 112, labelSize, profile);
   if (barcodeCanvas.width > labelSize.printWidthPx - 16 || barcodeCanvas.height > 112) {
     throw new Error('El código de barras no cabe completo en el área segura de la etiqueta.');
   }
@@ -717,6 +764,7 @@ export interface RenderedCommercialDeliveryLabel {
 export function renderCommercialDeliveryLabel(
   label: CommercialDeliveryLabelData,
   labelSize: LabelSizeConfig,
+  profile: LabelPrinterProfile,
 ): RenderedCommercialDeliveryLabel {
   const scanCode = label.scanCode?.trim() ?? '';
   if (!SCAN_CODE_PATTERN.test(scanCode)) {
@@ -753,18 +801,7 @@ export function renderCommercialDeliveryLabel(
   drawFittedText(context, presentation, 86, { maxFontSize: 12, minFontSize: 9 }, labelSize);
   drawFittedText(context, labelDates.elaborationDate, 103, { maxFontSize: 11, minFontSize: 9 }, labelSize);
 
-  const barcodeCanvas = document.createElement('canvas');
-  JsBarcode(barcodeCanvas, scanCode, {
-    format: 'CODE128C',
-    displayValue: false,
-    width: 2,
-    height: 68,
-    margin: 0,
-    marginLeft: 14,
-    marginRight: 14,
-    background: '#ffffff',
-    lineColor: '#000000',
-  });
+  const { canvas: barcodeCanvas } = renderBarcodeForLabel(scanCode, 'CODE128C', 68, labelSize, profile);
   if (barcodeCanvas.width > labelSize.printWidthPx || barcodeCanvas.height > 76) {
     throw new Error(`El CODE128 de la etiqueta ${label.unitId} no cabe en el área segura de ${labelSize.label}.`);
   }
@@ -799,7 +836,7 @@ export async function printCommercialDeliveryUnitLabels(labels: CommercialDelive
 
   const labelConfig = resolveSavedLabelPrinterProfile(printerName);
   const labelSize = labelConfig.size;
-  const rendered = labels.map(label => renderCommercialDeliveryLabel(label, labelSize));
+  const rendered = labels.map(label => renderCommercialDeliveryLabel(label, labelSize, labelConfig.profile));
   if (rendered.length !== labels.length || rendered.some(label =>
     !hasExpectedDimensions(label, labelSize)
   )) {
@@ -826,7 +863,7 @@ export async function printCommercialDeliveryLabelTest(): Promise<void> {
     size: describeLabelPixels(labelSize),
     sourceLabel: 'PRUEBA',
     generatedAt: '2026-09-19T12:00:00-06:00',
-  }, labelSize);
+  }, labelSize, labelConfig.profile);
   if (!hasExpectedDimensions(rendered, labelSize)) {
     throw new Error(`La etiqueta de prueba no tiene las dimensiones requeridas de ${describeLabelPixels(labelSize)}.`);
   }
@@ -872,6 +909,8 @@ export async function printCommercialDeliveryAlignmentTest(
   [left, center, right].forEach(x => {
     context.beginPath();
     context.moveTo(x, top);
+    context.lineTo(x, top + 12);
+    context.moveTo(x, bottom - 12);
     context.lineTo(x, bottom);
     context.stroke();
   });
@@ -884,24 +923,22 @@ export async function printCommercialDeliveryAlignmentTest(
   drawFittedText(context, `Alineación: ${alignmentLabel(profile.horizontalAlignment)}`, 29, { maxFontSize: 15, minFontSize: 11, weight: 700 }, labelSize);
   const signedOffset = `${profile.horizontalOffsetMm >= 0 ? '+' : ''}${profile.horizontalOffsetMm.toFixed(1)} mm`;
   drawFittedText(context, `Ajuste: ${signedOffset}`, 48, { maxFontSize: 14, minFontSize: 10, weight: 700 }, labelSize);
-  drawFittedText(context, `Tamaño: ${labelSize.label}`, 66, { maxFontSize: 13, minFontSize: 10 }, labelSize);
+  drawFittedText(
+    context,
+    `Etiqueta: ${labelSize.label} · Código: ${BARCODE_SIZE_CATALOG[profile.barcodeSizeId].label}`,
+    66,
+    { maxFontSize: 13, minFontSize: 9 },
+    labelSize,
+  );
 
-  const barcodeCanvas = document.createElement('canvas');
-  JsBarcode(barcodeCanvas, 'ALIGN5030', {
-    format: 'CODE128',
-    displayValue: false,
-    width: 2,
-    height: 72,
-    margin: 0,
-    background: '#ffffff',
-    lineColor: '#000000',
-  });
-  if (barcodeCanvas.width > labelSize.printWidthPx - labelSize.safeMarginXPx * 2) {
-    throw new Error('El código de prueba no cabe dentro del área segura.');
-  }
-  context.drawImage(barcodeCanvas, Math.round((labelSize.widthPx - barcodeCanvas.width) / 2), 86);
-  drawFittedText(context, 'ALINEACIÓN DE CABEZAL', 181, { maxFontSize: 13, minFontSize: 10, weight: 700 }, labelSize);
-  drawFittedText(context, `Total: ${placement.totalOffsetMm >= 0 ? '+' : ''}${placement.totalOffsetMm.toFixed(1)} mm`, 201, { maxFontSize: 12, minFontSize: 9 }, labelSize);
+  const testValue = '1234567890123456';
+  const { canvas: barcodeCanvas, geometry } = renderBarcodeForLabel(testValue, 'CODE128C', 60, labelSize, profile);
+  context.drawImage(barcodeCanvas, Math.round((labelSize.widthPx - barcodeCanvas.width) / 2), 76);
+  drawFittedText(context, testValue, 151, { maxFontSize: 13, minFontSize: 10, weight: 700 }, labelSize);
+  drawFittedText(context, `${geometry.totalWidthPx} px · ${geometry.totalWidthMm.toFixed(1)} mm`, 168, { maxFontSize: 12, minFontSize: 9 }, labelSize);
+  drawFittedText(context, `Blanco I: ${(geometry.leftMarginPx / labelSize.dotsPerMm).toFixed(1)} mm · D: ${(geometry.rightMarginPx / labelSize.dotsPerMm).toFixed(1)} mm`, 185, { maxFontSize: 11, minFontSize: 8 }, labelSize);
+  drawFittedText(context, `Total: ${placement.totalOffsetMm >= 0 ? '+' : ''}${placement.totalOffsetMm.toFixed(1)} mm`, 201, { maxFontSize: 11, minFontSize: 8 }, labelSize);
+  drawFittedText(context, 'ESCANEAR PARA VALIDAR', 220, { maxFontSize: 13, minFontSize: 10, weight: 700 }, labelSize);
   context.restore();
 
   const printCanvas = createYichipPrintImage(canvas, labelSize);

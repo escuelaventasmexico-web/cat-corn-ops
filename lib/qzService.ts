@@ -307,7 +307,8 @@ export async function printCommercialDeliveryLabelImages(
     const saved = resolveSavedLabelPrinterProfile(printerName);
     if (saved.profile.sizeId !== profile.sizeId
       || saved.profile.horizontalAlignment !== profile.horizontalAlignment
-      || saved.profile.horizontalOffsetMm !== profile.horizontalOffsetMm) {
+      || saved.profile.horizontalOffsetMm !== profile.horizontalOffsetMm
+      || saved.profile.barcodeSizeId !== profile.barcodeSizeId) {
       throw new Error('El perfil de la etiqueta no corresponde a la preferencia guardada para esta impresora.');
     }
   }
