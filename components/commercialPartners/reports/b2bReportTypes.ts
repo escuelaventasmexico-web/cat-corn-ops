@@ -453,6 +453,88 @@ export interface B2BProductAnalyticsDataQuality {
   rows_without_unit_cost: B2BDataQualitySection;
 }
 
+export type B2BWasteSource = 'tagged_spoilage' | 'legacy_spoilage' | 'withdrawal';
+
+export interface B2BWasteSummary {
+  total_units: number;
+  tagged_spoilage_units: number;
+  legacy_spoilage_units: number;
+  withdrawal_units: number;
+  production_cost_total: number | null;
+  public_value_total: number | null;
+  production_cost_complete: boolean;
+  public_value_complete: boolean;
+  missing_cost_quantity: number;
+  missing_public_price_quantity: number;
+  current_public_price_quantity?: number;
+}
+
+export interface B2BWastePartner extends B2BWasteSummary {
+  partner_id: string;
+  partner_name: string;
+  monthly_waste_percentage: number | null;
+  cost_responsibility: 'catcorn' | 'partner' | 'mixed' | 'not_recorded' | string;
+}
+
+export interface B2BWasteProduct {
+  product_key: string;
+  product_id: string | null;
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  waste_units: number;
+  tagged_spoilage_units: number;
+  legacy_spoilage_units: number;
+  withdrawal_units: number;
+  production_cost_total: number | null;
+  public_value_total: number | null;
+  production_cost_complete: boolean;
+  public_value_complete: boolean;
+  missing_cost_quantity: number;
+  missing_public_price_quantity: number;
+  delivered_units: number | null;
+  waste_rate: number | null;
+}
+
+export interface B2BWasteDetail {
+  event_identity: string;
+  partner_id: string;
+  partner_name: string;
+  event_date: string;
+  reporting_month: string;
+  product_id: string | null;
+  product_name: string;
+  product_variant: string | null;
+  product_size: string | null;
+  quantity: number;
+  waste_source: B2BWasteSource;
+  movement_id: string;
+  movement_item_id: string | null;
+  delivery_unit_id: string | null;
+  production_unit_cost: number | null;
+  production_cost_total: number | null;
+  public_unit_price: number | null;
+  public_value_total: number | null;
+  production_cost_complete: boolean;
+  public_value_complete: boolean;
+  pricing_source: 'historical_suggested_retail_price_snapshot' | 'current_public_product_price' | 'public_price_unavailable';
+  deduplication_evidence: string;
+  product_key: string;
+}
+
+export interface B2BWasteAnalyticsResponse {
+  period: {
+    start_date: string;
+    end_date_exclusive: string;
+    timezone: 'America/Mexico_City';
+  };
+  summary: B2BWasteSummary;
+  partners: B2BWastePartner[];
+  products: B2BWasteProduct[];
+  details: B2BWasteDetail[];
+  ambiguities: Array<Record<string, unknown>>;
+}
+
 export interface B2BProductAnalyticsResponse {
   period: {
     start_at: string;
@@ -465,4 +547,5 @@ export interface B2BProductAnalyticsResponse {
   liquidation_time_by_product: B2BProductLiquidationTime[];
   slow_inventory: B2BSlowInventoryItem[];
   data_quality: B2BProductAnalyticsDataQuality;
+  waste: B2BWasteAnalyticsResponse;
 }
