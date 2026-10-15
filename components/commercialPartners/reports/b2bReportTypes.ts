@@ -345,9 +345,13 @@ export interface B2BProductAnalyticsTopSpoilagePartner {
 
 export interface B2BProductAnalyticsSummary {
   units_sold: number;
+  gross_recognized_revenue?: number;
+  approved_adjustments?: number;
   generated_revenue: number;
   distinct_partners: number;
   comodato_units: number;
+  comodato_gross_revenue?: number;
+  comodato_approved_adjustments?: number;
   comodato_revenue: number;
   wholesale_units: number;
   wholesale_revenue: number;
@@ -366,9 +370,13 @@ export interface B2BProductPerformance {
   product_variant: string | null;
   product_size: string | null;
   units_sold: number;
+  gross_recognized_revenue?: number;
+  approved_adjustments?: number;
   generated_revenue: number;
   distinct_partners: number;
   comodato_units: number;
+  comodato_gross_revenue?: number;
+  comodato_approved_adjustments?: number;
   comodato_revenue: number;
   wholesale_units: number;
   wholesale_revenue: number;

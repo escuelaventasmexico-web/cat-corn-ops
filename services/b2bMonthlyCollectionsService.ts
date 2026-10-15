@@ -1,5 +1,13 @@
 import { supabase } from '../supabase';
 
+const describeSupabaseError = (error: unknown): string => {
+  if (!error || typeof error !== 'object') return String(error ?? 'Error desconocido');
+  const value = error as Record<string, unknown>;
+  return [value.message, value.details, value.hint, value.code]
+    .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+    .join(' · ');
+};
+
 export type B2BCollectionSourceType = 'comodato' | 'mayoreo';
 export type B2BCollectionPaymentStatus = 'pending' | 'partial' | 'paid';
 
@@ -80,7 +88,7 @@ export const getB2BMonthlyCollectionsReport = async (month: string): Promise<B2B
   if (!supabase) throw new Error('Supabase no está configurado');
   const { start, end } = monthBoundary(month);
   const { data, error } = await supabase.rpc('get_b2b_monthly_collections_report', { p_month_start: start, p_month_end: end });
-  if (error) throw error;
+  if (error) throw new Error(`Error en cobranza mensual B2B: ${describeSupabaseError(error)}`);
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('El reporte mensual de cobranza devolvió una respuesta inválida.');
   return data as B2BMonthlyCollectionsReport;
 };

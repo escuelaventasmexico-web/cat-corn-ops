@@ -1,6 +1,14 @@
 import { supabase } from '../supabase';
 import type { B2BPartnerRanking } from '../components/commercialPartners/reports/b2bReportTypes';
 
+const describeSupabaseError = (error: unknown): string => {
+  if (!error || typeof error !== 'object') return String(error ?? 'Error desconocido');
+  const value = error as Record<string, unknown>;
+  return [value.message, value.details, value.hint, value.code]
+    .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+    .join(' · ');
+};
+
 export interface B2BMonthlyMetrics {
   comodato_generated: number;
   comodato_paid: number;
@@ -51,7 +59,7 @@ export const getB2BMonthlyAnalysis = async (month: string): Promise<B2BMonthlyAn
     p_month_start: start,
     p_month_end: endExclusive,
   });
-  if (error) throw error;
+  if (error) throw new Error(`Error en análisis mensual B2B: ${describeSupabaseError(error)}`);
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('El análisis mensual B2B devolvió una respuesta inválida.');
   }
