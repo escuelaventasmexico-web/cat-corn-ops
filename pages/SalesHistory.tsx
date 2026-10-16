@@ -968,7 +968,7 @@ export const SalesHistory = () => {
               )}
 
               {/* Socios Comerciales (Commercial Collections) */}
-              {comercialCollections.total > 0 && (
+              {!collectionsError && comercialCollections.total > 0 && (
                 <div className="bg-black/20 p-4 rounded-lg border border-pink-500/20">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-bold text-pink-400">🤝 Socios Comerciales</span>
@@ -1013,13 +1013,23 @@ export const SalesHistory = () => {
 
               {/* Grand total from visible sales plus separately labeled commercial collections */}
               <div className="bg-cc-primary/10 p-4 rounded-lg border border-cc-primary/20">
-                <div className="text-sm text-cc-text-muted mb-1">Total General histórico</div>
-                <div className="text-3xl font-bold text-cc-primary">${(netTotal + comercialCollections.total).toFixed(2)}</div>
+                <div className="text-sm text-cc-text-muted mb-1">
+                  {collectionsError ? 'Total POS histórico · cobranza B2B no disponible' : 'Total General histórico'}
+                </div>
+                <div className="text-3xl font-bold text-cc-primary">
+                  ${(collectionsError ? netTotal : netTotal + comercialCollections.total).toFixed(2)}
+                </div>
                 <div className="text-sm text-cc-text-muted mt-2 space-y-1">
                   <div>POS (Bruto): <span className="font-semibold text-cc-cream">${grossTotal.toFixed(2)}</span></div>
                   <div>POS (Devoluciones): <span className="font-semibold text-red-400">-${refundedTotal.toFixed(2)}</span></div>
-                  <div>Socios Comerciales: <span className="font-semibold text-pink-300">${comercialCollections.total.toFixed(2)}</span></div>
-                  <div className="text-cc-primary font-bold mt-2">TOTAL: ${(netTotal + comercialCollections.total).toFixed(2)}</div>
+                  {collectionsError ? (
+                    <div className="font-semibold text-amber-300">Socios Comerciales: no disponible</div>
+                  ) : (
+                    <div>Socios Comerciales: <span className="font-semibold text-pink-300">${comercialCollections.total.toFixed(2)}</span></div>
+                  )}
+                  <div className="text-cc-primary font-bold mt-2">
+                    {collectionsError ? 'TOTAL POS' : 'TOTAL'}: ${(collectionsError ? netTotal : netTotal + comercialCollections.total).toFixed(2)}
+                  </div>
                 </div>
               </div>
             </div>

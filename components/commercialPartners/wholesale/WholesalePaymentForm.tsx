@@ -116,6 +116,10 @@ const WholesalePaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) 
   };
 
   const handleSave = async () => {
+    if (!paymentDate || paymentDate > todayISO()) {
+      setError('La fecha efectiva del pago no puede ser futura.');
+      return;
+    }
     const amountNum = parseFloat(amount);
     if (!amount || isNaN(amountNum) || amountNum <= 0) {
       setError('Ingresa un monto válido mayor a cero.');
@@ -239,6 +243,7 @@ const WholesalePaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) 
           reference: reference.trim() || null,
           notes: notes.trim() || null,
           payment_date: paymentTimestamp,
+          business_date: paymentDate,
         });
 
       if (insertErr) throw insertErr;

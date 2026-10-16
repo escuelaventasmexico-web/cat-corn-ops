@@ -20,10 +20,12 @@ const WholesalePaymentHistory: React.FC<Props> = ({ partnerId, refreshKey = 0 })
     setLoading(true);
     try {
       const { data, error } = await supabase
-        .from('wholesale_payments')
+        .from('v_b2b_confirmed_payments')
         .select('*')
+        .eq('source_type', 'mayoreo')
         .eq('partner_id', partnerId)
-        .order('payment_date', { ascending: false });
+        .order('business_date', { ascending: false })
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
       setPayments(data || []);
@@ -51,7 +53,7 @@ const WholesalePaymentHistory: React.FC<Props> = ({ partnerId, refreshKey = 0 })
           <div className="grid grid-cols-5 gap-3 text-sm">
             <div>
               <p className="text-xs text-[#6b7280]">Fecha</p>
-              <p className="font-semibold text-[#111111]">{fmtDate(payment.payment_date)}</p>
+              <p className="font-semibold text-[#111111]">{fmtDate(payment.business_date || payment.payment_date)}</p>
             </div>
             <div>
               <p className="text-xs text-[#6b7280]">Monto</p>

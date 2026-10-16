@@ -1,3 +1,5 @@
+import { getBusinessDateString } from '../../../lib/dateUtils';
+
 // ── Phase 2 types for Commercial Partners – Comodato module ──────────────────
 
 export type MovementType = 'delivery' | 'settlement' | 'withdrawal' | 'spoilage' | 'adjustment' | 'visit';
@@ -66,6 +68,7 @@ export interface PartnerPayment {
   partner_id: string;
   movement_id?: string | null;
   payment_date: string;
+  business_date?: string | null;
   amount: number;
   payment_method: string;
   reference?: string | null;
@@ -132,12 +135,15 @@ export const fmtCurrency = (n?: number | null) => {
 
 export const fmtDate = (iso?: string | null) => {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('es-MX', {
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const value = dateOnly ? new Date(`${iso}T12:00:00Z`) : new Date(iso);
+  return value.toLocaleDateString('es-MX', {
     day: '2-digit', month: 'short', year: 'numeric',
+    timeZone: dateOnly ? 'UTC' : 'America/Mexico_City',
   });
 };
 
-export const todayISO = () => new Date().toISOString().split('T')[0];
+export const todayISO = () => getBusinessDateString();
 
 // ── Shared input / select class strings (mustard theme) ──────────────────────
 export const INPUT_CLS =

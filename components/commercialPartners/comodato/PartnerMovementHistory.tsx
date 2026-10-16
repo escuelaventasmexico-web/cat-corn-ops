@@ -62,10 +62,12 @@ const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
           .order('movement_date', { ascending: false })
           .limit(60),
         supabase!
-          .from('commercial_partner_payments')
+          .from('v_b2b_confirmed_payments')
           .select('*')
+          .eq('source_type', 'comodato')
           .eq('partner_id', partnerId)
-          .order('payment_date', { ascending: false })
+          .order('business_date', { ascending: false })
+          .order('created_at', { ascending: false })
           .limit(60),
       ]);
 
@@ -204,8 +206,8 @@ const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
     ...movements.map(m => ({ kind: 'movement' as const, data: m })),
     ...payments.map(p => ({ kind: 'payment' as const, data: p })),
   ].sort((a, b) => {
-    const aDate = a.kind === 'movement' ? a.data.movement_date : a.data.payment_date;
-    const bDate = b.kind === 'movement' ? b.data.movement_date : b.data.payment_date;
+    const aDate = a.kind === 'movement' ? a.data.movement_date : (a.data.business_date || a.data.payment_date);
+    const bDate = b.kind === 'movement' ? b.data.movement_date : (b.data.business_date || b.data.payment_date);
     return bDate.localeCompare(aDate);
   });
 
@@ -436,7 +438,7 @@ const PartnerMovementHistory: React.FC<Props> = ({ partnerId, refreshKey }) => {
                 <CreditCard className="w-4 h-4 text-green-600 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-[#111111]">Pago recibido</p>
-                  <p className="text-xs text-[#6b5c40]">{fmtDate(p.payment_date)} · {methodLabel}</p>
+                  <p className="text-xs text-[#6b5c40]">{fmtDate(p.business_date || p.payment_date)} · {methodLabel}</p>
                   {p.reference && <p className="text-xs text-[#9a8060]">Ref: {p.reference}</p>}
                   {p.notes && <p className="text-xs text-[#9a8060] italic">{p.notes}</p>}
                 </div>

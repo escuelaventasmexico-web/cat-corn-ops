@@ -184,10 +184,14 @@ const FinanceResumenTest = () => {
 
         const commercialData = await getCommercialCollections(monthStartUTC, monthEndUTC);
 
+        if (commercialData.error) {
+          throw new Error(commercialData.error);
+        }
+
         // Aggregate commercial collections
-        const commercialTotal = commercialData.error ? 0 : commercialData.total;
-        const commercialCash = commercialData.error ? 0 : commercialData.cash;
-        const commercialTransfer = commercialData.error ? 0 : commercialData.transfer;
+        const commercialTotal = commercialData.total;
+        const commercialCash = commercialData.cash;
+        const commercialTransfer = commercialData.transfer;
 
         // Calculate projection based on combined revenue and days elapsed
         const combinedMonthlySales = (result.sales_mtd_mxn || 0) + commercialTotal;
@@ -220,14 +224,12 @@ const FinanceResumenTest = () => {
           sales_projection_mxn: projectedSales
         };
 
-        if (!commercialData.error) {
-          console.log('Finance month summary enriched with commercial collections', {
-            month: monthLabel,
-            commercial_collections: commercialTotal,
-            store_sales: result.sales_mtd_mxn,
-            combined_sales: enrichedResult.sales_mtd_mxn
-          });
-        }
+        console.log('Finance month summary enriched with commercial collections', {
+          month: monthLabel,
+          commercial_collections: commercialTotal,
+          store_sales: result.sales_mtd_mxn,
+          combined_sales: enrichedResult.sales_mtd_mxn
+        });
 
         setData(enrichedResult);
       } catch (err) {

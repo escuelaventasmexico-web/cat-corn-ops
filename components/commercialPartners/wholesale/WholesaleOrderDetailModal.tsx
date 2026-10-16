@@ -79,10 +79,12 @@ const WholesaleOrderDetailModal: React.FC<Props> = ({ orderId, onClose }) => {
 
       // Load payments for this order
       const { data: paymentsData, error: paymentsError } = await supabase
-        .from('wholesale_payments')
+        .from('v_b2b_confirmed_payments')
         .select('*')
+        .eq('source_type', 'mayoreo')
         .eq('wholesale_order_id', orderId)
-        .order('payment_date', { ascending: false });
+        .order('business_date', { ascending: false })
+        .order('created_at', { ascending: false });
 
       if (paymentsError) throw paymentsError;
       setPayments(paymentsData || []);
@@ -299,7 +301,7 @@ const WholesaleOrderDetailModal: React.FC<Props> = ({ orderId, onClose }) => {
                     <div className="grid grid-cols-2 gap-3 md:grid-cols-5 text-sm">
                       <div>
                         <p className="text-xs text-[#6b7280] font-medium">Fecha</p>
-                        <p className="font-semibold text-[#111111]">{fmtDate(payment.payment_date)}</p>
+                        <p className="font-semibold text-[#111111]">{fmtDate(payment.business_date || payment.payment_date)}</p>
                       </div>
                       <div>
                         <p className="text-xs text-[#6b7280] font-medium">Monto</p>

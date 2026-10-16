@@ -187,6 +187,10 @@ const PartnerPaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) =>
       setError('Completa todos los campos');
       return;
     }
+    if (date > todayISO()) {
+      setError('La fecha efectiva del pago no puede ser futura.');
+      return;
+    }
 
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) {

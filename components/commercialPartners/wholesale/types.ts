@@ -1,3 +1,5 @@
+import { getBusinessDateString } from '../../../lib/dateUtils';
+
 // ── Wholesale (Mayoreo) module types ────────────────────────────────────────
 
 export type ContractStatus = 'draft' | 'generated' | 'reviewed' | 'activated' | 'cancelled';
@@ -64,6 +66,7 @@ export interface WholesalePayment {
   reference?: string | null;
   notes?: string | null;
   payment_date: string;
+  business_date?: string | null;
   created_at?: string;
 }
 
@@ -268,8 +271,7 @@ export const LABEL_CLS = 'block text-sm font-medium text-[#4a2c0a] mb-1';
 // ── Utility functions ──────────────────────────────────────────────────────
 
 export const todayISO = (): string => {
-  const now = new Date();
-  return now.toISOString().split('T')[0];
+  return getBusinessDateString();
 };
 
 export const generateDocumentPath = (

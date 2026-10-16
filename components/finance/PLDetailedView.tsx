@@ -78,17 +78,13 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
         const monthEnd = new Date(Date.UTC(year, month, 1)); // First day of NEXT month at 00:00 UTC
         
         const commercialData = await getCommercialCollections(monthStart, monthEnd);
-        
-        if (!commercialData.error) {
-          setCommercialTotal(commercialData.total);
-          console.log('[PLDetailedView] Commercial collections loaded:', {
-            total: commercialData.total,
-            bySource: commercialData.bySource,
-          });
-        } else {
-          console.warn('[PLDetailedView] Commercial data error:', commercialData.error);
-          setCommercialTotal(0);
-        }
+        if (commercialData.error) throw new Error(commercialData.error);
+
+        setCommercialTotal(commercialData.total);
+        console.log('[PLDetailedView] Commercial collections loaded:', {
+          total: commercialData.total,
+          bySource: commercialData.bySource,
+        });
 
         setData(result);
       } catch (err) {

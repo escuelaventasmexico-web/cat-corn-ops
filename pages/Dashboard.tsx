@@ -650,16 +650,18 @@ export const Dashboard = () => {
             />}
             {!isRestrictedSeller && <StatCard
                 title="Cobranza Socios Comerciales"
-                value={`$${breakdown.sociosComerciales.total.toFixed(2)}`} 
+                value={commercialCollectionsError
+                  ? 'No disponible'
+                  : `$${breakdown.sociosComerciales.total.toFixed(2)}`}
                 icon={Landmark} 
-                color="bg-indigo-500"
+                color={commercialCollectionsError ? 'bg-red-500' : 'bg-indigo-500'}
             />}
             <StatCard 
                 title="Total operativo del día"
-                value={`$${stats.salesToday.toFixed(2)}`} 
+                value={commercialCollectionsError ? 'Incompleto' : `$${stats.salesToday.toFixed(2)}`}
                 icon={DollarSign} 
-                trend={true}
-                color="bg-green-500"
+                trend={!commercialCollectionsError}
+                color={commercialCollectionsError ? 'bg-amber-500' : 'bg-green-500'}
             />
             <StatCard 
                 title="Tickets Cobrados" 

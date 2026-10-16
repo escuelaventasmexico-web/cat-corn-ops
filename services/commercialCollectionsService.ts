@@ -1,5 +1,14 @@
 import { supabase } from '../supabase';
 import type { B2BBalanceDetailResponse } from '../components/commercialPartners/reports/b2bReportTypes';
+import { getMexicoCityDate, resolveLegacyB2BPaymentBusinessDate } from '../lib/b2bPaymentBusinessDate.js';
+
+const describeSupabaseError = (error: unknown): string => {
+  if (!error || typeof error !== 'object') return String(error ?? 'Error desconocido');
+  const value = error as Record<string, unknown>;
+  return [value.message, value.details, value.hint, value.code]
+    .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+    .join(' · ');
+};
 
 /**
  * Represents a single commercial collection item
@@ -46,10 +55,9 @@ export interface CommercialCollections {
  * If ANY source fails, returns error. No partial totals.
  *
  * The Date arguments represent business-date boundaries by their UTC calendar
- * components (for example, `Date.UTC(2026, 8, 10)`). The database query uses a
- * one-day safety window because some legacy/direct-admin TIMESTAMPTZ rows encode
- * a date-only value at 00:00 UTC. Results are then filtered by their normalized
- * business date with an exact half-open range.
+ * components (for example, `Date.UTC(2026, 8, 10)`). The canonical view exposes
+ * a DATE for every confirmed payment and applies the same historical resolver
+ * used by SQL reports.
  * @returns CommercialCollections object with totals and breakdown
  */
 export async function getCommercialCollections(
@@ -74,163 +82,42 @@ export async function getCommercialCollections(
   }
 
   try {
-    const startBoundary = mexicoCityBoundary(startDate);
-    const endBoundary = mexicoCityBoundary(endDate);
-    const queryStartISO = new Date(startBoundary.getTime() - 86_400_000).toISOString();
-    const queryEndISO = new Date(endBoundary.getTime() + 86_400_000).toISOString();
     const startBusinessDate = utcCalendarDateKey(startDate);
     const endBusinessDate = utcCalendarDateKey(endDate);
+    const { data: payments, error: paymentsError } = await supabase
+      .from('v_b2b_confirmed_payments')
+      .select('id, source_type, partner_id, seller_id, movement_id, wholesale_order_id, payment_date, business_date, created_at, amount, payment_method, reference, notes')
+      .gte('business_date', startBusinessDate)
+      .lt('business_date', endBusinessDate)
+      .order('business_date', { ascending: true })
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
 
-    let comodatoError: any = null;
-    let mayoreoError: any = null;
-    let pieceSaleError: any = null;
-
-    // ===================================================================
-    // 1. COMODATO: commercial_partner_payments
-    // ===================================================================
-    const { data: comodatoPayments, error: comodatoErr } = await supabase
-      .from('commercial_partner_payments')
-      .select('id, partner_id, movement_id, payment_date, created_at, amount, payment_method, reference, notes')
-      .in('status', ['completed', 'paid'])
-      .gte('payment_date', queryStartISO)
-      .lt('payment_date', queryEndISO);
-
-    if (comodatoErr) {
-      comodatoError = comodatoErr;
-      console.error('Error loading comodato payments:', comodatoErr);
-    } else if (comodatoPayments) {
-      for (const payment of comodatoPayments) {
-        const businessDate = getCommercialPaymentBusinessDate(payment.payment_date);
-        if (businessDate < startBusinessDate || businessDate >= endBusinessDate) continue;
-        const amount = Number(payment.amount) || 0;
-        const method = normalizePaymentMethod(payment.payment_method);
-
-        result.bySource.comodato += amount;
-
-        if (method === 'cash') {
-          result.cash += amount;
-        } else if (method === 'transfer') {
-          result.transfer += amount;
-        }
-
-        result.breakdown.push({
-          id: payment.id,
-          source_type: 'comodato',
-          payment_date: payment.payment_date,
-          business_date: businessDate,
-          created_at: payment.created_at,
-          amount,
-          payment_method: method,
-          partner_id: payment.partner_id,
-          movement_id: payment.movement_id,
-          reference: payment.reference,
-          notes: payment.notes,
-        });
-      }
+    if (paymentsError) {
+      console.error('Error loading canonical B2B collections:', paymentsError);
+      throw paymentsError;
     }
 
-    // ===================================================================
-    // 2. MAYOREO: wholesale_payments
-    // ===================================================================
-    const { data: mayoreoPayments, error: mayoreoErr } = await supabase
-      .from('wholesale_payments')
-      .select('id, partner_id, wholesale_order_id, payment_date, created_at, amount, payment_method, reference, notes')
-      .in('status', ['completed', 'paid'])
-      .gte('payment_date', queryStartISO)
-      .lt('payment_date', queryEndISO);
-
-    if (mayoreoErr) {
-      mayoreoError = mayoreoErr;
-      console.error('Error loading mayoreo payments:', mayoreoErr);
-    } else if (mayoreoPayments) {
-      for (const payment of mayoreoPayments) {
-        const businessDate = getCommercialPaymentBusinessDate(payment.payment_date);
-        if (businessDate < startBusinessDate || businessDate >= endBusinessDate) continue;
-        const amount = Number(payment.amount) || 0;
-        const method = normalizePaymentMethod(payment.payment_method);
-
-        result.bySource.mayoreo += amount;
-
-        if (method === 'cash') {
-          result.cash += amount;
-        } else if (method === 'transfer') {
-          result.transfer += amount;
-        }
-
-        result.breakdown.push({
-          id: payment.id,
-          source_type: 'mayoreo',
-          payment_date: payment.payment_date,
-          business_date: businessDate,
-          created_at: payment.created_at,
-          amount,
-          payment_method: method,
-          partner_id: payment.partner_id,
-          wholesale_order_id: payment.wholesale_order_id,
-          reference: payment.reference,
-          notes: payment.notes,
-        });
+    for (const payment of payments ?? []) {
+      const sourceType = payment.source_type as CommercialCollectionItem['source_type'];
+      if (!['comodato', 'mayoreo', 'venta_pieza'].includes(sourceType)) {
+        throw new Error(`Fuente de cobro confirmada no reconocida: ${String(payment.source_type)}`);
       }
-    }
-
-    // ===================================================================
-    // 3. VENTA POR PIEZA: seller_piece_payments (NOT verification_requests)
-    //    Only status='completed' constitutes confirmed payment
-    // ===================================================================
-    const { data: pieceSalePayments, error: pieceSaleErr } = await supabase
-      .from('seller_piece_payments')
-      .select('id, seller_id, payment_date, created_at, amount, payment_method, reference, notes')
-      .eq('status', 'completed')
-      .gte('payment_date', queryStartISO)
-      .lt('payment_date', queryEndISO);
-
-    if (pieceSaleErr) {
-      pieceSaleError = pieceSaleErr;
-      console.error('Error loading piece sale payments:', pieceSaleErr);
-    } else if (pieceSalePayments) {
-      for (const payment of pieceSalePayments) {
-        const businessDate = getCommercialPaymentBusinessDate(payment.payment_date);
-        if (businessDate < startBusinessDate || businessDate >= endBusinessDate) continue;
-        const amount = Number(payment.amount) || 0;
-        const method = normalizePaymentMethod(payment.payment_method);
-
-        result.bySource.pieceSale += amount;
-
-        if (method === 'cash') {
-          result.cash += amount;
-        } else if (method === 'transfer') {
-          result.transfer += amount;
-        }
-
-        result.breakdown.push({
-          id: payment.id,
-          source_type: 'venta_pieza',
-          payment_date: payment.payment_date,
-          business_date: businessDate,
-          created_at: payment.created_at,
-          amount,
-          payment_method: method,
-          seller_id: payment.seller_id,
-          reference: payment.reference,
-          notes: payment.notes,
-        });
-      }
-    }
-
-    // Check if ANY source failed - if so, return error (NO PARTIAL TOTALS)
-    if (comodatoError || mayoreoError || pieceSaleError) {
-      const failedSources: string[] = [];
-      if (comodatoError) failedSources.push('commercial_partner_payments');
-      if (mayoreoError) failedSources.push('wholesale_payments');
-      if (pieceSaleError) failedSources.push('seller_piece_payments');
-
-      result.error = `No se pudieron cargar todos los cobros de Socios Comerciales. Fuentes fallidas: ${failedSources.join(', ')}`;
-      result.total = 0;
-      result.cash = 0;
-      result.transfer = 0;
-      result.bySource = { comodato: 0, mayoreo: 0, pieceSale: 0 };
-      result.breakdown = [];
-      return result;
+      result.breakdown.push({
+        id: payment.id,
+        source_type: sourceType,
+        payment_date: payment.payment_date,
+        business_date: payment.business_date,
+        created_at: payment.created_at,
+        amount: Number(payment.amount) || 0,
+        payment_method: normalizePaymentMethod(payment.payment_method),
+        partner_id: payment.partner_id ?? undefined,
+        seller_id: payment.seller_id ?? undefined,
+        movement_id: payment.movement_id ?? undefined,
+        wholesale_order_id: payment.wholesale_order_id ?? undefined,
+        reference: payment.reference ?? undefined,
+        notes: payment.notes ?? undefined,
+      });
     }
 
     // A payment can only be counted once per physical source row. This is a
@@ -264,7 +151,10 @@ export async function getCommercialCollections(
     result.bySource.pieceSale = Math.round(result.bySource.pieceSale * 100) / 100;
   } catch (err: any) {
     console.error('Unexpected error in getCommercialCollections:', err);
-    result.error = 'No se pudieron cargar todos los cobros de Socios Comerciales.';
+    const detail = describeSupabaseError(err);
+    result.error = detail
+      ? `No se pudieron cargar todos los cobros de Socios Comerciales: ${detail}`
+      : 'No se pudieron cargar todos los cobros de Socios Comerciales.';
     result.total = 0;
     result.cash = 0;
     result.transfer = 0;
@@ -276,32 +166,25 @@ export async function getCommercialCollections(
 }
 
 /** Returns the Mexico City business day of a real payment timestamp. */
-export const getMexicoCityPaymentDate = (value: string | Date): string => {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(new Date(value));
-  const year = parts.find(part => part.type === 'year')?.value;
-  const month = parts.find(part => part.type === 'month')?.value;
-  const day = parts.find(part => part.type === 'day')?.value;
-  if (!year || !month || !day) throw new Error('No se pudo resolver la fecha de pago en México.');
-  return `${year}-${month}-${day}`;
-};
+export const getMexicoCityPaymentDate = getMexicoCityDate;
 
 /**
  * Resolves the accounting day of legacy and current payment_date values.
  *
- * payment_date is TIMESTAMPTZ, but historical/direct-admin flows persisted an
- * HTML business date as exactly 00:00 UTC. Those rows encode a calendar date,
- * not an instant to shift to the previous Mexico City day. Current approval
- * flows persist a real timestamp and are converted normally.
+ * Compatibility helper for pre-migration rows. Exact UTC midnight can be an
+ * HTML date or the result of the old UTC-based "today" default, so created_at
+ * is required to disambiguate that legacy case. New reads use the canonical
+ * SQL view and its explicit business_date whenever available.
  */
-export const getCommercialPaymentBusinessDate = (value: string | Date): string => {
-  if (typeof value === 'string') {
-    const match = value.match(/^(\d{4}-\d{2}-\d{2})T00:00:00(?:\.0+)?(?:Z|\+00(?::?00)?)$/i);
-    if (match) return match[1];
-  }
-  return getMexicoCityPaymentDate(value);
-};
+export const getCommercialPaymentBusinessDate = (
+  value: string | Date,
+  createdAt?: string | Date | null,
+  businessDate?: string | null,
+): string => resolveLegacyB2BPaymentBusinessDate({
+  paymentDate: value,
+  createdAt,
+  businessDate,
+});
 
 /** Formats a real payment timestamp as a Mexico City accounting instant. */
 export const formatMexicoCityPaymentDateTime = (value: string): string => new Intl.DateTimeFormat('es-MX', {
@@ -318,7 +201,6 @@ const mexicoCityBoundary = (calendarDate: Date): Date => {
   const year = calendarDate.getUTCFullYear();
   const month = String(calendarDate.getUTCMonth() + 1).padStart(2, '0');
   const day = String(calendarDate.getUTCDate()).padStart(2, '0');
-  // Mexico City does not observe DST; this represents its business midnight.
   return new Date(`${year}-${month}-${day}T00:00:00-06:00`);
 };
 
@@ -533,7 +415,7 @@ export interface SalesChannelSummary {
  * Calculates PENDIENTE from actionable sales in draft or pending_review
  *
  * @param startDate Start date (inclusive) in UTC calendar
- * @param endDate End date (inclusive) in UTC calendar
+ * @param endDate End date (exclusive) in UTC calendar
  * @returns SalesChannelSummary with vendido, cobrado, pendiente, and piece count
  */
 export async function getPieceSaleSummary(
@@ -591,11 +473,11 @@ export async function getPieceSaleSummary(
     // 2. COBRADO: seller_piece_payments.status='completed' (confirmed payments)
     // ===================================================================
     const { data: pieceSalePayments, error: paymentsErr } = await supabase
-      .from('seller_piece_payments')
+      .from('v_b2b_confirmed_payments')
       .select('id, amount')
-      .eq('status', 'completed')
-      .gte('payment_date', startISO)
-      .lt('payment_date', endISO);
+      .eq('source_type', 'venta_pieza')
+      .gte('business_date', utcCalendarDateKey(startDate))
+      .lt('business_date', utcCalendarDateKey(endDate));
 
     if (paymentsErr) {
       console.error('Error loading piece sale payments:', paymentsErr);
