@@ -8,6 +8,8 @@ export interface CommercialCollectionItem {
   id: string;
   source_type: 'comodato' | 'mayoreo' | 'venta_pieza';
   payment_date: string;
+  business_date: string;
+  created_at?: string;
   amount: number;
   payment_method: 'cash' | 'transfer';
   partner_id?: string;
@@ -15,6 +17,7 @@ export interface CommercialCollectionItem {
   reference?: string;
   notes?: string;
   movement_id?: string;
+  wholesale_order_id?: string;
 }
 
 /**
@@ -43,8 +46,10 @@ export interface CommercialCollections {
  * If ANY source fails, returns error. No partial totals.
  *
  * The Date arguments represent business-date boundaries by their UTC calendar
- * components (for example, `Date.UTC(2026, 8, 10)`). Queries are then built at
- * Mexico City midnight and use an exclusive end boundary.
+ * components (for example, `Date.UTC(2026, 8, 10)`). The database query uses a
+ * one-day safety window because some legacy/direct-admin TIMESTAMPTZ rows encode
+ * a date-only value at 00:00 UTC. Results are then filtered by their normalized
+ * business date with an exact half-open range.
  * @returns CommercialCollections object with totals and breakdown
  */
 export async function getCommercialCollections(
@@ -69,8 +74,12 @@ export async function getCommercialCollections(
   }
 
   try {
-    const startISO = mexicoCityBoundary(startDate).toISOString();
-    const endISO = mexicoCityBoundary(endDate).toISOString();
+    const startBoundary = mexicoCityBoundary(startDate);
+    const endBoundary = mexicoCityBoundary(endDate);
+    const queryStartISO = new Date(startBoundary.getTime() - 86_400_000).toISOString();
+    const queryEndISO = new Date(endBoundary.getTime() + 86_400_000).toISOString();
+    const startBusinessDate = utcCalendarDateKey(startDate);
+    const endBusinessDate = utcCalendarDateKey(endDate);
 
     let comodatoError: any = null;
     let mayoreoError: any = null;
@@ -81,16 +90,18 @@ export async function getCommercialCollections(
     // ===================================================================
     const { data: comodatoPayments, error: comodatoErr } = await supabase
       .from('commercial_partner_payments')
-      .select('id, partner_id, movement_id, payment_date, amount, payment_method, reference, notes')
+      .select('id, partner_id, movement_id, payment_date, created_at, amount, payment_method, reference, notes')
       .in('status', ['completed', 'paid'])
-      .gte('payment_date', startISO)
-      .lt('payment_date', endISO);
+      .gte('payment_date', queryStartISO)
+      .lt('payment_date', queryEndISO);
 
     if (comodatoErr) {
       comodatoError = comodatoErr;
       console.error('Error loading comodato payments:', comodatoErr);
     } else if (comodatoPayments) {
       for (const payment of comodatoPayments) {
+        const businessDate = getCommercialPaymentBusinessDate(payment.payment_date);
+        if (businessDate < startBusinessDate || businessDate >= endBusinessDate) continue;
         const amount = Number(payment.amount) || 0;
         const method = normalizePaymentMethod(payment.payment_method);
 
@@ -106,6 +117,8 @@ export async function getCommercialCollections(
           id: payment.id,
           source_type: 'comodato',
           payment_date: payment.payment_date,
+          business_date: businessDate,
+          created_at: payment.created_at,
           amount,
           payment_method: method,
           partner_id: payment.partner_id,
@@ -121,16 +134,18 @@ export async function getCommercialCollections(
     // ===================================================================
     const { data: mayoreoPayments, error: mayoreoErr } = await supabase
       .from('wholesale_payments')
-      .select('id, partner_id, payment_date, amount, payment_method')
+      .select('id, partner_id, wholesale_order_id, payment_date, created_at, amount, payment_method, reference, notes')
       .in('status', ['completed', 'paid'])
-      .gte('payment_date', startISO)
-      .lt('payment_date', endISO);
+      .gte('payment_date', queryStartISO)
+      .lt('payment_date', queryEndISO);
 
     if (mayoreoErr) {
       mayoreoError = mayoreoErr;
       console.error('Error loading mayoreo payments:', mayoreoErr);
     } else if (mayoreoPayments) {
       for (const payment of mayoreoPayments) {
+        const businessDate = getCommercialPaymentBusinessDate(payment.payment_date);
+        if (businessDate < startBusinessDate || businessDate >= endBusinessDate) continue;
         const amount = Number(payment.amount) || 0;
         const method = normalizePaymentMethod(payment.payment_method);
 
@@ -146,9 +161,14 @@ export async function getCommercialCollections(
           id: payment.id,
           source_type: 'mayoreo',
           payment_date: payment.payment_date,
+          business_date: businessDate,
+          created_at: payment.created_at,
           amount,
           payment_method: method,
           partner_id: payment.partner_id,
+          wholesale_order_id: payment.wholesale_order_id,
+          reference: payment.reference,
+          notes: payment.notes,
         });
       }
     }
@@ -159,16 +179,18 @@ export async function getCommercialCollections(
     // ===================================================================
     const { data: pieceSalePayments, error: pieceSaleErr } = await supabase
       .from('seller_piece_payments')
-      .select('id, seller_id, payment_date, amount, payment_method')
+      .select('id, seller_id, payment_date, created_at, amount, payment_method, reference, notes')
       .eq('status', 'completed')
-      .gte('payment_date', startISO)
-      .lt('payment_date', endISO);
+      .gte('payment_date', queryStartISO)
+      .lt('payment_date', queryEndISO);
 
     if (pieceSaleErr) {
       pieceSaleError = pieceSaleErr;
       console.error('Error loading piece sale payments:', pieceSaleErr);
     } else if (pieceSalePayments) {
       for (const payment of pieceSalePayments) {
+        const businessDate = getCommercialPaymentBusinessDate(payment.payment_date);
+        if (businessDate < startBusinessDate || businessDate >= endBusinessDate) continue;
         const amount = Number(payment.amount) || 0;
         const method = normalizePaymentMethod(payment.payment_method);
 
@@ -184,9 +206,13 @@ export async function getCommercialCollections(
           id: payment.id,
           source_type: 'venta_pieza',
           payment_date: payment.payment_date,
+          business_date: businessDate,
+          created_at: payment.created_at,
           amount,
           payment_method: method,
           seller_id: payment.seller_id,
+          reference: payment.reference,
+          notes: payment.notes,
         });
       }
     }
@@ -261,7 +287,23 @@ export const getMexicoCityPaymentDate = (value: string | Date): string => {
   return `${year}-${month}-${day}`;
 };
 
-/** Formats a definitive payment timestamp as a Mexico City accounting instant. */
+/**
+ * Resolves the accounting day of legacy and current payment_date values.
+ *
+ * payment_date is TIMESTAMPTZ, but historical/direct-admin flows persisted an
+ * HTML business date as exactly 00:00 UTC. Those rows encode a calendar date,
+ * not an instant to shift to the previous Mexico City day. Current approval
+ * flows persist a real timestamp and are converted normally.
+ */
+export const getCommercialPaymentBusinessDate = (value: string | Date): string => {
+  if (typeof value === 'string') {
+    const match = value.match(/^(\d{4}-\d{2}-\d{2})T00:00:00(?:\.0+)?(?:Z|\+00(?::?00)?)$/i);
+    if (match) return match[1];
+  }
+  return getMexicoCityPaymentDate(value);
+};
+
+/** Formats a real payment timestamp as a Mexico City accounting instant. */
 export const formatMexicoCityPaymentDateTime = (value: string): string => new Intl.DateTimeFormat('es-MX', {
   timeZone: 'America/Mexico_City', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
 }).format(new Date(value));
@@ -279,6 +321,12 @@ const mexicoCityBoundary = (calendarDate: Date): Date => {
   // Mexico City does not observe DST; this represents its business midnight.
   return new Date(`${year}-${month}-${day}T00:00:00-06:00`);
 };
+
+const utcCalendarDateKey = (calendarDate: Date): string => [
+  calendarDate.getUTCFullYear(),
+  String(calendarDate.getUTCMonth() + 1).padStart(2, '0'),
+  String(calendarDate.getUTCDate()).padStart(2, '0'),
+].join('-');
 
 /**
  * Format a CommercialCollections object for display

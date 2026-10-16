@@ -1,7 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../../supabase';
 import { Loader2, AlertCircle } from 'lucide-react';
-import { SellerCommissionMonthlySummary, UserProfile } from './commissionTypes';
+import {
+  CommissionPaymentOverview,
+  SellerCommissionMonthlySummary,
+  UserProfile,
+} from './commissionTypes';
 import {
   formatCurrency,
   parseNumericValue,
@@ -18,7 +22,8 @@ import { PendingCommissionsModal } from './PendingCommissionsModal';
 import { AvailableCommissionsModal } from './AvailableCommissionsModal';
 import { ExtraDayCommissionModal } from './ExtraDayCommissionModal';
 import { AdminPartnerTargetEditor } from './AdminPartnerTargetEditor';
-import { loadAvailableForPayment } from './payments/paymentUtils';
+import { formatSupabaseError, loadAvailableForPayment } from './payments/paymentUtils';
+import { loadCommissionPaymentOverview } from './payments/commissionPaymentOverview';
 
 interface Props {
   onPartnerPaymentChanged?: (partnerId: string) => void;
@@ -30,6 +35,9 @@ export const AdminCommissionDashboard: React.FC<Props> = ({ onPartnerPaymentChan
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [summary, setSummary] = useState<SellerCommissionMonthlySummary | null>(null);
   const [totalAvailable, setTotalAvailable] = useState(0);
+  const [paymentOverview, setPaymentOverview] = useState<CommissionPaymentOverview | null>(null);
+  const [paymentOverviewLoading, setPaymentOverviewLoading] = useState(false);
+  const [paymentOverviewError, setPaymentOverviewError] = useState<string | null>(null);
   const [showPendingModal, setShowPendingModal] = useState(false);
   const [showAvailableModal, setShowAvailableModal] = useState(false);
   const [showExtraDayModal, setShowExtraDayModal] = useState(false);
@@ -51,6 +59,9 @@ export const AdminCommissionDashboard: React.FC<Props> = ({ onPartnerPaymentChan
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [verificationRefreshKey, setVerificationRefreshKey] = useState(0);
+  const summaryRequestRef = useRef(0);
+  const availableRequestRef = useRef(0);
+  const overviewRequestRef = useRef(0);
   const selectedSellerRole = sellers.find(seller => seller.id === selectedSellerId)?.role;
 
   const loadSellers = async () => {
@@ -83,34 +94,98 @@ export const AdminCommissionDashboard: React.FC<Props> = ({ onPartnerPaymentChan
 
   const loadSellerSummary = async (sellerId: string) => {
     if (!supabase) return;
+    const requestId = ++summaryRequestRef.current;
+    setSummary(null);
 
     try {
       const monthStart = getMonthStartDateString(
         currentDate.getFullYear(),
         currentDate.getMonth()
       );
+      const monthEnd = new Date(Date.UTC(
+        currentDate.getFullYear(),
+        currentDate.getMonth() + 1,
+        0
+      )).toISOString().slice(0, 10);
 
       const { data, error: err } = await supabase
         .from('v_seller_commission_monthly_summary')
         .select('*')
         .eq('seller_id', sellerId)
         .eq('month_start', monthStart)
-        .single();
+        .maybeSingle();
 
-      if (err && err.code !== 'PGRST116') throw err;
-      setSummary((data as SellerCommissionMonthlySummary) || null);
+      if (err) throw err;
+      if (requestId === summaryRequestRef.current) {
+        setSummary((data as SellerCommissionMonthlySummary) || {
+          seller_id: sellerId,
+          month_start: monthStart,
+          month_end: monthEnd,
+          generated_total: 0,
+          available_total: 0,
+          pending_total: 0,
+          paid_total: 0,
+          comodato_units: 0,
+          wholesale_units: 0,
+          piece_sale_units: 0,
+          pos_units: 0,
+          prospect_origin_units: 0,
+          conversion_count: 0,
+          partners_count: 0,
+          events_count: 0,
+        });
+      }
     } catch (err: any) {
       console.error('Error loading summary:', err);
     }
   };
 
   const loadTotalAvailable = async (sellerId: string) => {
+    const requestId = ++availableRequestRef.current;
+    setTotalAvailable(0);
     try {
       const available = await loadAvailableForPayment(sellerId);
-      setTotalAvailable(parseNumericValue(available?.available_amount));
+      if (requestId === availableRequestRef.current) {
+        setTotalAvailable(parseNumericValue(available?.available_amount));
+      }
     } catch (err) {
       console.error('Error loading total available commissions:', err);
-      setTotalAvailable(0);
+      if (requestId === availableRequestRef.current) setTotalAvailable(0);
+    }
+  };
+
+  const loadPaymentOverview = async (sellerId: string) => {
+    const requestId = ++overviewRequestRef.current;
+    const monthStart = getMonthStartDateString(
+      currentDate.getFullYear(),
+      currentDate.getMonth()
+    );
+    const monthEndExclusive = getMonthStartDateString(
+      currentDate.getFullYear(),
+      currentDate.getMonth() + 1
+    );
+
+    setPaymentOverviewLoading(true);
+    setPaymentOverviewError(null);
+    setPaymentOverview(null);
+    try {
+      const overview = await loadCommissionPaymentOverview(
+        sellerId,
+        monthStart,
+        monthEndExclusive
+      );
+      if (requestId === overviewRequestRef.current) setPaymentOverview(overview);
+    } catch (overviewError) {
+      console.error('Error loading commission payment overview:', overviewError);
+      if (requestId === overviewRequestRef.current) {
+        setPaymentOverview(null);
+        setPaymentOverviewError(formatSupabaseError(
+          overviewError,
+          'No se pudo cargar el flujo real de pagos.'
+        ));
+      }
+    } finally {
+      if (requestId === overviewRequestRef.current) setPaymentOverviewLoading(false);
     }
   };
 
@@ -153,7 +228,17 @@ export const AdminCommissionDashboard: React.FC<Props> = ({ onPartnerPaymentChan
     if (selectedSellerId) {
       loadSellerSummary(selectedSellerId);
       loadTotalAvailable(selectedSellerId);
-    } else setTotalAvailable(0);
+      loadPaymentOverview(selectedSellerId);
+    } else {
+      summaryRequestRef.current += 1;
+      availableRequestRef.current += 1;
+      overviewRequestRef.current += 1;
+      setSummary(null);
+      setTotalAvailable(0);
+      setPaymentOverview(null);
+      setPaymentOverviewLoading(false);
+      setPaymentOverviewError(null);
+    }
     loadAllSellersSummary();
   }, [currentDate, sellers, selectedSellerId]);
 
@@ -164,6 +249,7 @@ export const AdminCommissionDashboard: React.FC<Props> = ({ onPartnerPaymentChan
     if (selectedSellerId) {
       void loadSellerSummary(selectedSellerId);
       void loadTotalAvailable(selectedSellerId);
+      void loadPaymentOverview(selectedSellerId);
     }
     onPartnerPaymentChanged?.(partnerId);
   };
@@ -290,6 +376,9 @@ export const AdminCommissionDashboard: React.FC<Props> = ({ onPartnerPaymentChan
               <CommissionSummaryCards 
                 summary={summary} 
                 totalAvailable={totalAvailable}
+                paymentOverview={paymentOverview}
+                paymentOverviewLoading={paymentOverviewLoading}
+                paymentOverviewError={paymentOverviewError}
                 onPendingClick={() => setShowPendingModal(true)}
                 onAvailableClick={() => setShowAvailableModal(true)}
               />
@@ -333,6 +422,7 @@ export const AdminCommissionDashboard: React.FC<Props> = ({ onPartnerPaymentChan
                 loadAllSellersSummary();
                 loadSellerSummary(selectedSellerId);
                 loadTotalAvailable(selectedSellerId);
+                loadPaymentOverview(selectedSellerId);
               }}
             />
           </div>
@@ -348,6 +438,11 @@ export const AdminCommissionDashboard: React.FC<Props> = ({ onPartnerPaymentChan
             <CommissionSettlementHistory
               key={refreshKey}
               sellerId={selectedSellerId}
+              monthStart={statementMonthStart}
+              monthEndExclusive={statementMonthEndExclusive}
+              overview={paymentOverview}
+              overviewLoading={paymentOverviewLoading}
+              overviewError={paymentOverviewError}
             />
           </div>
         </>
@@ -438,8 +533,8 @@ export const AdminCommissionDashboard: React.FC<Props> = ({ onPartnerPaymentChan
           onClose={() => setShowPendingModal(false)}
           sellerId={selectedSellerId}
           sellerName={sellers.find(s => s.id === selectedSellerId)?.full_name || 'Vendedor'}
-          monthStart={getMonthStartDate(currentDate.getFullYear(), currentDate.getMonth()).toISOString().split('T')[0]}
-          monthEnd={new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toISOString().split('T')[0]}
+          monthStart={statementMonthStart}
+          monthEndExclusive={statementMonthEndExclusive}
           pendingTotal={summary?.pending_total || 0}
         />
       )}
@@ -470,6 +565,7 @@ export const AdminCommissionDashboard: React.FC<Props> = ({ onPartnerPaymentChan
             loadAllSellersSummary();
             loadSellerSummary(selectedSellerId);
             loadTotalAvailable(selectedSellerId);
+            loadPaymentOverview(selectedSellerId);
           }}
         />
       )}

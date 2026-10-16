@@ -44,7 +44,7 @@ export const FinanceChart = () => {
 
       const dailyCommercialMap = new Map<string, number>();
       for (const item of commercialData.breakdown) {
-        const date = getMexicoCityPaymentDate(item.payment_date);
+        const date = item.business_date;
         dailyCommercialMap.set(date, (dailyCommercialMap.get(date) ?? 0) + item.amount);
       }
 
@@ -110,7 +110,7 @@ export const FinanceChart = () => {
               formatter={(value: number) => `$${value.toFixed(2)}`}
             />
             <Legend />
-            <Line type="monotone" dataKey="sales_mxn" stroke="#4CAF50" strokeWidth={2} name="Ventas" dot={{ fill: '#4CAF50' }} />
+            <Line type="monotone" dataKey="sales_mxn" stroke="#4CAF50" strokeWidth={2} name="Ventas + cobranza B2B" dot={{ fill: '#4CAF50' }} />
             <Line type="monotone" dataKey="expenses_mxn" stroke="#F44336" strokeWidth={2} name="Gastos" dot={{ fill: '#F44336' }} />
           </LineChart>
         </ResponsiveContainer>

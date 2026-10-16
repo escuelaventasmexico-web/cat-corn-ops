@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../../supabase';
 import { X, AlertCircle, Loader2 } from 'lucide-react';
+import { mexicoCityDateStartISO } from '../../../lib/datetime';
 import { CommissionMovement } from './commissionTypes';
 import { formatCurrency, parseNumericValue } from './commissionUtils';
 
@@ -10,7 +11,7 @@ interface PendingCommissionsModalProps {
   sellerId: string;
   sellerName: string;
   monthStart: string;
-  monthEnd: string;
+  monthEndExclusive: string;
   pendingTotal: number;
 }
 
@@ -56,7 +57,7 @@ export const PendingCommissionsModal = ({
   onClose,
   sellerId,
   monthStart,
-  monthEnd,
+  monthEndExclusive,
   pendingTotal,
 }: PendingCommissionsModalProps) => {
   const [movements, setMovements] = useState<CommissionMovement[]>([]);
@@ -67,7 +68,7 @@ export const PendingCommissionsModal = ({
     if (isOpen) {
       loadPendingMovements();
     }
-  }, [isOpen, sellerId, monthStart, monthEnd]);
+  }, [isOpen, sellerId, monthStart, monthEndExclusive]);
 
   const loadPendingMovements = async () => {
     if (!supabase) {
@@ -84,8 +85,8 @@ export const PendingCommissionsModal = ({
         .select('*')
         .eq('seller_id', sellerId)
         .eq('status', 'pending')
-        .gte('earned_at', monthStart)
-        .lte('earned_at', monthEnd)
+        .gte('earned_at', mexicoCityDateStartISO(monthStart))
+        .lt('earned_at', mexicoCityDateStartISO(monthEndExclusive))
         .order('earned_at', { ascending: false });
 
       if (err) throw err;

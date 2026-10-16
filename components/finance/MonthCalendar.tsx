@@ -23,6 +23,8 @@ interface DaySale {
   total: number;
   payment_method: string;
   promotion_code: string | null;
+  sale_origin: string | null;
+  delivery_platform: string | null;
   created_at: string;
   product_name: string | null;
 }
@@ -126,28 +128,33 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       const nextDay = new Date(new Date(day.sale_date + 'T00:00:00-06:00').getTime() + 86400000).toISOString();
 
       // 1) All sales of the day with product info
-      const { data: salesData } = await supabase
+      const { data: salesData, error: salesError } = await supabase
         .from('sales')
-        .select('id, total, payment_method, promotion_code, created_at')
+        .select('id, total, payment_method, promotion_code, sale_origin, delivery_platform, created_at')
         .gte('created_at', dayStart)
         .lt('created_at', nextDay)
         .eq('is_refunded', false)
         .order('created_at', { ascending: true });
+      if (salesError) throw salesError;
 
       const sales: DaySale[] = (salesData || []).map(s => ({
         id: s.id,
         total: Number(s.total),
         payment_method: (s.payment_method || '').toUpperCase(),
         promotion_code: s.promotion_code || null,
+        sale_origin: s.sale_origin || null,
+        delivery_platform: s.delivery_platform || null,
         created_at: s.created_at,
         product_name: null,
       }));
 
-      const isOrder = (s: DaySale) => s.promotion_code === 'ORDER_CHECKOUT';
+      const isDelivery = (s: DaySale) => s.sale_origin === 'delivery';
+      const isOrder = (s: DaySale) => !isDelivery(s)
+        && (s.sale_origin === 'order' || s.promotion_code === 'ORDER_CHECKOUT');
       const pm = (s: DaySale) => s.payment_method;
 
       // Caja directa
-      const cajaSales = sales.filter(s => !isOrder(s));
+      const cajaSales = sales.filter(s => !isOrder(s) && !isDelivery(s));
       const cajaCash = cajaSales.filter(s => pm(s) === 'CASH').reduce((a, s) => a + s.total, 0);
       const cajaCard = cajaSales.filter(s => pm(s) === 'CARD').reduce((a, s) => a + s.total, 0);
       const cajaMixed = cajaSales.filter(s => pm(s) === 'MIXED').reduce((a, s) => a + s.total, 0);
@@ -210,6 +217,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       const dateStart = new Date(Date.UTC(dayYear, dayMonth - 1, dayNumber));
       const dateEnd = new Date(Date.UTC(dayYear, dayMonth - 1, dayNumber + 1));
       const commercialData = await getCommercialCollections(dateStart, dateEnd);
+      if (commercialData.error) throw new Error(commercialData.error);
 
       let commercialTotal = 0;
       let commercialComodato = 0;
@@ -219,7 +227,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       let commercialTransfer = 0;
       let breakdownForModal: CommercialCollectionItem[] = [];
 
-      if (!commercialData.error && commercialData.breakdown) {
+      if (commercialData.breakdown) {
         commercialTotal = commercialData.total;
         commercialComodato = commercialData.bySource.comodato;
         commercialMayoreo = commercialData.bySource.mayoreo;
@@ -232,16 +240,19 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       // Store breakdown for modal
       setCommercialBreakdown(breakdownForModal);
 
-      // 4) Delivery sales (if any — currently not tracked in sales, defaulting to 0)
-      const deliveryTotal = 0;
-      const deliveryCount = 0;
+      // 4) Delivery sales are recognized sales awaiting platform settlement.
+      // They are displayed independently and are not forced into the finance
+      // total until the platform-collection contract exists.
+      const deliverySales = sales.filter(isDelivery);
+      const deliveryTotal = deliverySales.reduce((sum, sale) => sum + sale.total, 0);
+      const deliveryCount = deliverySales.length;
 
       setDayDetail({
         cajaCash, cajaCard, cajaMixed, cajaTotal, cajaCount: cajaSales.length,
         pedidosCash, pedidosCard, pedidosTransfer, pedidosTotal, pedidosCount: pedidoSales.length,
         deliveryTotal, deliveryCount,
         commercialTotal, commercialComodato, commercialMayoreo, commercialPieceSale, commercialCash, commercialTransfer,
-        grandTotal: cajaTotal + pedidosTotal + deliveryTotal + commercialTotal,
+        grandTotal: cajaTotal + pedidosTotal + commercialTotal,
         orders: orderList,
       });
     } catch (err) {
@@ -312,7 +323,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
 
         if (commercialData.breakdown.length > 0) {
           for (const item of commercialData.breakdown) {
-            const dateStr = getMexicoCityPaymentDate(item.payment_date);
+            const dateStr = item.business_date;
             const amount = Number(item.amount) || 0;
             commercialByDate[dateStr] = (commercialByDate[dateStr] || 0) + amount;
           }
@@ -361,7 +372,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       <div className="flex items-center justify-between p-5 border-b border-white/5">
         <div className="flex items-center gap-3">
           <Calendar size={22} className="text-cc-primary" />
-          <h3 className="text-lg font-bold text-cc-cream">Calendario de Ventas</h3>
+          <h3 className="text-lg font-bold text-cc-cream">Calendario financiero</h3>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => goMonth(-1)} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors">
@@ -377,7 +388,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       {/* Month totals summary row */}
       {!loading && days.length > 0 && (
         <div className="px-5 py-3 border-b border-white/5 flex flex-wrap gap-4 text-xs text-cc-text-muted">
-          <span>Total mes: <span className="text-green-400 font-bold">{fmt(monthTotal)}</span></span>
+          <span>Total contabilizado del mes: <span className="text-green-400 font-bold">{fmt(monthTotal)}</span></span>
           <span>Mismo mes año anterior: <span className="text-cc-cream font-semibold">{fmt(prevYearTotal)}</span></span>
           {prevYearTotal > 0 ? (
             <span className={monthYoyDiff >= 0 ? 'text-green-400' : 'text-red-400'}>
@@ -494,7 +505,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                   })}
                 </h3>
                 <p className="text-xs text-cc-text-muted mt-0.5">
-                  Total del día: <span className="text-green-400 font-bold">{fmt(selectedDay.total_sales)}</span>
+                  Total contabilizado: <span className="text-green-400 font-bold">{fmt(selectedDay.total_sales)}</span>
                   {' '}· {selectedDay.ticket_count} ticket{selectedDay.ticket_count !== 1 ? 's' : ''}
                   {' '}· Promedio {fmt(selectedDay.avg_ticket)}
                 </p>
@@ -514,7 +525,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                 <>
                   {/* Grand total bar */}
                   <div className="flex items-center justify-between px-4 py-3 bg-green-500/10 border border-green-500/20 rounded-xl">
-                    <span className="text-sm font-medium text-green-300">Total del día</span>
+                    <span className="text-sm font-medium text-green-300">Total contabilizado</span>
                     <span className="text-xl font-bold text-green-400">{fmt(dayDetail.grandTotal)}</span>
                   </div>
 
@@ -583,19 +594,22 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                     <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800">
                       <div className="flex items-center gap-2 mb-3">
                         <ShoppingBag size={16} className="text-amber-400" />
-                        <span className="text-sm font-bold text-cc-cream">Ventas Delivery</span>
+                        <span className="text-sm font-bold text-cc-cream">Delivery pendiente de liquidación</span>
                         <span className="ml-auto text-lg font-bold text-amber-400">{fmt(dayDetail.deliveryTotal)}</span>
                       </div>
                       <div className="space-y-2">
                         {dayDetail.deliveryTotal === 0 ? (
                           <p className="text-xs text-cc-text-muted/60">Sin ventas delivery</p>
                         ) : (
-                          <div className="text-[10px] text-cc-text-muted/60">{dayDetail.deliveryCount} envío{dayDetail.deliveryCount !== 1 ? 's' : ''}</div>
+                          <div className="space-y-1 text-[10px] text-cc-text-muted/60">
+                            <p>{dayDetail.deliveryCount} envío{dayDetail.deliveryCount !== 1 ? 's' : ''}</p>
+                            <p>Venta registrada; no incluida en el total financiero hasta registrar la liquidación de la plataforma.</p>
+                          </div>
                         )}
                       </div>
                     </div>
 
-                    {/* Ventas Socios Comerciales */}
+                    {/* Cobranza de Socios Comerciales */}
                     <button
                       onClick={() => dayDetail.commercialTotal > 0 && setShowCommercialDetail(true)}
                       disabled={dayDetail.commercialTotal === 0}
@@ -607,7 +621,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                     >
                       <div className="flex items-center gap-2 mb-3">
                         <Landmark size={16} className="text-emerald-400" />
-                        <span className="text-sm font-bold text-cc-cream">Ventas Socios Comerciales</span>
+                        <span className="text-sm font-bold text-cc-cream">Cobranza Socios Comerciales</span>
                         <span className="ml-auto text-lg font-bold text-emerald-400">{fmt(dayDetail.commercialTotal)}</span>
                         {dayDetail.commercialTotal > 0 && (
                           <ChevronRight size={16} className="text-emerald-400/60" />

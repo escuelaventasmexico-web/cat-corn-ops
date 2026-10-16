@@ -73,6 +73,7 @@ export const Dashboard = () => {
   const [topMode, setTopMode] = useState<'day' | 'month'>('day');
   const [chartData, setChartData] = useState<any[]>([]);
   const [breakdown, setBreakdown] = useState<DashboardBreakdown>(emptyBreakdown);
+  const [commercialCollectionsError, setCommercialCollectionsError] = useState<string | null>(null);
   const [operationalAlerts, setOperationalAlerts] = useState<AdminOperationalAlert[]>([]);
   const [alertsError, setAlertsError] = useState<string | null>(null);
 
@@ -130,6 +131,7 @@ export const Dashboard = () => {
 
   const loadDashboardData = async () => {
     setLoading(true);
+    setCommercialCollectionsError(null);
     try {
       const todayRange = getBusinessDayBounds();
       const [businessYear, businessMonth, businessDay] = todayRange.businessDate.split('-').map(Number);
@@ -178,7 +180,7 @@ export const Dashboard = () => {
         : (rawSalesToday || []);
       
       // Separate POS direct sales from orders
-      const posSalesOnly = salesToday.filter(s => s.promotion_code !== 'ORDER_CHECKOUT');
+      const posSalesOnly = salesToday.filter(isCaja);
       const posTotalToday = posSalesOnly.reduce((sum, sale) => sum + Number(sale.total), 0) || 0;
       const posCountToday = posSalesOnly.length || 0;
       
@@ -208,9 +210,13 @@ export const Dashboard = () => {
           });
         } else {
           console.error('Commercial collections error:', collections.error);
+          setCommercialCollectionsError(collections.error);
         }
       } catch (err) {
         console.error('Exception loading commercial collections:', err);
+        setCommercialCollectionsError(
+          err instanceof Error ? err.message : 'No se pudo cargar la cobranza de Socios Comerciales.'
+        );
       }
 
       // Caja directa (POS), grouped from the same sales result. This deliberately
@@ -614,6 +620,12 @@ export const Dashboard = () => {
         )}
 
         {/* KPIs */}
+        {!isRestrictedSeller && commercialCollectionsError && (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+            <p className="font-semibold">No se pudo cargar la cobranza de Socios Comerciales.</p>
+            <p className="mt-1">{commercialCollectionsError}</p>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
             {breakdown.cajaByBranch.map((branch, index) => (
                 <StatCard
@@ -637,13 +649,13 @@ export const Dashboard = () => {
                 color="bg-orange-500"
             />}
             {!isRestrictedSeller && <StatCard
-                title="Venta Socios Comerciales" 
+                title="Cobranza Socios Comerciales"
                 value={`$${breakdown.sociosComerciales.total.toFixed(2)}`} 
                 icon={Landmark} 
                 color="bg-indigo-500"
             />}
             <StatCard 
-                title="Total del Día" 
+                title="Total operativo del día"
                 value={`$${stats.salesToday.toFixed(2)}`} 
                 icon={DollarSign} 
                 trend={true}
@@ -665,8 +677,8 @@ export const Dashboard = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 bg-cc-surface p-6 rounded-xl border border-white/5">
                 <div className="mb-4">
-                    <h3 className="text-lg font-bold text-cc-cream mb-1">Desglose de ventas del día</h3>
-                    <p className="text-xs text-cc-text-muted">Separado por origen del cobro y método de pago</p>
+                    <h3 className="text-lg font-bold text-cc-cream mb-1">Actividad monetaria del día</h3>
+                    <p className="text-xs text-cc-text-muted">Ventas registradas y cobranza B2B, separadas por concepto y sin duplicar operaciones.</p>
                 </div>
 
                 {/* Summary breakdown panels */}
@@ -783,12 +795,12 @@ export const Dashboard = () => {
                     </div>
                     )}
 
-                    {/* Socios Comerciales */}
+                    {/* Cobranza de Socios Comerciales */}
                     {!isRestrictedSeller && breakdown.sociosComerciales.total > 0 && (
                     <div className="bg-neutral-900 rounded-xl p-4 border border-indigo-500/20 col-span-2">
                         <div className="flex items-center gap-2 mb-3">
                             <Landmark size={16} className="text-indigo-400" />
-                            <span className="text-sm font-bold text-cc-cream">Socios Comerciales</span>
+                            <span className="text-sm font-bold text-cc-cream">Cobranza Socios Comerciales</span>
                             <span className="ml-auto text-lg font-bold text-indigo-400">${breakdown.sociosComerciales.total.toFixed(2)}</span>
                         </div>
                         <div className="space-y-2">

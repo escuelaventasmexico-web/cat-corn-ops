@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../../supabase';
 import { Loader2, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { mexicoCityDateStartISO } from '../../../lib/datetime';
 import {
   SellerCommissionMonthlySummary,
   CommissionMovement,
@@ -14,8 +15,7 @@ import {
   getMonthName,
   getProgressPercentage,
   canSelectMonth,
-  getMonthStartDate,
-  getMonthEndDate,
+  getMonthStartDateString,
   parseNumericValue,
 } from './commissionUtils';
 import { CommissionSummaryCards } from './CommissionSummaryCards';
@@ -40,6 +40,14 @@ export const SellerCommissionDashboard = ({ sellerId }: SellerCommissionDashboar
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const selectedMonthStart = getMonthStartDateString(
+    currentDate.getFullYear(),
+    currentDate.getMonth()
+  );
+  const selectedMonthEndExclusive = getMonthStartDateString(
+    currentDate.getFullYear(),
+    currentDate.getMonth() + 1
+  );
 
   const loadData = async () => {
     if (!supabase) {
@@ -59,17 +67,13 @@ export const SellerCommissionDashboard = ({ sellerId }: SellerCommissionDashboar
       setLoading(true);
       setError(null);
 
-      const monthStart = getMonthStartDate(currentDate.getFullYear(), currentDate.getMonth())
-        .toISOString()
-        .split('T')[0];
-      const monthEnd = getMonthEndDate(currentDate.getFullYear(), currentDate.getMonth())
-        .toISOString()
-        .split('T')[0];
+      const monthStart = selectedMonthStart;
+      const monthEndExclusive = selectedMonthEndExclusive;
 
       console.log('LOADING_COMMISSION_DATA', {
         sellerId,
         monthStart,
-        monthEnd,
+        monthEndExclusive,
         currentDate,
       });
 
@@ -99,8 +103,8 @@ export const SellerCommissionDashboard = ({ sellerId }: SellerCommissionDashboar
         .from('v_seller_commission_movements')
         .select('*')
         .eq('seller_id', sellerId)
-        .gte('earned_at', monthStart)
-        .lte('earned_at', monthEnd)
+        .gte('earned_at', mexicoCityDateStartISO(monthStart))
+        .lt('earned_at', mexicoCityDateStartISO(monthEndExclusive))
         .order('earned_at', { ascending: false });
 
       if (movementsErr) {
@@ -347,7 +351,11 @@ export const SellerCommissionDashboard = ({ sellerId }: SellerCommissionDashboar
         <div>
           <h3 className="text-lg font-bold text-cc-cream mb-3">Pagos recibidos</h3>
           <div className="bg-cc-surface rounded-xl border border-white/5 p-6">
-            <CommissionSettlementHistory sellerId={sellerId} />
+            <CommissionSettlementHistory
+              sellerId={sellerId}
+              monthStart={selectedMonthStart}
+              monthEndExclusive={selectedMonthEndExclusive}
+            />
           </div>
         </div>
       )}

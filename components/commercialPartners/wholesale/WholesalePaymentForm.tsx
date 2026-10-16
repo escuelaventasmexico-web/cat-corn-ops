@@ -226,6 +226,9 @@ const WholesalePaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) 
     setError(null);
 
     try {
+      // payment_date is TIMESTAMPTZ. Anchor an admin-selected business date at
+      // noon in Mexico City so PostgreSQL never shifts it to the previous day.
+      const paymentTimestamp = new Date(`${paymentDate}T12:00:00-06:00`).toISOString();
       const { error: insertErr } = await supabase
         .from('wholesale_payments')
         .insert({
@@ -235,7 +238,7 @@ const WholesalePaymentForm: React.FC<Props> = ({ partnerId, onClose, onSaved }) 
           payment_method: method,
           reference: reference.trim() || null,
           notes: notes.trim() || null,
-          payment_date: paymentDate,
+          payment_date: paymentTimestamp,
         });
 
       if (insertErr) throw insertErr;

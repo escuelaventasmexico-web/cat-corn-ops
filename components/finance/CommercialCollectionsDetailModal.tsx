@@ -2,7 +2,6 @@ import { X, Building2, ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   getCommercialCollectionDetails,
-  formatMexicoCityPaymentDateTime,
   type CommercialCollectionItem,
   type CommercialCollectionDetail,
 } from '../../services/commercialCollectionsService';
@@ -20,10 +19,6 @@ interface Props {
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n);
-
-const formatBusinessDate = (isoString: string): string => isoString
-  ? formatMexicoCityPaymentDateTime(isoString)
-  : '—';
 
 const formatCalendarDate = (value: string): string => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return '—';
@@ -62,7 +57,7 @@ const ComodatoCard = ({ item, isExpanded, onToggle }: PaymentCardProps) => (
         </div>
         <div className="text-right flex-shrink-0">
           <div className="text-sm font-bold text-blue-400 whitespace-nowrap">{fmt(item.amount)}</div>
-          <div className="text-[10px] text-cc-text-muted/60 whitespace-nowrap">{formatBusinessDate(item.payment_date)}</div>
+          <div className="text-[10px] text-cc-text-muted/60 whitespace-nowrap">{formatCalendarDate(item.business_date)}</div>
         </div>
         <ChevronDown size={16} className={`text-cc-text-muted flex-shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
       </div>
@@ -108,7 +103,7 @@ const ComodatoCard = ({ item, isExpanded, onToggle }: PaymentCardProps) => (
           </div>
           <div className="flex justify-between">
             <span className="text-cc-text-muted">Ingreso confirmado el:</span>
-            <span className="text-cc-cream">{formatBusinessDate(item.payment_date)}</span>
+            <span className="text-cc-cream">{formatCalendarDate(item.business_date)}</span>
           </div>
           {item.reference && (
             <div className="flex justify-between">
@@ -203,7 +198,7 @@ const MayoreoCard = ({ item, isExpanded, onToggle }: PaymentCardProps) => (
         </div>
         <div className="text-right flex-shrink-0">
           <div className="text-sm font-bold text-amber-400 whitespace-nowrap">{fmt(item.amount)}</div>
-          <div className="text-[10px] text-cc-text-muted/60 whitespace-nowrap">{formatBusinessDate(item.payment_date)}</div>
+          <div className="text-[10px] text-cc-text-muted/60 whitespace-nowrap">{formatCalendarDate(item.business_date)}</div>
         </div>
         <ChevronDown size={16} className={`text-cc-text-muted flex-shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
       </div>
@@ -253,7 +248,7 @@ const PieceSaleCard = ({ item, isExpanded, onToggle }: PaymentCardProps) => (
         </div>
         <div className="text-right flex-shrink-0">
           <div className="text-sm font-bold text-emerald-400 whitespace-nowrap">{fmt(item.amount)}</div>
-          <div className="text-[10px] text-cc-text-muted/60 whitespace-nowrap">{formatBusinessDate(item.payment_date)}</div>
+          <div className="text-[10px] text-cc-text-muted/60 whitespace-nowrap">{formatCalendarDate(item.business_date)}</div>
         </div>
         <ChevronDown size={16} className={`text-cc-text-muted flex-shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
       </div>
@@ -271,7 +266,7 @@ const PieceSaleCard = ({ item, isExpanded, onToggle }: PaymentCardProps) => (
         </div>
         <div className="flex justify-between">
           <span className="text-cc-text-muted">Ingreso confirmado el:</span>
-          <span className="text-cc-cream">{formatBusinessDate(item.payment_date)}</span>
+          <span className="text-cc-cream">{formatCalendarDate(item.business_date)}</span>
         </div>
         {item.reference && (
           <div className="flex justify-between">
@@ -352,7 +347,7 @@ export const CommercialCollectionsDetailModal = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
           <div>
-            <h2 className="text-lg font-bold text-cc-cream">Desglose de Socios Comerciales</h2>
+            <h2 className="text-lg font-bold text-cc-cream">Desglose de cobranza de Socios Comerciales</h2>
             <p className="text-xs text-cc-text-muted mt-1">
               {new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-MX', {
                 weekday: 'long',

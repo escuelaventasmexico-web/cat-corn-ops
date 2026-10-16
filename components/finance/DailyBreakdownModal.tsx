@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Loader2, Banknote, CreditCard, Repeat2, Hash, BarChart3 } from 'lucide-react';
 import { supabase } from '../../supabase';
-import { getCommercialCollections, getMexicoCityPaymentDate } from '../../services/commercialCollectionsService';
+import { getCommercialCollections } from '../../services/commercialCollectionsService';
 
 interface DailyRow {
   sale_date: string;
@@ -79,7 +79,7 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
         }
 
         for (const payment of commercial.breakdown) {
-          const day = getMexicoCityPaymentDate(payment.payment_date);
+          const day = payment.business_date;
           const row = rowsByDate.get(day) ?? emptyDailyRow(day);
           row.commercial_collections = (row.commercial_collections ?? 0) + payment.amount;
           rowsByDate.set(day, row);
@@ -156,7 +156,7 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
                     : 'bg-white/[0.01] border-white/5 opacity-50'
                 }`}
               >
-                {/* Date + Total */}
+                {/* Date + accounted total */}
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-semibold text-cc-cream">{fmtDate(r.sale_date)}</span>
                   <span className={`text-lg font-bold ${hasSales ? 'text-green-400' : 'text-cc-text-muted'}`}>
@@ -173,7 +173,7 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
                     </div>
                     <div className="flex items-center gap-1.5 text-cc-text-muted">
                       <Repeat2 size={14} className="text-violet-400" />
-                      <span>Socios: <b className="text-cc-cream">{fmt(r.commercial_collections ?? 0)}</b></span>
+                      <span>Cobranza socios: <b className="text-cc-cream">{fmt(r.commercial_collections ?? 0)}</b></span>
                     </div>
                     <div className="flex items-center gap-1.5 text-cc-text-muted">
                       <CreditCard size={14} className="text-blue-400" />
@@ -207,7 +207,7 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
           <div className="border-t border-white/10 p-5">
             <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 text-sm">
               <div>
-                <p className="text-cc-text-muted text-xs">Total Mes</p>
+                <p className="text-cc-text-muted text-xs">Total contabilizado</p>
                 <p className="text-green-400 font-bold">{fmt(totals.total)}</p>
               </div>
               <div>
@@ -223,7 +223,7 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
                 <p className="text-cc-cream font-semibold">{fmt(totals.transfer)}</p>
               </div>
               <div>
-                <p className="text-cc-text-muted text-xs">Socios Comerciales</p>
+                <p className="text-cc-text-muted text-xs">Cobranza Socios Comerciales</p>
                 <p className="text-violet-300 font-semibold">{fmt(totals.commercial)}</p>
               </div>
               <div>

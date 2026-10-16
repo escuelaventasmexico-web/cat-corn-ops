@@ -92,6 +92,29 @@ export interface CommissionSettlementHistory {
   has_payment_proof: boolean;
 }
 
+export interface CommissionPaymentRecord extends CommissionSettlementHistory {
+  earned_period_start: string | null;
+  earned_period_end: string | null;
+  commercial_commissions_amount: number;
+  extra_days_amount: number;
+  other_adjustments_amount: number;
+  concept_breakdown_matches_total: boolean;
+}
+
+export interface CommissionPaymentOverview {
+  month_start: string;
+  month_end_exclusive: string;
+  paid_during_month: number;
+  total_historical_paid: number;
+  historical_pending_release: number;
+  commercial_paid_during_month: number;
+  extra_days_paid_during_month: number;
+  other_adjustments_paid_during_month: number;
+  month_concepts_match_paid_total: boolean;
+  payments_during_month: CommissionPaymentRecord[];
+  settlements: CommissionPaymentRecord[];
+}
+
 export interface CommissionSettlementDetail {
   settlement_id: string;
   commission_event_id: string;

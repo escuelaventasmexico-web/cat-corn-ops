@@ -202,11 +202,21 @@ export const fmtCurrency = (amount: number | null | undefined): string => {
 export const fmtDate = (iso: string | null | undefined): string => {
   if (!iso) return '—';
   try {
+    const utcMidnight = iso.match(/^(\d{4})-(\d{2})-(\d{2})(?:T00:00:00(?:\.0+)?(?:Z|\+00(?::?00)?)?)?$/i);
+    if (utcMidnight) {
+      return new Intl.DateTimeFormat('es-MX', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'UTC',
+      }).format(new Date(`${utcMidnight[1]}-${utcMidnight[2]}-${utcMidnight[3]}T12:00:00Z`));
+    }
     const date = new Date(iso);
     return date.toLocaleDateString('es-MX', {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
+      timeZone: 'America/Mexico_City',
     });
   } catch {
     return '—';
@@ -223,6 +233,7 @@ export const fmtDateTime = (iso: string | null | undefined): string => {
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      timeZone: 'America/Mexico_City',
     });
   } catch {
     return '—';
