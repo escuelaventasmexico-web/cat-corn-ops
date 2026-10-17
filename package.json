@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test:b2b-payment-date": "node scripts/test-b2b-payment-business-date.mjs",
+    "test:pos-cashier-commissions": "node scripts/test-aurrera-pos-cashier-commissions.mjs",
     "verify:cash-inventory-control": "node scripts/verify-cash-inventory-control.mjs",
     "preview": "vite preview"
   },

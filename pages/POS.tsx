@@ -19,9 +19,29 @@ import { CloseCashRegisterModal } from '../components/CloseCashRegisterModal';
 import { GenericSaleModal } from '../components/GenericSaleModal';
 import { BranchSelector } from '../components/BranchSelector';
 import { useBranch } from '../contexts/BranchContext';
+import { useAuth } from '../contexts/AuthContext';
+import { AurreraCashierModal } from '../components/pos/AurreraCashierModal';
+import {
+  AURRERA_BRANCH_ID,
+  buildCheckoutFingerprint,
+  getAurreraCashierOption,
+} from '../lib/posCashierAttribution.js';
+import type {
+  AurreraCashierKey,
+  PosCommissionAttributionMode,
+} from '../lib/posCashierAttribution.js';
+
+interface PendingAurreraAttribution {
+  checkoutToken: string;
+  fingerprint: string;
+  label: string;
+  mode: PosCommissionAttributionMode;
+  recipientId: string | null;
+}
 
 export const POS = () => {
   const { selectedBranch, loading: branchLoading, error: branchError } = useBranch();
+  const { isAdmin } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [comboCatalog, setComboCatalog] = useState<ProductComboCatalogEntry[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -89,7 +109,11 @@ export const POS = () => {
   const [showCloseCashModal, setShowCloseCashModal] = useState(false);
   const [showGenericModal, setShowGenericModal] = useState(false);
   const [deliveryPlatform, setDeliveryPlatform] = useState<'uber_eats' | 'didi_food' | 'rappi' | null>(null);
+  const [showAurreraCashierModal, setShowAurreraCashierModal] = useState(false);
+  const [cashierDraft, setCashierDraft] = useState<AurreraCashierKey | null>(null);
+  const [pendingAurreraAttribution, setPendingAurreraAttribution] = useState<PendingAurreraAttribution | null>(null);
   const cashRequestBranchRef = useRef<string | null>(null);
+  const checkoutInFlightRef = useRef(false);
   const cashRegisterOpen = !!cashStatus.session_id;
 
   const toggleDeliveryPlatform = (platform: 'uber_eats' | 'didi_food' | 'rappi') => {
@@ -160,6 +184,9 @@ export const POS = () => {
     setPendingReceipt(null);
     setPendingComboProduct(null);
     setComboSelectionError(null);
+    setShowAurreraCashierModal(false);
+    setCashierDraft(null);
+    setPendingAurreraAttribution(null);
     cashRequestBranchRef.current = null;
     setCashStatus(EMPTY_CASH_STATUS);
   };
@@ -493,10 +520,81 @@ export const POS = () => {
   const promoBlocked = hasRewardApplied || instagramPromoActive;
   const instagramBlocked = hasRewardApplied || !!activePromoCode || hasPromoApplied;
 
-  const handleCheckout = async () => {
+  const checkoutFingerprint = useMemo(() => buildCheckoutFingerprint({
+    branchId: selectedBranch?.id,
+    cart,
+    cashInput,
+    cardInput,
+    transferInput,
+    customerId: customer?.id,
+    promotionCode: activePromoCode || (instagramPromoActive ? 'PROMO_INSTAGRAM_15' : null),
+  }), [
+    activePromoCode,
+    cardInput,
+    cart,
+    cashInput,
+    customer?.id,
+    instagramPromoActive,
+    selectedBranch?.id,
+    transferInput,
+  ]);
+
+  useEffect(() => {
+    if (!pendingAurreraAttribution) return;
+    if (cart.length === 0 || pendingAurreraAttribution.fingerprint !== checkoutFingerprint) {
+      setPendingAurreraAttribution(null);
+    }
+  }, [cart.length, checkoutFingerprint, pendingAurreraAttribution]);
+
+  useEffect(() => {
+    if (!deliveryPlatform) return;
+    setShowAurreraCashierModal(false);
+    setCashierDraft(null);
+    setPendingAurreraAttribution(null);
+  }, [deliveryPlatform]);
+
+  const requiresAurreraCashierSelection =
+    selectedBranch?.id === AURRERA_BRANCH_ID && !deliveryPlatform;
+
+  const handleCheckoutRequest = () => {
+    if (!requiresAurreraCashierSelection) {
+      void handleCheckout();
+      return;
+    }
+    if (pendingAurreraAttribution?.fingerprint === checkoutFingerprint) {
+      void handleCheckout(pendingAurreraAttribution);
+      return;
+    }
+    setCashierDraft(null);
+    setShowAurreraCashierModal(true);
+  };
+
+  const continueAurreraCheckout = () => {
+    const option = getAurreraCashierOption(cashierDraft);
+    if (!option || (option.key === 'administrator' && !isAdmin)) return;
+    const attribution: PendingAurreraAttribution = {
+      checkoutToken: globalThis.crypto.randomUUID(),
+      fingerprint: checkoutFingerprint,
+      label: option.label,
+      mode: option.mode,
+      recipientId: option.recipientId,
+    };
+    setPendingAurreraAttribution(attribution);
+    setShowAurreraCashierModal(false);
+    setCashierDraft(null);
+    void handleCheckout(attribution);
+  };
+
+  const handleCheckout = async (aurreraAttribution?: PendingAurreraAttribution) => {
     if (cart.length === 0 || !supabase) return;
+    if (checkoutInFlightRef.current) return;
     if (!selectedBranch) {
       alert(branchError || 'Selecciona una sucursal autorizada antes de registrar una venta.');
+      return;
+    }
+    if (requiresAurreraCashierSelection && !aurreraAttribution) {
+      setCashierDraft(null);
+      setShowAurreraCashierModal(true);
       return;
     }
     if (!deliveryPlatform && !isPaymentSufficient) return;
@@ -541,6 +639,7 @@ export const POS = () => {
             ? 'CARD'
             : 'CASH';
 
+    checkoutInFlightRef.current = true;
     setProcessing(true);
 
     try {
@@ -557,8 +656,9 @@ export const POS = () => {
         const rewardApplied = cart.some(i => i.discount_reason === 'LOYALTY_50_OFF_ONE_ITEM');
         const discountTotal = cart.reduce((s, i) => s + (i.discount_amount || 0), 0);
 
-        // Preserve the deployed sales and sale_items flow. The database trigger
-        // validates combo configuration and creates its component snapshots.
+        // Preserve the deployed sales and sale_items schema. Aurrera uses one
+        // atomic RPC so the sale, items and existing commission triggers either
+        // complete together or roll back together.
         const salePayload: Record<string, unknown> = {
           total: cartTotal,
           payment_method: method,
@@ -577,21 +677,12 @@ export const POS = () => {
         };
         if (cashSessionId) salePayload.cash_session_id = cashSessionId;
 
-        const { data: sale, error: saleErr } = await supabase
-          .from('sales')
-          .insert(salePayload)
-          .select('id')
-          .single();
-
-        if (saleErr) throw saleErr;
-
         const saleItems = cart.map(item => {
           const disc = item.discount_amount || 0;
           const effectivePrice = item.quantity > 0
             ? Math.round(((item.price * item.quantity) - disc) / item.quantity * 100) / 100
             : item.price;
           return {
-            sale_id: sale.id,
             product_id: item.is_generic ? null : item.id,
             product_name: item.product_name || item.name || null,
             is_generic: item.is_generic ?? false,
@@ -603,11 +694,50 @@ export const POS = () => {
           };
         });
 
-        const { error: itemsErr } = await supabase
-          .from('sale_items')
-          .insert(saleItems);
+        let saleId: string;
+        if (requiresAurreraCashierSelection) {
+          if (!aurreraAttribution || aurreraAttribution.fingerprint !== checkoutFingerprint) {
+            throw new Error('La atribución del cajero ya no corresponde al cobro actual. Selecciónala nuevamente.');
+          }
+          const { data: attributedSaleId, error: attributedSaleError } = await supabase.rpc(
+            'create_aurrera_attributed_pos_sale',
+            {
+              p_branch_id: selectedBranch.id,
+              p_cash_session_id: cashSessionId,
+              p_checkout_token: aurreraAttribution.checkoutToken,
+              p_attribution_mode: aurreraAttribution.mode,
+              p_commission_recipient_id: aurreraAttribution.recipientId,
+              p_total: cartTotal,
+              p_payment_method: method,
+              p_cash_amount: method === 'CASH' ? cashInput : method === 'MIXED' ? effectiveCash : 0,
+              p_card_amount: method === 'CARD' || method === 'MIXED' ? effectiveCard : 0,
+              p_transfer_amount: method === 'TRANSFER' ? cartTotal : 0,
+              p_customer_id: customer?.id || null,
+              p_loyalty_reward_applied: rewardApplied,
+              p_loyalty_discount_amount: discountTotal,
+              p_promotion_code: activePromoCode || (instagramPromoActive ? 'PROMO_INSTAGRAM_15' : null),
+              p_items: saleItems,
+            },
+          );
+          if (attributedSaleError) throw attributedSaleError;
+          if (typeof attributedSaleId !== 'string') {
+            throw new Error('Supabase no devolvió el folio de la venta atribuida.');
+          }
+          saleId = attributedSaleId;
+        } else {
+          const { data: sale, error: saleErr } = await supabase
+            .from('sales')
+            .insert(salePayload)
+            .select('id')
+            .single();
+          if (saleErr) throw saleErr;
+          saleId = sale.id;
 
-        if (itemsErr) throw itemsErr;
+          const { error: itemsErr } = await supabase
+            .from('sale_items')
+            .insert(saleItems.map(item => ({ ...item, sale_id: saleId })));
+          if (itemsErr) throw itemsErr;
+        }
 
         // 3. Refetch customer to show updated stamps
         if (customer) {
@@ -622,7 +752,7 @@ export const POS = () => {
 
         // Build receipt data BEFORE clearing the cart
         const receiptData: ReceiptData = {
-          saleId: sale.id,
+          saleId,
           date: new Date(),
           items: cart.map(item => ({
             name: item.product_name || item.name,
@@ -654,9 +784,12 @@ export const POS = () => {
         setCashInput(0);
         setCardInput(0);
         setTransferInput(0);
+        setPendingAurreraAttribution(null);
+        setShowAurreraCashierModal(false);
+        setCashierDraft(null);
 
         // Show print-ticket modal
-        console.info('[POS] ✅ Venta guardada — Folio:', sale.id.slice(0, 8).toUpperCase(), 'Total: $' + cartTotal.toFixed(2));
+        console.info('[POS] ✅ Venta guardada — Folio:', saleId.slice(0, 8).toUpperCase(), 'Total: $' + cartTotal.toFixed(2));
         setPrintError(null);
         setPendingReceipt(receiptData);
 
@@ -667,6 +800,7 @@ export const POS = () => {
           .join(' · ');
         alert('Error procesando venta: ' + (details || String(err)));
     } finally {
+        checkoutInFlightRef.current = false;
         setProcessing(false);
     }
   };
@@ -1761,8 +1895,14 @@ export const POS = () => {
               )}
 
               {/* Confirm button */}
+              {requiresAurreraCashierSelection && pendingAurreraAttribution && (
+                <div className="rounded-lg border border-cc-primary/25 bg-cc-primary/10 px-3 py-2 text-xs text-cc-cream">
+                  Venta atribuida a <span className="font-bold text-cc-primary">{pendingAurreraAttribution.label}</span>.
+                  Si el cobro se reintenta, se conservará esta atribución.
+                </div>
+              )}
               <button
-                onClick={() => handleCheckout()}
+                onClick={handleCheckoutRequest}
                 disabled={processing || !isPaymentSufficient || cart.length === 0 || !cashRegisterOpen}
                 className="w-full py-3 bg-cc-primary hover:bg-cc-primary/90 text-cc-bg rounded-lg text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
@@ -2005,6 +2145,19 @@ export const POS = () => {
             setShowCloseCashModal(false);
             loadCashStatus();
           }}
+        />
+      )}
+
+      {showAurreraCashierModal && (
+        <AurreraCashierModal
+          selected={cashierDraft}
+          administratorAllowed={isAdmin}
+          onSelect={setCashierDraft}
+          onCancel={() => {
+            setShowAurreraCashierModal(false);
+            setCashierDraft(null);
+          }}
+          onContinue={continueAurreraCheckout}
         />
       )}
 
