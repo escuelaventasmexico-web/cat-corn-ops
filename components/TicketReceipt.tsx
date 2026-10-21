@@ -26,6 +26,12 @@ export interface ReceiptData {
   cardAmount: number;
   changeAmount: number;
   customerName?: string;
+  promotionGroups?: Array<{
+    id: string;
+    groupNumber: number;
+    discountAmount: number;
+    units: Array<{ name: string; unitPrice: number; free: boolean }>;
+  }>;
 }
 
 /** Thermal‑receipt component (58 mm).  Render inside a print‑only container. */
@@ -120,6 +126,8 @@ export const TicketReceipt = forwardRef<HTMLDivElement, { data: ReceiptData }>(
                           ? `Promo sab sabores 50%: -$${disc.toFixed(2)}`
                           : item.discountReason === 'PROMO_FRIDAY_MANTEQUILLA_2X1'
                             ? `Promo viernes mantequilla 2x1: -$${disc.toFixed(2)}`
+                            : item.discountReason === 'PROMO_GATO_MAYOR_3X2'
+                              ? `Promo 3 x 2 Gato Mayor: -$${disc.toFixed(2)}`
                             : item.discountReason === 'PROMOCION_INSTAGRAM_15'
                               ? `Promo Instagram 15%: -$${disc.toFixed(2)}`
                               : `Desc: -$${disc.toFixed(2)}`}
@@ -141,6 +149,19 @@ export const TicketReceipt = forwardRef<HTMLDivElement, { data: ReceiptData }>(
             })}
           </tbody>
         </table>
+
+        {!!data.promotionGroups?.length && (
+          <div style={{ fontSize: '9px', marginTop: '1mm' }}>
+            {data.promotionGroups.map(group => (
+              <div key={group.id} style={{ marginBottom: '1mm' }}>
+                <strong>3 x 2 Gato Mayor #{group.groupNumber}</strong>
+                {group.units.map((unit, index) => (
+                  <div key={index}>· {unit.name} ${unit.unitPrice.toFixed(2)}{unit.free ? ' — GRATIS' : ''}</div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
 
         <Divider />
 

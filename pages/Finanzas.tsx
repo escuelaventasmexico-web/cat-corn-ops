@@ -25,6 +25,7 @@ import { PLDetailedView } from '../components/finance/PLDetailedView.tsx';
 import { FixedCostsVsSales } from '../components/finance/FixedCostsVsSales.tsx';
 import { DailyBreakdownModal } from '../components/finance/DailyBreakdownModal.tsx';
 import { MonthCalendar } from '../components/finance/MonthCalendar.tsx';
+import { FinanceSalesBreakdown } from '../components/finance/FinanceSalesBreakdown.tsx';
 
 interface FinanceCard {
   path: string;
@@ -498,6 +499,8 @@ const FinanceResumenTest = () => {
               )}
             </div>
           </div>
+
+          <FinanceSalesBreakdown monthStartISO={monthStartISO} />
           </>
         );
       })()}

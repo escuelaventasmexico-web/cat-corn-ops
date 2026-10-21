@@ -1,4 +1,5 @@
 import type { CartItem } from '../supabase';
+import { isGatoMayor3x2Eligible } from './gatoMayor3x2.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -10,7 +11,8 @@ export type PromotionCode =
   | 'FRIDAY_JEFE_TOPPING'
   | 'FRIDAY_MANTEQUILLA_2X1'
   | 'SATURDAY_JEFE_GATO'
-  | 'SATURDAY_SABORES_50';
+  | 'SATURDAY_SABORES_50'
+  | 'GATO_MAYOR_3X2';
 
 export interface PromotionDefinition {
   code: PromotionCode;
@@ -132,6 +134,19 @@ function sortByPriceDesc(items: CartItem[]): CartItem[] {
 // ─── Promotion Definitions ──────────────────────────────────────────────────
 
 export const PROMOTIONS: PromotionDefinition[] = [
+  {
+    code: 'GATO_MAYOR_3X2',
+    label: '3 × 2 Gato Mayor',
+    shortLabel: '3 × 2 Gato Mayor',
+    day: 'Todos los días',
+    description: 'Lleva 3 bolsas Gato Mayor y la de menor precio es gratis',
+    includes: 'Salada/Mantequilla, Sabores y Caramelo Gato Mayor 180 g',
+    promoPrice: 'La de menor precio GRATIS',
+    note: 'Selecciona cada grupo de 3 · No combinable con otras promociones',
+    isEligible: isGatoMayor3x2Eligible,
+    // The POS keeps the explicit groups and applies their discount separately.
+    apply: cart => cart,
+  },
   // --- MONDAY: Buy 2 Michi 90g, special bundle discount ($10 off each) ---
   {
     code: 'MONDAY_2_MICHI',
@@ -475,5 +490,6 @@ export function getPromoEmoji(code: PromotionCode): string {
     case 'FRIDAY_MANTEQUILLA_2X1': return '🧈';
     case 'SATURDAY_JEFE_GATO': return '🎉';
     case 'SATURDAY_SABORES_50': return '🧡';
+    case 'GATO_MAYOR_3X2': return '🐈';
   }
 }

@@ -1,4 +1,5 @@
 import type { CartItem } from '../supabase';
+import type { GatoMayor3x2Group } from './gatoMayor3x2.js';
 
 export type AurreraCashierKey = 'angelica' | 'gerardo' | 'administrator';
 export type PosCommissionAttributionMode = 'employee' | 'administrator';
@@ -25,4 +26,5 @@ export function buildCheckoutFingerprint(input: {
   transferInput: number;
   customerId?: string | null;
   promotionCode?: string | null;
+  promotionGroups?: GatoMayor3x2Group[];
 }): string;

@@ -21,6 +21,15 @@ import { BranchSelector } from '../components/BranchSelector';
 import { useBranch } from '../contexts/BranchContext';
 import { useAuth } from '../contexts/AuthContext';
 import { AurreraCashierModal } from '../components/pos/AurreraCashierModal';
+import { GatoMayor3x2Modal } from '../components/pos/GatoMayor3x2Modal';
+import {
+  buildGatoMayor3x2Group,
+  evaluateGatoMayor3x2Groups,
+  getAvailableGatoMayor3x2Quantities,
+  GATO_MAYOR_3X2_DISCOUNT_REASON,
+  reconcileGatoMayor3x2Groups,
+} from '../lib/gatoMayor3x2.js';
+import type { GatoMayor3x2Group } from '../lib/gatoMayor3x2.js';
 import {
   AURRERA_BRANCH_ID,
   buildCheckoutFingerprint,
@@ -67,6 +76,9 @@ export const POS = () => {
 
   // Promotion state
   const [activePromoCode, setActivePromoCode] = useState<PromotionCode | null>(null);
+  const [gatoMayorPromoGroups, setGatoMayorPromoGroups] = useState<GatoMayor3x2Group[]>([]);
+  const [showGatoMayorPromoModal, setShowGatoMayorPromoModal] = useState(false);
+  const [gatoMayorPromoSelection, setGatoMayorPromoSelection] = useState<Record<string, number>>({});
 
   // Customers list state
   const [showCustomersList, setShowCustomersList] = useState(false);
@@ -114,6 +126,7 @@ export const POS = () => {
   const [pendingAurreraAttribution, setPendingAurreraAttribution] = useState<PendingAurreraAttribution | null>(null);
   const cashRequestBranchRef = useRef<string | null>(null);
   const checkoutInFlightRef = useRef(false);
+  const promotionCheckoutRef = useRef<{ fingerprint: string; token: string } | null>(null);
   const cashRegisterOpen = !!cashStatus.session_id;
 
   const toggleDeliveryPlatform = (platform: 'uber_eats' | 'didi_food' | 'rappi') => {
@@ -172,6 +185,10 @@ export const POS = () => {
     setLoyaltyPhone('');
     setLoyaltyMsg(null);
     setActivePromoCode(null);
+    setGatoMayorPromoGroups([]);
+    setShowGatoMayorPromoModal(false);
+    setGatoMayorPromoSelection({});
+    promotionCheckoutRef.current = null;
     setInstagramPromoActive(false);
     setDeliveryPlatform(null);
     setRewardSelectedItem(null);
@@ -388,6 +405,11 @@ export const POS = () => {
       }
       // Reapply active promotion
       if (activePromoCode) {
+        if (activePromoCode === 'GATO_MAYOR_3X2') {
+          const keptGroups = reconcileGatoMayor3x2Groups(next, gatoMayorPromoGroups);
+          if (keptGroups.length !== gatoMayorPromoGroups.length) setGatoMayorPromoGroups(keptGroups);
+          return evaluateGatoMayor3x2Groups(next, keptGroups).cart;
+        }
         const promo = getPromotion(activePromoCode);
         if (promo) return promo.apply(next);
       }
@@ -461,6 +483,11 @@ export const POS = () => {
       }).filter(item => item.quantity > 0);
       // Reapply active promotion
       if (activePromoCode) {
+        if (activePromoCode === 'GATO_MAYOR_3X2') {
+          const keptGroups = reconcileGatoMayor3x2Groups(next, gatoMayorPromoGroups);
+          if (keptGroups.length !== gatoMayorPromoGroups.length) setGatoMayorPromoGroups(keptGroups);
+          return evaluateGatoMayor3x2Groups(next, keptGroups).cart;
+        }
         const promo = getPromotion(activePromoCode);
         if (promo) return promo.apply(next);
       }
@@ -484,6 +511,7 @@ export const POS = () => {
   const hasInstagramApplied = cart.some(item => item.discount_reason === 'PROMOCION_INSTAGRAM_15');
   const hasSaboresPromoApplied = cart.some(item => item.discount_reason === 'PROMO_SATURDAY_SABORES_50');
   const hasMantequillaPromoApplied = cart.some(item => item.discount_reason === 'PROMO_FRIDAY_MANTEQUILLA_2X1');
+  const hasGatoMayor3x2Applied = cart.some(item => item.discount_reason === GATO_MAYOR_3X2_DISCOUNT_REASON);
 
   // Instagram promo derived values
   const instagramDiscountInfo = useMemo(() => {
@@ -528,12 +556,14 @@ export const POS = () => {
     transferInput,
     customerId: customer?.id,
     promotionCode: activePromoCode || (instagramPromoActive ? 'PROMO_INSTAGRAM_15' : null),
+    promotionGroups: gatoMayorPromoGroups,
   }), [
     activePromoCode,
     cardInput,
     cart,
     cashInput,
     customer?.id,
+    gatoMayorPromoGroups,
     instagramPromoActive,
     selectedBranch?.id,
     transferInput,
@@ -547,11 +577,30 @@ export const POS = () => {
   }, [cart.length, checkoutFingerprint, pendingAurreraAttribution]);
 
   useEffect(() => {
+    if (promotionCheckoutRef.current?.fingerprint !== checkoutFingerprint) {
+      promotionCheckoutRef.current = null;
+    }
+  }, [checkoutFingerprint]);
+
+  useEffect(() => {
+    if (activePromoCode === 'GATO_MAYOR_3X2' && gatoMayorPromoGroups.length === 0 && !showGatoMayorPromoModal) {
+      setActivePromoCode(null);
+      setCart(prev => clearPromoDiscounts(prev));
+    }
+  }, [activePromoCode, gatoMayorPromoGroups.length, showGatoMayorPromoModal]);
+
+  useEffect(() => {
     if (!deliveryPlatform) return;
     setShowAurreraCashierModal(false);
     setCashierDraft(null);
     setPendingAurreraAttribution(null);
-  }, [deliveryPlatform]);
+    if (activePromoCode === 'GATO_MAYOR_3X2') {
+      setActivePromoCode(null);
+      setGatoMayorPromoGroups([]);
+      setShowGatoMayorPromoModal(false);
+      setCart(prev => clearPromoDiscounts(prev));
+    }
+  }, [activePromoCode, deliveryPlatform]);
 
   const requiresAurreraCashierSelection =
     selectedBranch?.id === AURRERA_BRANCH_ID && !deliveryPlatform;
@@ -694,8 +743,56 @@ export const POS = () => {
           };
         });
 
+        const promotionItems = cart.map(item => ({
+          product_id: item.is_generic ? null : item.id,
+          product_name: item.product_name || item.name || null,
+          is_generic: item.is_generic ?? false,
+          quantity: item.quantity,
+          client_unit_price: item.price,
+          selected_beverage_product_id: item.combo_beverage_product_id || null,
+        }));
+
         let saleId: string;
-        if (requiresAurreraCashierSelection) {
+        if (activePromoCode === 'GATO_MAYOR_3X2') {
+          if (deliveryPlatform) throw new Error('La promoción 3 × 2 no está disponible para delivery.');
+          if (gatoMayorPromoGroups.length === 0) throw new Error('Forma al menos un grupo completo de 3 bolsas.');
+          if (requiresAurreraCashierSelection && (!aurreraAttribution || aurreraAttribution.fingerprint !== checkoutFingerprint)) {
+            throw new Error('La atribución del cajero ya no corresponde al cobro actual. Selecciónala nuevamente.');
+          }
+          let checkoutToken = aurreraAttribution?.checkoutToken;
+          if (!checkoutToken) {
+            const existing = promotionCheckoutRef.current;
+            checkoutToken = existing?.fingerprint === checkoutFingerprint
+              ? existing.token
+              : globalThis.crypto.randomUUID();
+            promotionCheckoutRef.current = { fingerprint: checkoutFingerprint, token: checkoutToken };
+          }
+          const { data: promotionalSaleId, error: promotionalSaleError } = await supabase.rpc(
+            'create_gato_mayor_3x2_pos_sale',
+            {
+              p_branch_id: selectedBranch.id,
+              p_cash_session_id: cashSessionId,
+              p_checkout_token: checkoutToken,
+              p_attribution_mode: aurreraAttribution?.mode || null,
+              p_commission_recipient_id: aurreraAttribution?.recipientId || null,
+              p_total: cartTotal,
+              p_payment_method: method,
+              p_cash_amount: method === 'CASH' ? cashInput : method === 'MIXED' ? effectiveCash : 0,
+              p_card_amount: method === 'CARD' || method === 'MIXED' ? effectiveCard : 0,
+              p_transfer_amount: method === 'TRANSFER' ? cartTotal : 0,
+              p_customer_id: customer?.id || null,
+              p_items: promotionItems,
+              p_groups: gatoMayorPromoGroups.map((group, index) => ({
+                id: group.id,
+                group_number: index + 1,
+                items: group.items.map(item => ({ product_id: item.productId, quantity: item.quantity })),
+              })),
+            },
+          );
+          if (promotionalSaleError) throw promotionalSaleError;
+          if (typeof promotionalSaleId !== 'string') throw new Error('Supabase no devolvió el folio de la venta promocional.');
+          saleId = promotionalSaleId;
+        } else if (requiresAurreraCashierSelection) {
           if (!aurreraAttribution || aurreraAttribution.fingerprint !== checkoutFingerprint) {
             throw new Error('La atribución del cajero ya no corresponde al cobro actual. Selecciónala nuevamente.');
           }
@@ -775,11 +872,23 @@ export const POS = () => {
           cardAmount: effectiveCard,
           changeAmount,
           customerName: customer ? `${customer.first_name} ${customer.last_name}`.trim() : undefined,
+          promotionGroups: evaluatedGatoMayorGroups.map(group => ({
+            id: group.id,
+            groupNumber: group.groupNumber,
+            discountAmount: group.discountAmount,
+            units: group.units.map(unit => ({
+              name: unit.name,
+              unitPrice: unit.price,
+              free: unit.free,
+            })),
+          })),
         };
 
         // Clear cart & payment state
         setCart([]);
         setActivePromoCode(null);
+        setGatoMayorPromoGroups([]);
+        promotionCheckoutRef.current = null;
         setInstagramPromoActive(false);
         setCashInput(0);
         setCardInput(0);
@@ -828,7 +937,7 @@ export const POS = () => {
       // 2. Fetch sale items with product info
       const { data: items, error: itemsErr } = await supabase
         .from('sale_items')
-        .select('id, quantity, price, discount_amount, discount_reason, product_id, product_name, products!sale_items_product_id_fkey(product_name, name, size, price)')
+        .select('id, quantity, price, discount_amount, discount_reason, product_id, product_name, promotion_group_id, products!sale_items_product_id_fkey(product_name, name, size, price)')
         .eq('sale_id', sale.id);
 
       if (itemsErr) throw itemsErr;
@@ -843,6 +952,16 @@ export const POS = () => {
         : { data: [], error: null };
 
       if (componentsErr) throw componentsErr;
+
+      const promotionGroupIds = [...new Set((items || []).map((item: any) => item.promotion_group_id).filter(Boolean))];
+      const { data: storedPromotionGroups, error: promotionGroupsErr } = promotionGroupIds.length > 0
+        ? await supabase
+          .from('pos_promotion_groups')
+          .select('id, group_number, discount_amount')
+          .in('id', promotionGroupIds)
+          .order('group_number')
+        : { data: [], error: null };
+      if (promotionGroupsErr) throw promotionGroupsErr;
 
       // 3. Optionally fetch customer name
       let customerName: string | undefined;
@@ -924,6 +1043,18 @@ export const POS = () => {
         cardAmount: cardAmt,
         changeAmount: change,
         customerName,
+        promotionGroups: (storedPromotionGroups || []).map((group: any) => ({
+          id: group.id,
+          groupNumber: group.group_number,
+          discountAmount: Number(group.discount_amount || 0),
+          units: (items || [])
+            .filter((item: any) => item.promotion_group_id === group.id)
+            .map((item: any) => ({
+              name: item.products?.product_name || item.products?.name || item.product_name || 'Gato Mayor',
+              unitPrice: Number(item.price || 0) + Number(item.discount_amount || 0),
+              free: Number(item.discount_amount || 0) > 0,
+            })),
+        })),
       };
 
       console.info('[POS] 🔄 Reimprimiendo ticket — Folio:', sale.id.slice(0, 8).toUpperCase());
@@ -979,6 +1110,7 @@ export const POS = () => {
     if (!rewardSelectedItem) return;
     // Clear any promo first (mutual exclusion)
     setActivePromoCode(null);
+    setGatoMayorPromoGroups([]);
     setCart(prev => {
       const cleaned = clearPromoDiscounts(prev);
       return cleaned.map(item => {
@@ -1018,6 +1150,7 @@ export const POS = () => {
     if (!cart.some(item => !getCombo(item.id))) return;
 
     // Activate: find most expensive item and apply 15% discount
+    setGatoMayorPromoGroups([]);
     setInstagramPromoActive(true);
     setCart(prev => {
       const eligibleIndexes = prev
@@ -1092,21 +1225,67 @@ export const POS = () => {
 
   const activatePromo = (code: PromotionCode) => {
     if (promoBlocked) return;
+    if (deliveryPlatform && code === 'GATO_MAYOR_3X2') {
+      alert('La promoción 3 × 2 Gato Mayor sólo está disponible en el punto de venta.');
+      return;
+    }
     if (activePromoCode === code) {
-      // Deactivate
-      deactivatePromo();
+      if (code === 'GATO_MAYOR_3X2') {
+        setGatoMayorPromoSelection({});
+        setShowGatoMayorPromoModal(true);
+      } else {
+        deactivatePromo();
+      }
       return;
     }
     const promo = getPromotion(code);
     if (!promo) return;
+    setGatoMayorPromoGroups([]);
+    if (code === 'GATO_MAYOR_3X2') {
+      setCart(prev => clearPromoDiscounts(prev));
+      setGatoMayorPromoSelection({});
+      setShowGatoMayorPromoModal(true);
+      return;
+    }
     setActivePromoCode(code);
     setCart(prev => promo.apply(prev));
   };
 
   const deactivatePromo = () => {
     setActivePromoCode(null);
+    setGatoMayorPromoGroups([]);
+    setShowGatoMayorPromoModal(false);
+    setGatoMayorPromoSelection({});
     setCart(prev => clearPromoDiscounts(prev));
   };
+
+  const confirmGatoMayorPromoGroup = () => {
+    const group = buildGatoMayor3x2Group(globalThis.crypto.randomUUID(), gatoMayorPromoSelection);
+    const nextGroups = [...gatoMayorPromoGroups, group];
+    const evaluated = evaluateGatoMayor3x2Groups(cart, nextGroups);
+    if (evaluated.groups.length !== nextGroups.length) return;
+    setGatoMayorPromoGroups(nextGroups);
+    setCart(evaluated.cart);
+    setActivePromoCode('GATO_MAYOR_3X2');
+    setGatoMayorPromoSelection({});
+    setShowGatoMayorPromoModal(false);
+  };
+
+  const removeGatoMayorPromoGroup = (groupId: string) => {
+    const nextGroups = gatoMayorPromoGroups.filter(group => group.id !== groupId);
+    setGatoMayorPromoGroups(nextGroups);
+    setCart(prev => evaluateGatoMayor3x2Groups(prev, nextGroups).cart);
+    if (nextGroups.length === 0) setActivePromoCode(null);
+  };
+
+  const evaluatedGatoMayorGroups = useMemo(
+    () => evaluateGatoMayor3x2Groups(cart, gatoMayorPromoGroups).groups,
+    [cart, gatoMayorPromoGroups],
+  );
+  const availableGatoMayorQuantities = useMemo(
+    () => getAvailableGatoMayor3x2Quantities(cart, gatoMayorPromoGroups),
+    [cart, gatoMayorPromoGroups],
+  );
 
   // Eligible counts for promo buttons (memoized)
   const promoEligibleCounts = useMemo(() => {
@@ -1309,11 +1488,12 @@ export const POS = () => {
                   const notToday = p.dayIndex !== undefined && !isTodayWeekday(p.dayIndex);
                   const isSaboresPromo = p.code === 'SATURDAY_SABORES_50';
                   const isMantequillaPromo = p.code === 'FRIDAY_MANTEQUILLA_2X1';
+                  const deliveryBlocked = p.code === 'GATO_MAYOR_3X2' && !!deliveryPlatform;
                   return (
                     <button
                       key={p.code}
                       onClick={() => activatePromo(p.code)}
-                      disabled={(blocked && !isActive) || notToday}
+                      disabled={(blocked && !isActive) || notToday || deliveryBlocked}
                       className={`relative text-left p-4 rounded-xl border transition-all group ${
                         isActive
                           ? isSaboresPromo
@@ -1511,6 +1691,19 @@ export const POS = () => {
               <button onClick={deactivatePromo} className="text-red-400 hover:text-red-300 text-[10px] font-bold">Quitar</button>
             </div>
           )}
+          {activePromoCode === 'GATO_MAYOR_3X2' && (
+            <div className="mx-3 mb-2 space-y-1.5">
+              {evaluatedGatoMayorGroups.map(group => (
+                <div key={group.id} className="flex items-center justify-between rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-[11px]">
+                  <span className="text-amber-200">Grupo {group.groupNumber}: 3 bolsas · gratis ${group.discountAmount.toFixed(2)}</span>
+                  <button type="button" onClick={() => removeGatoMayorPromoGroup(group.id)} className="font-bold text-red-400 hover:text-red-300">Quitar</button>
+                </div>
+              ))}
+              <button type="button" onClick={() => { setGatoMayorPromoSelection({}); setShowGatoMayorPromoModal(true); }} className="w-full rounded-lg border border-dashed border-amber-400/30 py-1.5 text-[11px] font-bold text-amber-300 hover:bg-amber-400/10">
+                + Añadir otro grupo 3 × 2
+              </button>
+            </div>
+          )}
 
         </div>{/* end fixed header */}
 
@@ -1546,7 +1739,7 @@ export const POS = () => {
                         {item.discount_reason === 'PROMOCION_INSTAGRAM_15' && (
                           <div className="text-[10px] text-pink-300 mt-0.5 flex items-center gap-1"><Sparkles size={10} /> -15% Instagram</div>
                         )}
-                        {item.discount_reason?.startsWith('PROMO_') && item.discount_reason !== 'PROMOCION_INSTAGRAM_15' && item.discount_reason !== 'PROMO_SATURDAY_SABORES_50' && item.discount_reason !== 'PROMO_FRIDAY_MANTEQUILLA_2X1' && (
+                        {item.discount_reason?.startsWith('PROMO_') && item.discount_reason !== 'PROMOCION_INSTAGRAM_15' && item.discount_reason !== 'PROMO_SATURDAY_SABORES_50' && item.discount_reason !== 'PROMO_FRIDAY_MANTEQUILLA_2X1' && item.discount_reason !== GATO_MAYOR_3X2_DISCOUNT_REASON && (
                           <div className="text-[10px] text-cc-accent mt-0.5 flex items-center gap-1"><Tag size={10} /> Promo</div>
                         )}
                         {item.discount_reason === 'PROMO_SATURDAY_SABORES_50' && (
@@ -1554,6 +1747,9 @@ export const POS = () => {
                         )}
                         {item.discount_reason === 'PROMO_FRIDAY_MANTEQUILLA_2X1' && (
                           <div className="text-[10px] text-amber-300 mt-0.5 flex items-center gap-1"><Tag size={10} /> Promo viernes 2x1</div>
+                        )}
+                        {item.discount_reason === GATO_MAYOR_3X2_DISCOUNT_REASON && (
+                          <div className="text-[10px] text-amber-300 mt-0.5 flex items-center gap-1"><Tag size={10} /> 3 × 2 Gato Mayor · bolsa bonificada</div>
                         )}
                     </div>
                     <div className="flex items-center gap-3">
@@ -1609,7 +1805,7 @@ export const POS = () => {
                 )}
                 {hasPromoApplied && !hasInstagramApplied && !hasSaboresPromoApplied && !hasMantequillaPromoApplied && (
                   <div className="flex justify-between items-center text-xs">
-                    <span className="text-cc-accent">Desc. Promoción</span>
+                    <span className="text-cc-accent">{hasGatoMayor3x2Applied ? 'Promo 3 × 2 Gato Mayor' : 'Desc. Promoción'}</span>
                     <span className="text-cc-accent">-${cart.filter(i => i.discount_reason?.startsWith('PROMO_') && i.discount_reason !== 'PROMOCION_INSTAGRAM_15' && i.discount_reason !== 'PROMO_SATURDAY_SABORES_50' && i.discount_reason !== 'PROMO_FRIDAY_MANTEQUILLA_2X1').reduce((s, i) => s + (i.discount_amount || 0), 0).toFixed(2)}</span>
                   </div>
                 )}
@@ -2469,6 +2665,16 @@ export const POS = () => {
             </div>
           </div>
         </div>
+      )}
+      {showGatoMayorPromoModal && (
+        <GatoMayor3x2Modal
+          cart={cart}
+          availableByProduct={availableGatoMayorQuantities}
+          selected={gatoMayorPromoSelection}
+          onChange={(productId, quantity) => setGatoMayorPromoSelection(prev => ({ ...prev, [productId]: quantity }))}
+          onCancel={() => { setShowGatoMayorPromoModal(false); setGatoMayorPromoSelection({}); }}
+          onConfirm={confirmGatoMayorPromoGroup}
+        />
       )}
     </div>
   );

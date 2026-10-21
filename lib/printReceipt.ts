@@ -122,10 +122,20 @@ export function buildEscPosReceipt(data: ReceiptData): string[] {
         ? '  Promo sab sabores 50%: -$' + disc.toFixed(2)
         : reason === 'PROMO_FRIDAY_MANTEQUILLA_2X1'
           ? '  Promo viernes mantequilla 2x1: -$' + disc.toFixed(2)
+          : reason === 'PROMO_GATO_MAYOR_3X2'
+            ? '  Promo 3x2 Gato Mayor: -$' + disc.toFixed(2)
           : reason === 'PROMOCION_INSTAGRAM_15'
             ? '  Promo Instagram 15%: -$' + disc.toFixed(2)
             : '  Desc: -$' + disc.toFixed(2);
       cmds.push(discLabel + LF);
+    }
+  }
+
+  for (const group of data.promotionGroups || []) {
+    cmds.push(`3x2 Gato Mayor #${group.groupNumber}` + LF);
+    for (const unit of group.units) {
+      const label = `  ${unit.name} $${unit.unitPrice.toFixed(2)}${unit.free ? ' GRATIS' : ''}`;
+      cmds.push(label.slice(0, LINE_W) + LF);
     }
   }
 

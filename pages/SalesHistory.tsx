@@ -49,6 +49,7 @@ interface SaleItem {
   price: number;
   discount_amount: number;
   discount_reason: string | null;
+  promotion_group_id: string | null;
   combo_components: ComboComponentSnapshot[];
   products: {
     name: string;
@@ -58,6 +59,12 @@ interface SaleItem {
     grams: number | null;
     price: number | null;
   } | null;
+}
+
+interface PromotionGroupDetail {
+  id: string;
+  group_number: number;
+  discount_amount: number;
 }
 
 interface Sample {
@@ -80,6 +87,7 @@ export const SalesHistory = () => {
   const [branchOptionsError, setBranchOptionsError] = useState<string | null>(null);
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
+  const [promotionGroups, setPromotionGroups] = useState<PromotionGroupDetail[]>([]);
   const [loadingItems, setLoadingItems] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const [reprintLoading, setReprintLoading] = useState(false);
@@ -341,6 +349,7 @@ export const SalesHistory = () => {
     setItemsError(null);
     setReprintError(null);
     setSaleItems([]);
+    setPromotionGroups([]);
     try {
       if (!supabase) throw new Error('Supabase no está configurado.');
       
@@ -354,6 +363,7 @@ export const SalesHistory = () => {
           price,
           discount_amount,
           discount_reason,
+          promotion_group_id,
           products!sale_items_product_id_fkey (
             name,
             product_name,
@@ -375,6 +385,16 @@ export const SalesHistory = () => {
           .in('sale_item_id', itemIds)
         : { data: [], error: null };
       if (comboError) throw comboError;
+
+      const promotionGroupIds = [...new Set((data || []).map((item: any) => item.promotion_group_id).filter(Boolean))];
+      const { data: promotionGroupData, error: promotionGroupError } = promotionGroupIds.length > 0
+        ? await supabase
+          .from('pos_promotion_groups')
+          .select('id, group_number, discount_amount')
+          .in('id', promotionGroupIds)
+          .order('group_number')
+        : { data: [], error: null };
+      if (promotionGroupError) throw promotionGroupError;
       
       // Transform data to match SaleItem type
       const items: SaleItem[] = (data || []).map((item: any) => {
@@ -389,6 +409,7 @@ export const SalesHistory = () => {
           price: Number(item.price || 0),
           discount_amount: Number(item.discount_amount || 0),
           discount_reason: item.discount_reason || null,
+          promotion_group_id: item.promotion_group_id || null,
           combo_components: (comboData || [])
             .filter((component: any) => component.sale_item_id === item.id)
             .map((component: any) => ({
@@ -407,6 +428,11 @@ export const SalesHistory = () => {
       });
       
       setSaleItems(items);
+      setPromotionGroups((promotionGroupData || []).map((group: any) => ({
+        id: group.id,
+        group_number: Number(group.group_number),
+        discount_amount: Number(group.discount_amount || 0),
+      })));
     } catch (error: unknown) {
       console.error('[SalesHistory] Error completo de Supabase al cargar el detalle:', error);
       setItemsError(formatSupabaseError(error, 'No se pudo cargar el detalle de la venta.'));
@@ -711,6 +737,18 @@ export const SalesHistory = () => {
         cashAmount,
         cardAmount,
         changeAmount: method === 'CASH' ? Math.max(0, cashAmount - Number(selectedSale.total)) : 0,
+        promotionGroups: promotionGroups.map(group => ({
+          id: group.id,
+          groupNumber: group.group_number,
+          discountAmount: group.discount_amount,
+          units: saleItems
+            .filter(item => item.promotion_group_id === group.id)
+            .map(item => ({
+              name: item.products?.product_name || item.products?.name || item.product_name || 'Gato Mayor',
+              unitPrice: Number(item.price || 0) + Number(item.discount_amount || 0),
+              free: Number(item.discount_amount || 0) > 0,
+            })),
+        })),
       });
     } catch (error: unknown) {
       console.error('[SalesHistory] Error al reimprimir la venta:', error);
@@ -1225,6 +1263,12 @@ export const SalesHistory = () => {
                 <div className="text-center text-cc-text-muted py-8">La venta no tiene partidas registradas.</div>
               ) : (
                 <div className="space-y-3">
+                  {promotionGroups.map(group => (
+                    <div key={group.id} className="rounded-lg border border-amber-400/25 bg-amber-400/5 px-4 py-3 text-sm text-amber-200">
+                      <div className="font-bold">3 × 2 Gato Mayor · Grupo {group.group_number}</div>
+                      <div className="mt-1 text-xs">3 bolsas entregadas · descuento ${group.discount_amount.toFixed(2)}</div>
+                    </div>
+                  ))}
                   {saleItems.map((item) => {
                     const itemTotal = Number(item.price) * Number(item.quantity);
                     const description = buildProductDescription(item.products);
@@ -1241,6 +1285,11 @@ export const SalesHistory = () => {
                           {description && (
                             <div className="text-xs text-cc-text-muted mt-0.5">
                               {description}
+                            </div>
+                          )}
+                          {item.promotion_group_id && (
+                            <div className="mt-1 text-xs font-semibold text-amber-300">
+                              Grupo 3 × 2{item.discount_amount > 0 ? ' · bolsa gratis' : ''}
                             </div>
                           )}
                           {item.combo_components.length > 0 && (

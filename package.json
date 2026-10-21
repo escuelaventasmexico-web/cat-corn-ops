@@ -8,6 +8,8 @@
     "build": "tsc && vite build",
     "test:b2b-payment-date": "node scripts/test-b2b-payment-business-date.mjs",
     "test:pos-cashier-commissions": "node scripts/test-aurrera-pos-cashier-commissions.mjs",
+    "test:finance-sales-breakdown": "node scripts/test-finance-sales-breakdown.mjs",
+    "test:gato-mayor-3x2": "node scripts/test-gato-mayor-3x2.mjs",
     "verify:cash-inventory-control": "node scripts/verify-cash-inventory-control.mjs",
     "preview": "vite preview"
   },
