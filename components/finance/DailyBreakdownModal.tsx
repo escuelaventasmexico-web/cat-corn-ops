@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, Loader2, Banknote, CreditCard, Repeat2, Hash, BarChart3 } from 'lucide-react';
 import { supabase } from '../../supabase';
-import { getCommercialCollections } from '../../services/commercialCollectionsService';
+import { getB2BFinanceMetrics } from '../../services/financeMetricsService';
 
 interface DailyRow {
   sale_date: string;
@@ -12,6 +12,7 @@ interface DailyRow {
   mixed_count: number;
   ticket_count: number;
   avg_ticket: number;
+  b2b_generated?: number;
   commercial_collections?: number;
 }
 
@@ -37,6 +38,7 @@ const emptyDailyRow = (saleDate: string): DailyRow => ({
   mixed_count: 0,
   ticket_count: 0,
   avg_ticket: 0,
+  b2b_generated: 0,
   commercial_collections: 0,
 });
 
@@ -57,11 +59,8 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
         });
         if (rpcErr) throw rpcErr;
         const [year, month] = monthStartISO.split('-').map(Number);
-        const commercial = await getCommercialCollections(
-          new Date(Date.UTC(year, month - 1, 1)),
-          new Date(Date.UTC(year, month, 1)),
-        );
-        if (commercial.error) throw new Error(commercial.error);
+        const monthEndExclusive = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+        const b2b = await getB2BFinanceMetrics(monthStartISO, monthEndExclusive);
 
         const rowsByDate = new Map<string, DailyRow>();
         for (const sourceRow of ((data ?? []) as DailyRow[])) {
@@ -74,21 +73,26 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
             mixed_count: Number(sourceRow.mixed_count ?? 0),
             ticket_count: Number(sourceRow.ticket_count ?? 0),
             avg_ticket: Number(sourceRow.avg_ticket ?? 0),
+            b2b_generated: 0,
             commercial_collections: 0,
           });
         }
 
-        for (const payment of commercial.breakdown) {
-          const day = payment.business_date;
+        for (const [day, amount] of Object.entries(b2b.generatedByDate)) {
           const row = rowsByDate.get(day) ?? emptyDailyRow(day);
-          row.commercial_collections = (row.commercial_collections ?? 0) + payment.amount;
+          row.b2b_generated = amount;
+          rowsByDate.set(day, row);
+        }
+        for (const [day, amount] of Object.entries(b2b.collectedByDate)) {
+          const row = rowsByDate.get(day) ?? emptyDailyRow(day);
+          row.commercial_collections = amount;
           rowsByDate.set(day, row);
         }
         setRows(
           [...rowsByDate.values()]
             .map(row => ({
               ...row,
-              total_sales: row.total_sales + (row.commercial_collections ?? 0),
+              total_sales: row.total_sales + (row.b2b_generated ?? 0),
             }))
             .sort((a, b) => a.sale_date.localeCompare(b.sale_date)),
         );
@@ -107,10 +111,11 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
       cash: acc.cash + r.cash_sales,
       card: acc.card + r.card_sales,
       transfer: acc.transfer + r.transfer_sales,
+      b2bGenerated: acc.b2bGenerated + (r.b2b_generated ?? 0),
       commercial: acc.commercial + (r.commercial_collections ?? 0),
       tickets: acc.tickets + r.ticket_count,
     }),
-    { total: 0, cash: 0, card: 0, transfer: 0, commercial: 0, tickets: 0 },
+    { total: 0, cash: 0, card: 0, transfer: 0, b2bGenerated: 0, commercial: 0, tickets: 0 },
   );
 
   return (
@@ -165,11 +170,15 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
                 </div>
 
                 {hasSales && (
-                  <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     <div className="flex items-center gap-1.5 text-cc-text-muted">
                       <Banknote size={14} className="text-green-400" />
                       <span>Efectivo:</span>
                       <span className="text-cc-cream font-medium">{fmt(r.cash_sales)}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-cc-text-muted">
+                      <Repeat2 size={14} className="text-purple-400" />
+                      <span>B2B generado: <b className="text-cc-cream">{fmt(r.b2b_generated ?? 0)}</b></span>
                     </div>
                     <div className="flex items-center gap-1.5 text-cc-text-muted">
                       <Repeat2 size={14} className="text-violet-400" />
@@ -192,7 +201,7 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
                     </div>
                     <div className="flex items-center gap-1.5 text-cc-text-muted">
                       <Repeat2 size={14} className="text-purple-400" />
-                      <span>Promedio:</span>
+                      <span>Prom. físico:</span>
                       <span className="text-cc-cream font-medium">{fmt(r.avg_ticket)}</span>
                     </div>
                   </div>
@@ -205,7 +214,7 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
         {/* Footer totals */}
         {!loading && rows.length > 0 && (
           <div className="border-t border-white/10 p-5">
-            <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 text-sm">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
               <div>
                 <p className="text-cc-text-muted text-xs">Total contabilizado</p>
                 <p className="text-green-400 font-bold">{fmt(totals.total)}</p>
@@ -221,6 +230,10 @@ export const DailyBreakdownModal = ({ monthStartISO, onClose }: Props) => {
               <div>
                 <p className="text-cc-text-muted text-xs">Transferencia</p>
                 <p className="text-cc-cream font-semibold">{fmt(totals.transfer)}</p>
+              </div>
+              <div>
+                <p className="text-cc-text-muted text-xs">Ventas B2B generadas</p>
+                <p className="text-purple-300 font-semibold">{fmt(totals.b2bGenerated)}</p>
               </div>
               <div>
                 <p className="text-cc-text-muted text-xs">Cobranza Socios Comerciales</p>

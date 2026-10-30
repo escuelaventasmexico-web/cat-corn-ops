@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../supabase';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { TrendingUp, AlertCircle } from 'lucide-react';
-import { getCommercialCollections, getMexicoCityPaymentDate } from '../../services/commercialCollectionsService';
+import { getMexicoCityPaymentDate } from '../../services/commercialCollectionsService';
+import { getB2BFinanceMetrics } from '../../services/financeMetricsService';
 
 interface DailySeries {
   day: string;
   sales_mxn: number;
   expenses_mxn: number;
+  b2b_generated?: number;
   commercial_collections?: number;
 }
 
@@ -35,25 +37,18 @@ export const FinanceChart = () => {
 
       if (rpcError) throw rpcError;
 
-      const commercialData = await getCommercialCollections(
-        new Date(Date.UTC(year, month - 1, 1)),
-        new Date(Date.UTC(year, month, 1)),
-      );
-
-      if (commercialData.error) throw new Error(commercialData.error);
-
-      const dailyCommercialMap = new Map<string, number>();
-      for (const item of commercialData.breakdown) {
-        const date = item.business_date;
-        dailyCommercialMap.set(date, (dailyCommercialMap.get(date) ?? 0) + item.amount);
-      }
+      const monthEnd = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+      const b2b = await getB2BFinanceMetrics(monthStartStr, monthEnd);
 
       const enrichedData = ((seriesData ?? []) as DailySeries[]).map(record => {
-        const commercial = dailyCommercialMap.get(record.day) ?? 0;
+        const businessDate = record.day.length === 2 ? `${monthStartStr.slice(0, 8)}${record.day}` : record.day;
+        const generated = b2b.generatedByDate[businessDate] ?? 0;
         return {
           ...record,
-          commercial_collections: commercial,
-          sales_mxn: Number(record.sales_mxn ?? 0) + commercial,
+          day: businessDate,
+          b2b_generated: generated,
+          commercial_collections: b2b.collectedByDate[businessDate] ?? 0,
+          sales_mxn: Number(record.sales_mxn ?? 0) + generated,
         };
       });
 
@@ -110,7 +105,8 @@ export const FinanceChart = () => {
               formatter={(value: number) => `$${value.toFixed(2)}`}
             />
             <Legend />
-            <Line type="monotone" dataKey="sales_mxn" stroke="#4CAF50" strokeWidth={2} name="Ventas + cobranza B2B" dot={{ fill: '#4CAF50' }} />
+            <Line type="monotone" dataKey="sales_mxn" stroke="#4CAF50" strokeWidth={2} name="Ventas generadas" dot={{ fill: '#4CAF50' }} />
+            <Line type="monotone" dataKey="commercial_collections" stroke="#A855F7" strokeWidth={2} name="Cobranza B2B (separada)" dot={{ fill: '#A855F7' }} />
             <Line type="monotone" dataKey="expenses_mxn" stroke="#F44336" strokeWidth={2} name="Gastos" dot={{ fill: '#F44336' }} />
           </LineChart>
         </ResponsiveContainer>

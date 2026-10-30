@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Calendar, Loader2, TrendingUp, TrendingDown, X, ChevronLeft, ChevronRight, Store, ShoppingBag, Banknote, CreditCard, Landmark } from 'lucide-react';
 import { supabase } from '../../supabase';
-import { getCommercialCollections, getMexicoCityPaymentDate, type CommercialCollectionItem } from '../../services/commercialCollectionsService';
+import { getMexicoCityPaymentDate, type CommercialCollectionItem } from '../../services/commercialCollectionsService';
+import { getB2BFinanceMetrics } from '../../services/financeMetricsService';
 import { CommercialCollectionsDetailModal } from './CommercialCollectionsDetailModal';
 
 interface CalendarDay {
@@ -15,6 +16,8 @@ interface CalendarDay {
   prev_year_sales: number;
   yoy_diff_abs: number;
   yoy_diff_pct: number | null;
+  b2b_generated?: number;
+  commercial_collections?: number;
 }
 
 /** A sale row enriched with product info for the day detail modal */
@@ -47,6 +50,7 @@ interface DayDetail {
   // Caja directa
   cajaCash: number;
   cajaCard: number;
+  cajaTransfer: number;
   cajaMixed: number;
   cajaTotal: number;
   cajaCount: number;
@@ -59,6 +63,11 @@ interface DayDetail {
   // Delivery
   deliveryTotal: number;
   deliveryCount: number;
+  // Generated B2B sales
+  b2bGeneratedTotal: number;
+  b2bGeneratedComodato: number;
+  b2bGeneratedMayoreo: number;
+  b2bGeneratedPieceSale: number;
   // Commercial partners (Comodato + Mayoreo + Venta por Pieza)
   commercialTotal: number;
   commercialComodato: number;
@@ -157,15 +166,16 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       const cajaSales = sales.filter(s => !isOrder(s) && !isDelivery(s));
       const cajaCash = cajaSales.filter(s => pm(s) === 'CASH').reduce((a, s) => a + s.total, 0);
       const cajaCard = cajaSales.filter(s => pm(s) === 'CARD').reduce((a, s) => a + s.total, 0);
+      const cajaTransfer = cajaSales.filter(s => pm(s) === 'TRANSFER').reduce((a, s) => a + s.total, 0);
       const cajaMixed = cajaSales.filter(s => pm(s) === 'MIXED').reduce((a, s) => a + s.total, 0);
-      const cajaTotal = cajaCash + cajaCard + cajaMixed;
+      const cajaTotal = cajaSales.reduce((sum, sale) => sum + sale.total, 0);
 
       // Pedidos
       const pedidoSales = sales.filter(s => isOrder(s));
       const pedidosCash = pedidoSales.filter(s => pm(s) === 'CASH').reduce((a, s) => a + s.total, 0);
       const pedidosCard = pedidoSales.filter(s => pm(s) === 'CARD').reduce((a, s) => a + s.total, 0);
       const pedidosTransfer = pedidoSales.filter(s => pm(s) === 'TRANSFER').reduce((a, s) => a + s.total, 0);
-      const pedidosTotal = pedidosCash + pedidosCard + pedidosTransfer;
+      const pedidosTotal = pedidoSales.reduce((sum, sale) => sum + sale.total, 0);
 
       // 2) Orders delivered on this day (linked by updated_at ≈ sale time)
       const { data: ordersData } = await supabase
@@ -212,47 +222,37 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
         };
       });
 
-      // 3) Commercial collections (Comodato + Mayoreo + Venta por Pieza) for this specific day
+      // 3) Generated B2B sales and collections are separate metrics.
       const [dayYear, dayMonth, dayNumber] = day.sale_date.split('-').map(Number);
-      const dateStart = new Date(Date.UTC(dayYear, dayMonth - 1, dayNumber));
-      const dateEnd = new Date(Date.UTC(dayYear, dayMonth - 1, dayNumber + 1));
-      const commercialData = await getCommercialCollections(dateStart, dateEnd);
-      if (commercialData.error) throw new Error(commercialData.error);
+      const nextDate = new Date(Date.UTC(dayYear, dayMonth - 1, dayNumber + 1)).toISOString().slice(0, 10);
+      const b2b = await getB2BFinanceMetrics(day.sale_date, nextDate);
 
-      let commercialTotal = 0;
-      let commercialComodato = 0;
-      let commercialMayoreo = 0;
-      let commercialPieceSale = 0;
-      let commercialCash = 0;
-      let commercialTransfer = 0;
-      let breakdownForModal: CommercialCollectionItem[] = [];
-
-      if (commercialData.breakdown) {
-        commercialTotal = commercialData.total;
-        commercialComodato = commercialData.bySource.comodato;
-        commercialMayoreo = commercialData.bySource.mayoreo;
-        commercialPieceSale = commercialData.bySource.pieceSale;
-        commercialCash = commercialData.cash;
-        commercialTransfer = commercialData.transfer;
-        breakdownForModal = commercialData.breakdown;
-      }
+      const commercialTotal = b2b.collected;
+      const commercialComodato = b2b.collectedBySource.comodato;
+      const commercialMayoreo = b2b.collectedBySource.mayoreo;
+      const commercialPieceSale = b2b.collectedBySource.venta_pieza;
+      const commercialCash = b2b.collections.cash;
+      const commercialTransfer = b2b.collections.transfer;
+      const breakdownForModal: CommercialCollectionItem[] = b2b.collections.breakdown;
 
       // Store breakdown for modal
       setCommercialBreakdown(breakdownForModal);
 
-      // 4) Delivery sales are recognized sales awaiting platform settlement.
-      // They are displayed independently and are not forced into the finance
-      // total until the platform-collection contract exists.
+      // 4) Delivery is a generated sale even if the platform settles later.
       const deliverySales = sales.filter(isDelivery);
       const deliveryTotal = deliverySales.reduce((sum, sale) => sum + sale.total, 0);
       const deliveryCount = deliverySales.length;
 
       setDayDetail({
-        cajaCash, cajaCard, cajaMixed, cajaTotal, cajaCount: cajaSales.length,
+        cajaCash, cajaCard, cajaTransfer, cajaMixed, cajaTotal, cajaCount: cajaSales.length,
         pedidosCash, pedidosCard, pedidosTransfer, pedidosTotal, pedidosCount: pedidoSales.length,
         deliveryTotal, deliveryCount,
+        b2bGeneratedTotal: b2b.generated,
+        b2bGeneratedComodato: b2b.generatedBySource.comodato,
+        b2bGeneratedMayoreo: b2b.generatedBySource.mayoreo,
+        b2bGeneratedPieceSale: b2b.generatedBySource.venta_pieza,
         commercialTotal, commercialComodato, commercialMayoreo, commercialPieceSale, commercialCash, commercialTransfer,
-        grandTotal: cajaTotal + pedidosTotal + commercialTotal,
+        grandTotal: cajaTotal + pedidosTotal + deliveryTotal + b2b.generated,
         orders: orderList,
       });
     } catch (err) {
@@ -298,44 +298,33 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
         setError('');
         if (!supabase) throw new Error('Supabase no configurado');
 
-        // Load calendar data (finance_daily_series: Caja + Pedidos + Delivery only)
-        const { data, error: rpcErr } = await supabase.rpc('finance_calendar_with_yoy', {
-          p_month_start: monthStartISO,
-        });
+        const previousYearMonthStart = `${year - 1}-${String(month).padStart(2, '0')}-01`;
+        const monthEnd = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+        const previousYearMonthEnd = new Date(Date.UTC(year - 1, month, 1)).toISOString().slice(0, 10);
+        const [{ data, error: rpcErr }, currentB2B, previousB2B] = await Promise.all([
+          supabase.rpc('finance_calendar_with_yoy', { p_month_start: monthStartISO }),
+          getB2BFinanceMetrics(monthStartISO, monthEnd),
+          getB2BFinanceMetrics(previousYearMonthStart, previousYearMonthEnd),
+        ]);
         if (rpcErr) throw rpcErr;
 
         let calendarDays = (data as CalendarDay[]) || [];
 
-        // Load commercial collections (Comodato + Mayoreo + Venta por Pieza)
-        // Extract month boundaries from monthStartISO (format: YYYY-MM-DD)
-        const [year, month] = monthStartISO.split('-').map(Number);
-        const monthStart = new Date(Date.UTC(year, month - 1, 1)); // First day of month at 00:00 UTC (inclusive)
-        const monthEnd = new Date(Date.UTC(year, month, 1)); // First day of NEXT month at 00:00 UTC (exclusive)
-
-        const commercialData = await getCommercialCollections(monthStart, monthEnd);
-
-        // Group the definitive payment timestamp by its Mexico City business day.
-        const commercialByDate: Record<string, number> = {};
-        
-        if (commercialData.error) {
-          throw new Error(commercialData.error);
-        }
-
-        if (commercialData.breakdown.length > 0) {
-          for (const item of commercialData.breakdown) {
-            const dateStr = item.business_date;
-            const amount = Number(item.amount) || 0;
-            commercialByDate[dateStr] = (commercialByDate[dateStr] || 0) + amount;
-          }
-        }
-
-        // Merge: Add commercial collections to each calendar day
+        // Merge generated B2B sales; keep collections as a separate indicator.
         calendarDays = calendarDays.map((day) => {
           const baseSales = Number(day.total_sales) || 0;
-          const commercialForDay = Number(commercialByDate[day.sale_date]) || 0;
+          const b2bGenerated = currentB2B.generatedByDate[day.sale_date] ?? 0;
+          const previousDate = `${year - 1}${day.sale_date.slice(4)}`;
+          const previousGenerated = previousB2B.generatedByDate[previousDate] ?? 0;
+          const previousSales = Number(day.prev_year_sales) + previousGenerated;
           return {
             ...day,
-            total_sales: baseSales + commercialForDay,
+            total_sales: baseSales + b2bGenerated,
+            b2b_generated: b2bGenerated,
+            commercial_collections: currentB2B.collectedByDate[day.sale_date] ?? 0,
+            prev_year_sales: previousSales,
+            yoy_diff_abs: baseSales + b2bGenerated - previousSales,
+            yoy_diff_pct: previousSales > 0 ? ((baseSales + b2bGenerated - previousSales) / previousSales) * 100 : null,
           };
         });
 
@@ -362,6 +351,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
 
   // Month totals
   const monthTotal = days.reduce((s, d) => s + d.total_sales, 0);
+  const monthCollections = days.reduce((s, d) => s + (d.commercial_collections ?? 0), 0);
   const prevYearTotal = days.reduce((s, d) => s + d.prev_year_sales, 0);
   const monthYoyDiff = monthTotal - prevYearTotal;
   const monthYoyPct = prevYearTotal > 0 ? ((monthYoyDiff / prevYearTotal) * 100) : null;
@@ -388,7 +378,8 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
       {/* Month totals summary row */}
       {!loading && days.length > 0 && (
         <div className="px-5 py-3 border-b border-white/5 flex flex-wrap gap-4 text-xs text-cc-text-muted">
-          <span>Total contabilizado del mes: <span className="text-green-400 font-bold">{fmt(monthTotal)}</span></span>
+          <span>Ventas generadas del mes: <span className="text-green-400 font-bold">{fmt(monthTotal)}</span></span>
+          <span>Cobranza B2B: <span className="text-violet-300 font-semibold">{fmt(monthCollections)}</span></span>
           <span>Mismo mes año anterior: <span className="text-cc-cream font-semibold">{fmt(prevYearTotal)}</span></span>
           {prevYearTotal > 0 ? (
             <span className={monthYoyDiff >= 0 ? 'text-green-400' : 'text-red-400'}>
@@ -505,9 +496,9 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                   })}
                 </h3>
                 <p className="text-xs text-cc-text-muted mt-0.5">
-                  Total contabilizado: <span className="text-green-400 font-bold">{fmt(selectedDay.total_sales)}</span>
+                  Ventas generadas: <span className="text-green-400 font-bold">{fmt(selectedDay.total_sales)}</span>
                   {' '}· {selectedDay.ticket_count} ticket{selectedDay.ticket_count !== 1 ? 's' : ''}
-                  {' '}· Promedio {fmt(selectedDay.avg_ticket)}
+                  {' '}· Promedio venta física {fmt(selectedDay.avg_ticket)}
                 </p>
               </div>
               <button onClick={() => { setSelectedDay(null); setDayDetail(null); }} className="p-1.5 hover:bg-white/10 rounded-lg transition-colors">
@@ -525,7 +516,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                 <>
                   {/* Grand total bar */}
                   <div className="flex items-center justify-between px-4 py-3 bg-green-500/10 border border-green-500/20 rounded-xl">
-                    <span className="text-sm font-medium text-green-300">Total contabilizado</span>
+                    <span className="text-sm font-medium text-green-300">Ventas generadas</span>
                     <span className="text-xl font-bold text-green-400">{fmt(dayDetail.grandTotal)}</span>
                   </div>
 
@@ -547,6 +538,12 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                           <span className="flex items-center gap-2 text-cc-text-muted"><CreditCard size={13} className="text-blue-400" /> Tarjeta</span>
                           <span className="text-cc-cream font-medium">{fmt(dayDetail.cajaCard)}</span>
                         </div>
+                        {dayDetail.cajaTransfer > 0 && (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="flex items-center gap-2 text-cc-text-muted"><Landmark size={13} className="text-violet-400" /> Transferencia</span>
+                            <span className="text-cc-cream font-medium">{fmt(dayDetail.cajaTransfer)}</span>
+                          </div>
+                        )}
                         {dayDetail.cajaMixed > 0 && (
                           <div className="flex items-center justify-between text-xs">
                             <span className="flex items-center gap-2 text-cc-text-muted"><Banknote size={13} className="text-orange-400" /> Mixto</span>
@@ -594,7 +591,7 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                     <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800">
                       <div className="flex items-center gap-2 mb-3">
                         <ShoppingBag size={16} className="text-amber-400" />
-                        <span className="text-sm font-bold text-cc-cream">Delivery pendiente de liquidación</span>
+                        <span className="text-sm font-bold text-cc-cream">Ventas Delivery</span>
                         <span className="ml-auto text-lg font-bold text-amber-400">{fmt(dayDetail.deliveryTotal)}</span>
                       </div>
                       <div className="space-y-2">
@@ -603,9 +600,23 @@ export const MonthCalendar = ({ monthStartISO: initialMonthISO }: Props) => {
                         ) : (
                           <div className="space-y-1 text-[10px] text-cc-text-muted/60">
                             <p>{dayDetail.deliveryCount} envío{dayDetail.deliveryCount !== 1 ? 's' : ''}</p>
-                            <p>Venta registrada; no incluida en el total financiero hasta registrar la liquidación de la plataforma.</p>
+                            <p>Venta generada; la liquidación posterior de la plataforma no crea otra venta.</p>
                           </div>
                         )}
+                      </div>
+                    </div>
+
+                    {/* Generated partner sales */}
+                    <div className="bg-neutral-900 rounded-xl p-4 border border-violet-500/20">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Landmark size={16} className="text-violet-400" />
+                        <span className="text-sm font-bold text-cc-cream">Ventas B2B generadas</span>
+                        <span className="ml-auto text-lg font-bold text-violet-300">{fmt(dayDetail.b2bGeneratedTotal)}</span>
+                      </div>
+                      <div className="space-y-2 text-xs">
+                        <div className="flex justify-between text-cc-text-muted"><span>Comodato</span><span className="text-cc-cream">{fmt(dayDetail.b2bGeneratedComodato)}</span></div>
+                        <div className="flex justify-between text-cc-text-muted"><span>Mayoreo</span><span className="text-cc-cream">{fmt(dayDetail.b2bGeneratedMayoreo)}</span></div>
+                        <div className="flex justify-between text-cc-text-muted"><span>Venta por pieza</span><span className="text-cc-cream">{fmt(dayDetail.b2bGeneratedPieceSale)}</span></div>
                       </div>
                     </div>
 

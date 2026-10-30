@@ -1,35 +1,14 @@
 import { useState, useEffect } from 'react';
 import { X, FileText, TrendingUp, TrendingDown, DollarSign, AlertCircle, Calendar, Download } from 'lucide-react';
-import { supabase } from '../../supabase';
 import { exportPnLToExcel } from '../../lib/exportPnL';
-import { getCommercialCollections } from '../../services/commercialCollectionsService';
+import { getFinanceMonthPresentation } from '../../services/financeMetricsService';
+import type { FinancePresentation } from '../../lib/financeMetrics.js';
 
 interface PLDetailedViewProps {
   onClose: () => void;
 }
 
 // Type definitions
-interface PLData {
-  sales_mxn: number;
-  cogs_variable_purchases_mxn: number;
-  gross_profit_mxn: number;
-  fixed_expenses_mxn: number;
-  other_expenses_mxn: number;
-  net_profit_mxn: number;
-}
-
-interface FinanceSummary {
-  sales_mtd_mxn: number;
-  expenses_fixed_mxn: number;
-  expenses_variable_mxn: number;
-  expenses_other_mxn: number;
-  expenses_total_mxn: number;
-  fixed_plan_mxn: number;
-  fixed_covered_mxn: number;
-  fixed_pending_mxn: number;
-  pnl?: PLData;
-}
-
 // Helper function to format currency in MXN
 const formatCurrencyMXN = (amount: number | null | undefined): string => {
   if (amount === null || amount === undefined) return '$0.00';
@@ -41,9 +20,8 @@ const formatCurrencyMXN = (amount: number | null | undefined): string => {
 
 export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<FinanceSummary | null>(null);
+  const [data, setData] = useState<FinancePresentation | null>(null);
   const [error, setError] = useState<any>(null);
-  const [commercialTotal, setCommercialTotal] = useState<number>(0);
   
   // Month selector - default to current month
   const now = new Date();
@@ -56,37 +34,9 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
         setLoading(true);
         setError(null);
         
-        if (!supabase) {
-          throw new Error('Supabase no está configurado');
-        }
-
         // Convert YYYY-MM to YYYY-MM-01
         const monthStartISO = `${selectedMonth}-01`;
-
-        // Load PNL data (Caja + Pedidos from sales table - does NOT include commercial)
-        const { data: result, error: rpcError } = await supabase.rpc('finance_month_summary', {
-          p_month_start: monthStartISO
-        });
-
-        if (rpcError) {
-          throw rpcError;
-        }
-
-        // Load commercial collections for this month
-        const [year, month] = monthStartISO.split('-').map(Number);
-        const monthStart = new Date(Date.UTC(year, month - 1, 1)); // First day at 00:00 UTC
-        const monthEnd = new Date(Date.UTC(year, month, 1)); // First day of NEXT month at 00:00 UTC
-        
-        const commercialData = await getCommercialCollections(monthStart, monthEnd);
-        if (commercialData.error) throw new Error(commercialData.error);
-
-        setCommercialTotal(commercialData.total);
-        console.log('[PLDetailedView] Commercial collections loaded:', {
-          total: commercialData.total,
-          bySource: commercialData.bySource,
-        });
-
-        setData(result);
+        setData(await getFinanceMonthPresentation(monthStartISO));
       } catch (err) {
         setError(err);
       } finally {
@@ -97,11 +47,8 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
     fetchPLData();
   }, [selectedMonth]);
 
-  // Calculate P&L metrics with fallbacks
-  // NOTE: RPC sales_mxn does NOT include commercial collections
-  // We add them here to get total sales
-  const baseSales = data?.pnl?.sales_mxn ?? 0;
-  const sales = baseSales + commercialTotal; // ← Include commercial collections
+  // All displayed and exported derived figures use the same generated-sales base.
+  const sales = data?.pnl?.sales_mxn ?? 0;
   const cogs = data?.pnl?.cogs_variable_purchases_mxn ?? 0;
   const grossProfit = data?.pnl?.gross_profit_mxn ?? (sales - cogs);
   const fixedExpenses = data?.pnl?.fixed_expenses_mxn ?? 0;
@@ -212,21 +159,30 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
               <p className="text-xs text-cc-text-muted mt-1">Ingresos totales</p>
             </div>
 
-            {/* COGS */}
+            {/* Registered variable expenses (not actual product COGS). */}
             <div className="bg-gradient-to-br from-red-500/10 to-red-600/5 border border-red-500/30 p-5 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <TrendingDown className="text-red-400" size={24} />
-                <h4 className="text-sm font-semibold text-red-400">Compras Variables (COGS)</h4>
+                <h4 className="text-sm font-semibold text-red-400">Gastos variables registrados</h4>
               </div>
               <p className="text-3xl font-bold text-cc-cream">{formatCurrencyMXN(cogs)}</p>
-              <p className="text-xs text-cc-text-muted mt-1">Costo de ventas</p>
+              <p className="text-xs text-cc-text-muted mt-1">No representa costo de producción consumido</p>
+            </div>
+
+            <div className="bg-gradient-to-br from-violet-500/10 to-violet-600/5 border border-violet-500/30 p-5 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <DollarSign className="text-violet-400" size={24} />
+                <h4 className="text-sm font-semibold text-violet-400">Cobranza B2B</h4>
+              </div>
+              <p className="text-3xl font-bold text-cc-cream">{formatCurrencyMXN(data.commercial_collections)}</p>
+              <p className="text-xs text-cc-text-muted mt-1">Indicador separado; no incrementa ventas ni utilidad</p>
             </div>
 
             {/* Utilidad Bruta */}
             <div className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/30 p-5 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <TrendingUp className="text-blue-400" size={24} />
-                <h4 className="text-sm font-semibold text-blue-400">Utilidad Bruta</h4>
+                <h4 className="text-sm font-semibold text-blue-400">Resultado tras variables</h4>
               </div>
               <p className="text-3xl font-bold text-cc-cream">{formatCurrencyMXN(grossProfit)}</p>
               <p className="text-xs text-blue-300 mt-1">Margen: {formatMargin(grossMargin)}</p>
@@ -290,15 +246,15 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
                 <span className="text-green-400 font-bold text-lg">{formatCurrencyMXN(sales)}</span>
               </div>
 
-              {/* (-) COGS */}
+              {/* (-) Registered variable expenses */}
               <div className="flex justify-between items-center py-2 border-b border-white/5 pl-4">
-                <span className="text-cc-text-muted">(-) Compras Variables (COGS)</span>
+                <span className="text-cc-text-muted">(-) Gastos variables registrados</span>
                 <span className="text-red-400 font-semibold">{cogs > 0 ? `(${formatCurrencyMXN(cogs)})` : formatCurrencyMXN(0)}</span>
               </div>
 
-              {/* (=) Utilidad Bruta */}
+              {/* (=) Result after registered variable expenses */}
               <div className="flex justify-between items-center py-2 border-b border-white/10 bg-blue-500/5 px-2 rounded">
-                <span className="text-blue-400 font-bold">(=) Utilidad Bruta</span>
+                <span className="text-blue-400 font-bold">(=) Resultado tras variables</span>
                 <span className="text-blue-400 font-bold text-lg">{formatCurrencyMXN(grossProfit)}</span>
               </div>
 
@@ -337,10 +293,10 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
           {/* Margins Summary */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-blue-950/20 border border-blue-500/30 p-5 rounded-lg">
-              <h4 className="text-sm font-semibold text-blue-400 mb-2">Margen Bruto</h4>
+              <h4 className="text-sm font-semibold text-blue-400 mb-2">Margen tras variables</h4>
               <p className="text-4xl font-bold text-cc-cream">{formatMargin(grossMargin)}</p>
               <p className="text-xs text-cc-text-muted mt-1">
-                Utilidad bruta / Ventas
+                Resultado tras variables / Ventas
               </p>
             </div>
 

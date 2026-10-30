@@ -14,8 +14,7 @@ import {
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
-import { supabase } from '../supabase';
-import { getCommercialCollections } from '../services/commercialCollectionsService';
+import { getFinanceMonthPresentation } from '../services/financeMetricsService';
 import { FinanceChart } from '../components/finance/FinanceChart.tsx';
 import { ExpensesManager } from '../components/finance/ExpensesManager.tsx';
 import { FixedCostsManager } from '../components/finance/FixedCostsManager.tsx';
@@ -164,75 +163,7 @@ const FinanceResumenTest = () => {
         setLoading(true);
         setError(null);
         
-        if (!supabase) {
-          throw new Error('Supabase no está configurado');
-        }
-
-        const { data: result, error: rpcError } = await supabase.rpc('finance_month_summary', {
-          p_month_start: monthStartISO
-        });
-
-        if (rpcError) {
-          throw rpcError;
-        }
-
-        // Load commercial collections for this month
-        const monthStartDate = new Date(navYear, navMonth, 1);
-        const monthEndDate = new Date(navYear, navMonth + 1, 1);
-        
-        const monthStartUTC = new Date(Date.UTC(monthStartDate.getUTCFullYear(), monthStartDate.getUTCMonth(), 1));
-        const monthEndUTC = new Date(Date.UTC(monthEndDate.getUTCFullYear(), monthEndDate.getUTCMonth(), 1));
-
-        const commercialData = await getCommercialCollections(monthStartUTC, monthEndUTC);
-
-        if (commercialData.error) {
-          throw new Error(commercialData.error);
-        }
-
-        // Aggregate commercial collections
-        const commercialTotal = commercialData.total;
-        const commercialCash = commercialData.cash;
-        const commercialTransfer = commercialData.transfer;
-
-        // Calculate projection based on combined revenue and days elapsed
-        const combinedMonthlySales = (result.sales_mtd_mxn || 0) + commercialTotal;
-        const daysInMonth = new Date(navYear, navMonth + 1, 0).getDate();
-        
-        // For current month, use actual elapsed days; for past/future months, use total days
-        let daysElapsed = daysInMonth; // default for completed or future months
-        const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = now.getMonth();
-        
-        if (navYear === currentYear && navMonth === currentMonth) {
-          // Current month: use actual days elapsed (day of month)
-          // Use local date, not UTC
-          daysElapsed = now.getDate();
-        }
-        
-        const projectedSales = combinedMonthlySales > 0 && daysElapsed > 0
-          ? (combinedMonthlySales / daysElapsed) * daysInMonth
-          : 0;
-
-        // Update result with combined revenue
-        const enrichedResult = {
-          ...result,
-          commercial_collections: commercialTotal,
-          sales_mtd_mxn: (result.sales_mtd_mxn || 0) + commercialTotal,
-          sales_cash_mxn: (result.sales_cash_mxn || 0) + commercialCash,
-          sales_transfer_mxn: (result.sales_transfer_mxn || 0) + commercialTransfer,
-          // Use corrected projection formula
-          sales_projection_mxn: projectedSales
-        };
-
-        console.log('Finance month summary enriched with commercial collections', {
-          month: monthLabel,
-          commercial_collections: commercialTotal,
-          store_sales: result.sales_mtd_mxn,
-          combined_sales: enrichedResult.sales_mtd_mxn
-        });
-
-        setData(enrichedResult);
+        setData(await getFinanceMonthPresentation(monthStartISO));
       } catch (err) {
         setError(err);
       } finally {
@@ -382,10 +313,22 @@ const FinanceResumenTest = () => {
                 <h4 className="text-sm font-semibold text-green-400">Ventas del Mes</h4>
               </div>
               <p className="text-3xl font-bold text-cc-cream">{formatMXN(data.sales_mtd_mxn)}</p>
-              <p className="text-xs text-cc-text-muted mt-1">MTD (Month to Date)</p>
+              <p className="text-xs text-cc-text-muted mt-1">Ventas no devueltas + B2B generado</p>
 
-              {/* Desglose efectivo / tarjeta / transferencia */}
+              <div className="mt-3 space-y-1 text-xs text-cc-text-muted border-t border-green-500/20 pt-3">
+                <div className="flex justify-between">
+                  <span>Ventas físicas:</span>
+                  <span className="text-cc-cream">{formatMXN(data.physical_sales_generated_mxn || 0)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Socios Comerciales generadas:</span>
+                  <span className="text-violet-300">{formatMXN(data.b2b_generated_mxn || 0)}</span>
+                </div>
+              </div>
+
+              {/* Payment methods apply only to non-refunded rows from sales. */}
               <div className="mt-3 space-y-1 text-xs text-cc-text-muted">
+                <p className="text-[10px] uppercase tracking-wide text-cc-text-muted/70">Métodos de ventas físicas</p>
                 <div className="flex justify-between">
                   <span>💵 Efectivo:</span>
                   <span className="text-cc-cream">{formatMXN(data.sales_cash_mxn || 0)}</span>
@@ -399,6 +342,16 @@ const FinanceResumenTest = () => {
                   <span className="text-cc-cream">{formatMXN(data.sales_transfer_mxn || 0)}</span>
                 </div>
               </div>
+            </div>
+
+            {/* Cobranza B2B is cash flow, not another generated sale. */}
+            <div className="bg-gradient-to-br from-violet-500/10 to-violet-600/5 border border-violet-500/30 p-6 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <Receipt className="text-violet-400" size={24} />
+                <h4 className="text-sm font-semibold text-violet-400">Cobranza B2B</h4>
+              </div>
+              <p className="text-3xl font-bold text-cc-cream">{formatMXN(data.commercial_collections || 0)}</p>
+              <p className="text-xs text-cc-text-muted mt-1">Cobros confirmados del periodo; no se suman a ventas</p>
             </div>
 
             {/* Proyección */}
@@ -436,7 +389,7 @@ const FinanceResumenTest = () => {
                   <span className="text-orange-300">{formatMXN(data.fixed_plan_mxn || 0)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Variables:</span>
+                  <span>Gastos variables registrados:</span>
                   <span className="text-cc-cream">{formatMXN(data.expenses_variable_mxn || 0)}</span>
                 </div>
                 <div className="flex justify-between">

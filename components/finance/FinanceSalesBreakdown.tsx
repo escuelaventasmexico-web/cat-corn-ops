@@ -1,12 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, Receipt, Store, Truck, UserRound, Users, X } from 'lucide-react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
-import { getB2BMonthlyCollectionsReport } from '../../services/b2bMonthlyCollectionsService';
-import { getCommercialCollections } from '../../services/commercialCollectionsService';
-import {
-  getConfirmedPieceSalePeriodSummary,
-  getFinanceSalesBreakdown,
-} from '../../services/financeSalesBreakdownService';
+import { getFinanceSalesBreakdown } from '../../services/financeSalesBreakdownService';
+import { getB2BFinanceMetrics } from '../../services/financeMetricsService';
 import type {
   FinanceBranchKey,
   FinanceSaleOperation,
@@ -62,11 +58,6 @@ const lastMonthDate = (monthStartISO: string) => {
   return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
 };
 
-const asUtcCalendarDate = (dateKey: string) => {
-  const [year, month, day] = dateKey.split('-').map(Number);
-  return new Date(Date.UTC(year, month - 1, day));
-};
-
 const PARTICIPATION_COLORS: Record<string, string> = {
   chipitlan: '#F4C542',
   aurrera: '#3B82F6',
@@ -96,39 +87,23 @@ export const FinanceSalesBreakdown = ({ monthStartISO }: Props) => {
         const monthEndExclusive = nextMonthDate(monthStartISO);
         const periodStart = selectedDate || monthStartISO;
         const periodEndExclusive = selectedDate ? nextDate(selectedDate) : monthEndExclusive;
-        const month = monthStartISO.slice(0, 7);
-        const [salesResult, collectionsReport, collections, pieceSales] = await Promise.all([
+        const [salesResult, metrics] = await Promise.all([
           getFinanceSalesBreakdown(periodStart, periodEndExclusive),
-          getB2BMonthlyCollectionsReport(month),
-          getCommercialCollections(asUtcCalendarDate(periodStart), asUtcCalendarDate(periodEndExclusive)),
-          getConfirmedPieceSalePeriodSummary(periodStart, periodEndExclusive),
+          getB2BFinanceMetrics(periodStart, periodEndExclusive),
         ]);
-        if (collections.error) throw new Error(collections.error);
-
-        const periodOperations = collectionsReport.operations.filter(operation => (
-          operation.operation_date >= periodStart && operation.operation_date < periodEndExclusive
-        ));
-        const comodatoOperations = periodOperations.filter(operation => operation.source_type === 'comodato');
-        const mayoreoOperations = periodOperations.filter(operation => operation.source_type === 'mayoreo');
-        const comodatoGenerated = comodatoOperations.reduce((sum, operation) => sum + Number(operation.total_due || 0), 0);
-        const mayoreoGenerated = mayoreoOperations.reduce((sum, operation) => sum + Number(operation.total_due || 0), 0);
-        const comodatoPending = comodatoOperations
-          .reduce((sum, operation) => sum + Number(operation.pending_amount || 0), 0);
-        const mayoreoPending = mayoreoOperations
-          .reduce((sum, operation) => sum + Number(operation.pending_amount || 0), 0);
         const periodB2B: B2BPeriodSummary = {
-          generated: Math.round((comodatoGenerated + mayoreoGenerated + pieceSales.generated) * 100) / 100,
-          collected: collections.total,
-          pending: Math.round((comodatoPending + mayoreoPending + pieceSales.pending) * 100) / 100,
+          generated: metrics.generated,
+          collected: metrics.collected,
+          pending: metrics.pending,
           generatedBySource: {
-            comodato: comodatoGenerated,
-            mayoreo: mayoreoGenerated,
-            pieceSale: pieceSales.generated,
+            comodato: metrics.generatedBySource.comodato,
+            mayoreo: metrics.generatedBySource.mayoreo,
+            pieceSale: metrics.generatedBySource.venta_pieza,
           },
           collectedBySource: {
-            comodato: collections.bySource.comodato,
-            mayoreo: collections.bySource.mayoreo,
-            pieceSale: collections.bySource.pieceSale,
+            comodato: metrics.collectedBySource.comodato,
+            mayoreo: metrics.collectedBySource.mayoreo,
+            pieceSale: metrics.collectedBySource.venta_pieza,
           },
         };
         if (!cancelled) {

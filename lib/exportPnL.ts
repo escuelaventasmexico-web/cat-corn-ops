@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { getFinanceSurfaceFigures } from './financeMetrics.js';
 
 interface PLData {
   sales_mxn: number;
@@ -11,6 +12,9 @@ interface PLData {
 
 interface FinanceSummary {
   sales_mtd_mxn: number;
+  physical_sales_generated_mxn?: number;
+  b2b_generated_mxn?: number;
+  commercial_collections?: number;
   sales_projection_mxn?: number;
   sales_target_mxn?: number;
   expenses_fixed_mxn: number;
@@ -51,6 +55,7 @@ export const exportPnLToExcel = (data: FinanceSummary, monthStart: string) => {
   }
 
   const pnl = data.pnl;
+  const figures = getFinanceSurfaceFigures(data as any);
   
   // Calculate margins (avoid NaN)
   const grossMargin = pnl.sales_mxn > 0 ? (pnl.gross_profit_mxn / pnl.sales_mxn) * 100 : 0;
@@ -62,17 +67,20 @@ export const exportPnLToExcel = (data: FinanceSummary, monthStart: string) => {
   const resumenData = [
     ['Concepto', 'Monto', 'Nota'],
     ['Mes Consultado', monthStart, ''],
-    ['Ventas del Mes (MXN)', formatMXN(data.sales_mtd_mxn), ''],
+    ['Ventas generadas del mes (MXN)', formatMXN(figures.sales), 'Ventas no devueltas + B2B generado'],
+    ['Ventas físicas no devueltas (MXN)', formatMXN(data.physical_sales_generated_mxn ?? 0), ''],
+    ['Ventas B2B generadas (MXN)', formatMXN(data.b2b_generated_mxn ?? 0), ''],
+    ['Cobranza B2B (MXN)', formatMXN(data.commercial_collections ?? 0), 'Indicador separado; no se suma a ventas'],
     ['Proyección Mensual (MXN)', formatMXN(data.sales_projection_mxn ?? 0), 'Estimado basado en ventas diarias'],
     ['Meta de Ventas (MXN)', formatMXN(data.sales_target_mxn ?? 0), ''],
     ['Gastos del Mes (Total) (MXN)', formatMXN(data.expenses_total_mxn), 'Suma de todos los gastos'],
     ['Gastos Fijos Pagados (MXN)', formatMXN(data.expenses_fixed_mxn), 'Gastos fijos efectivamente pagados'],
-    ['Gastos Variables (MXN)', formatMXN(data.expenses_variable_mxn), 'Compras variables (COGS)'],
+    ['Gastos variables registrados (MXN)', formatMXN(data.expenses_variable_mxn), 'No representa costo de producción consumido'],
     ['Otros Gastos (MXN)', formatMXN(data.expenses_other_mxn), 'Gastos no clasificados'],
     ['Plan de Fijos del Mes (MXN)', formatMXN(data.fixed_plan_mxn), 'Presupuesto de gastos fijos'],
     ['Fijos Cubiertos (Pagados) (MXN)', formatMXN(data.fixed_covered_mxn), 'Mismo valor que Fijos Pagados'],
     ['Fijos Pendientes (MXN)', formatMXN(data.fixed_pending_mxn), 'Diferencia entre plan y pagado'],
-    ['Utilidad Neta (MXN)', formatMXN(pnl.net_profit_mxn), 'Resultado final después de gastos'],
+    ['Utilidad Neta (MXN)', formatMXN(figures.netProfit), 'Resultado final después de gastos'],
     ['Margen Neto (%)', formatPercent(netMargin), 'Utilidad Neta / Ventas']
   ];
 
@@ -98,14 +106,14 @@ export const exportPnLToExcel = (data: FinanceSummary, monthStart: string) => {
   // =========================================
   const pnlData = [
     ['Concepto', 'MXN'],
-    ['Ventas', formatMXN(pnl.sales_mxn)],
-    ['(-) Compras Variables (COGS)', formatMXN(pnl.cogs_variable_purchases_mxn)],
-    ['(=) Utilidad Bruta', formatMXN(pnl.gross_profit_mxn)],
+    ['Ventas', formatMXN(figures.sales)],
+    ['(-) Gastos variables registrados', formatMXN(figures.variableExpenses)],
+    ['(=) Resultado tras gastos variables', formatMXN(figures.grossProfit)],
     ['(-) Gastos Fijos Pagados', formatMXN(pnl.fixed_expenses_mxn)],
     ['(-) Otros Gastos', formatMXN(pnl.other_expenses_mxn)],
-    ['(=) Utilidad Neta', formatMXN(pnl.net_profit_mxn)],
+    ['(=) Utilidad Neta', formatMXN(figures.netProfit)],
     ['', ''], // Spacer
-    ['Margen Bruto (%)', formatPercent(grossMargin)],
+    ['Margen tras gastos variables (%)', formatPercent(grossMargin)],
     ['Margen Neto (%)', formatPercent(netMargin)]
   ];
 
@@ -129,7 +137,10 @@ export const exportPnLToExcel = (data: FinanceSummary, monthStart: string) => {
   const detalleData: Array<[string, string]> = [
     ['Concepto', 'Valor'],
     ['Mes consultado (inicio)', monthStart],
-    ['Ventas del mes (acumuladas)', formatMXN(data.sales_mtd_mxn)],
+    ['Ventas generadas del mes', formatMXN(data.sales_mtd_mxn)],
+    ['Ventas físicas no devueltas', formatMXN(data.physical_sales_generated_mxn ?? 0)],
+    ['Ventas B2B generadas', formatMXN(data.b2b_generated_mxn ?? 0)],
+    ['Cobranza B2B (no sumada a ventas)', formatMXN(data.commercial_collections ?? 0)],
     ['Proyección mensual', formatMXN(data.sales_projection_mxn ?? 0)],
     ['Meta mensual', formatMXN(data.sales_target_mxn ?? 0)],
     ['Gastos fijos pagados', formatMXN(data.expenses_fixed_mxn)],
@@ -141,15 +152,15 @@ export const exportPnLToExcel = (data: FinanceSummary, monthStart: string) => {
     ['Fijos pendientes por pagar', formatMXN(data.fixed_pending_mxn)],
     ['', ''],
     ['--- Estado de Resultados (P&L) ---', ''],
-    ['P&L: Ventas', formatMXN(pnl.sales_mxn)],
-    ['P&L: Compras variables (COGS)', formatMXN(pnl.cogs_variable_purchases_mxn)],
-    ['P&L: Utilidad bruta', formatMXN(pnl.gross_profit_mxn)],
+    ['P&L: Ventas', formatMXN(figures.sales)],
+    ['P&L: Gastos variables registrados', formatMXN(figures.variableExpenses)],
+    ['P&L: Resultado tras gastos variables', formatMXN(figures.grossProfit)],
     ['P&L: Gastos fijos pagados', formatMXN(pnl.fixed_expenses_mxn)],
     ['P&L: Otros gastos', formatMXN(pnl.other_expenses_mxn)],
-    ['P&L: Utilidad neta', formatMXN(pnl.net_profit_mxn)],
+    ['P&L: Utilidad neta', formatMXN(figures.netProfit)],
     ['', ''],
     ['--- Márgenes Calculados ---', ''],
-    ['Margen bruto (%)', formatPercent(grossMargin)],
+    ['Margen tras gastos variables (%)', formatPercent(grossMargin)],
     ['Margen neto (%)', formatPercent(netMargin)]
   ];
 
