@@ -11,6 +11,7 @@
     "test:finance-sales-breakdown": "node scripts/test-finance-sales-breakdown.mjs",
     "test:finance-metrics": "node scripts/test-finance-metrics.mjs",
     "test:finance-fixed-cost-obligations": "node scripts/test-finance-fixed-cost-obligations.mjs",
+    "test:expense-classification": "node scripts/test-expense-classification.mjs",
     "test:gato-mayor-3x2": "node scripts/test-gato-mayor-3x2.mjs",
     "verify:cash-inventory-control": "node scripts/verify-cash-inventory-control.mjs",
     "preview": "vite preview"

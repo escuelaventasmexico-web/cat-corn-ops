@@ -3,13 +3,22 @@ import { supabase } from '../../supabase';
 import { CreditCard, X, Plus, Edit2, Trash2, AlertCircle, FileDown, Calendar, Lock } from 'lucide-react';
 import { ExpenseFormModal } from './ExpenseFormModal.tsx';
 import { exportExpensesToExcel } from '../../lib/exportExpenses';
+import {
+  EXPENSE_CONCEPT_OPTIONS,
+  EXPENSE_REPORT_DESTINATION_OPTIONS,
+  filterExpensesByClassification,
+  getExpenseConceptLabel,
+  getExpenseDestinationLabel,
+  sumExpensesOnce,
+  type ExpenseConceptCode,
+  type ExpenseDestinationScope,
+} from '../../lib/expenseClassification.js';
 
 interface Expense {
   id: string;
   expense_date: string;
   amount_mxn: number;
   type: 'FIXED' | 'VARIABLE' | 'OTHER';
-  category: string | null;
   vendor: string | null;
   has_invoice: boolean;
   payment_method: 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
@@ -18,6 +27,9 @@ interface Expense {
   is_unbudgeted_fixed?: boolean;
   fixed_cost_unbudgeted_reason?: string | null;
   commission_settlement_id?: string | null;
+  concept_code?: ExpenseConceptCode | null;
+  destination_scope?: ExpenseDestinationScope | null;
+  classification_status?: 'CLASSIFIED' | 'SYSTEM' | null;
   created_at: string;
 }
 
@@ -42,6 +54,8 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [dateError, setDateError] = useState<string>('');
+  const [conceptFilter, setConceptFilter] = useState<ExpenseConceptCode | 'ALL' | 'PENDING'>('ALL');
+  const [destinationFilter, setDestinationFilter] = useState<ExpenseDestinationScope | 'ALL' | 'PENDING'>('ALL');
 
   // Date range state — default: current month
   const now = new Date();
@@ -150,11 +164,12 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
     return labels[method] || method;
   };
 
-  const totalExpenses = expenses.reduce((sum, exp) => sum + Number(exp.amount_mxn), 0);
+  const filteredExpenses = filterExpensesByClassification(expenses, conceptFilter, destinationFilter);
+  const totalExpenses = sumExpensesOnce(filteredExpenses);
 
   const handleExport = () => {
     const rangeLabel = fromDate && toDate ? `${fromDate}_a_${toDate}` : fromDate || toDate || 'rango';
-    exportExpensesToExcel(expenses, rangeLabel);
+    exportExpensesToExcel(filteredExpenses, rangeLabel);
   };
 
   return (
@@ -170,7 +185,7 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
         <div className="flex items-center gap-2">
           <button
             onClick={handleExport}
-            disabled={expenses.length === 0}
+            disabled={filteredExpenses.length === 0}
             className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 transition-colors font-medium disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <FileDown size={18} />
@@ -237,6 +252,36 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
             <AlertCircle size={12} /> {dateError}
           </p>
         )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-white/10">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-cc-text-muted">Concepto</label>
+            <select
+              value={conceptFilter}
+              onChange={(event) => setConceptFilter(event.target.value as ExpenseConceptCode | 'ALL' | 'PENDING')}
+              className="bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-cc-cream"
+            >
+              <option value="ALL">Todos los conceptos</option>
+              <option value="PENDING">Pendientes de clasificar</option>
+              {EXPENSE_CONCEPT_OPTIONS.map(option => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-cc-text-muted">Destino</label>
+            <select
+              value={destinationFilter}
+              onChange={(event) => setDestinationFilter(event.target.value as ExpenseDestinationScope | 'ALL' | 'PENDING')}
+              className="bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-cc-cream"
+            >
+              <option value="ALL">Todos los destinos</option>
+              <option value="PENDING">Pendientes de clasificar</option>
+              {EXPENSE_REPORT_DESTINATION_OPTIONS.map(option => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
 
       {error && (
@@ -262,7 +307,8 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
                   <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Fecha</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Conciliación fija</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Tipo</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Categoría</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Concepto</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Destino</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Proveedor</th>
                   <th className="text-right py-3 px-4 text-sm font-medium text-cc-text-muted">Monto</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Pago</th>
@@ -271,14 +317,14 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
                 </tr>
               </thead>
               <tbody>
-                {expenses.length === 0 ? (
+                {filteredExpenses.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="text-center py-8 text-cc-text-muted">
-                      No hay gastos registrados en este periodo
+                    <td colSpan={10} className="text-center py-8 text-cc-text-muted">
+                      No hay gastos que coincidan con los filtros
                     </td>
                   </tr>
                 ) : (
-                  expenses.map((expense) => (
+                  filteredExpenses.map((expense) => (
                     <tr key={expense.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="py-3 px-4 text-cc-text-main text-sm">
                         {formatDateOnly(expense.expense_date)}
@@ -296,7 +342,10 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
                         </span>
                       </td>
                       <td className="py-3 px-4 text-cc-text-main text-sm">
-                        {expense.category || '-'}
+                        {getExpenseConceptLabel(expense.concept_code)}
+                      </td>
+                      <td className="py-3 px-4 text-cc-text-main text-sm">
+                        {getExpenseDestinationLabel(expense.destination_scope)}
                       </td>
                       <td className="py-3 px-4 text-cc-text-main text-sm">
                         {expense.vendor || '-'}

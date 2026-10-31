@@ -1,17 +1,25 @@
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
+import {
+  getExpenseConceptLabel,
+  getExpenseDestinationLabel,
+  type ExpenseConceptCode,
+  type ExpenseDestinationScope,
+} from './expenseClassification.js';
 
 interface Expense {
   id: string;
   expense_date: string;
   amount_mxn: number;
   type: 'FIXED' | 'VARIABLE' | 'OTHER';
-  category: string | null;
   vendor: string | null;
   has_invoice: boolean;
   payment_method: 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
   notes: string | null;
   commission_settlement_id?: string | null;
+  concept_code?: ExpenseConceptCode | null;
+  destination_scope?: ExpenseDestinationScope | null;
+  classification_status?: 'CLASSIFIED' | 'SYSTEM' | null;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -76,12 +84,13 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
   // ─────────────────────────────────────────────────────────────────
   // HOJA 1: Gastos del Mes
   // ─────────────────────────────────────────────────────────────────
-  const headers = ['Fecha', 'Tipo', 'Categoría', 'Proveedor', 'Monto (MXN)', 'Método de Pago', 'Factura', 'Notas'];
+  const headers = ['Fecha', 'Tipo', 'Concepto', 'Destino', 'Proveedor', 'Monto (MXN)', 'Método de Pago', 'Factura', 'Notas'];
 
   const rows = expenses.map((e) => [
     formatDateOnly(e.expense_date),
     TYPE_LABELS[e.type] ?? e.type,
-    e.category ?? '-',
+    getExpenseConceptLabel(e.concept_code),
+    getExpenseDestinationLabel(e.destination_scope),
     e.vendor ?? '-',
     Number(e.amount_mxn),
     PM_LABELS[e.payment_method] ?? e.payment_method,
@@ -96,6 +105,7 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
     { wch: 14 }, // Fecha
     { wch: 10 }, // Tipo
     { wch: 20 }, // Categoría
+    { wch: 20 }, // Destino
     { wch: 24 }, // Proveedor
     { wch: 16 }, // Monto
     { wch: 18 }, // Método de Pago
@@ -164,20 +174,20 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
   XLSX.utils.book_append_sheet(wb, ws2, 'Resumen');
 
   // ─────────────────────────────────────────────────────────────────
-  // HOJA 3: Por Categoría
+  // HOJA 3: Por Concepto
   // ─────────────────────────────────────────────────────────────────
   const catMap: Record<string, number> = {};
   expenses.forEach(e => {
-    const k = e.category ?? 'Sin categoría';
+    const k = getExpenseConceptLabel(e.concept_code);
     catMap[k] = (catMap[k] ?? 0) + Number(e.amount_mxn);
   });
   const catRows = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
   const catMax = catRows[0]?.[1] ?? 0;
 
   const catData = [
-    [`GASTOS POR CATEGORÍA — ${label}`, '', '', ''],
+    [`GASTOS POR CONCEPTO — ${label}`, '', '', ''],
     ['', '', '', ''],
-    ['Categoría', 'Monto (MXN)', '% del Total', `Gráfica (barra proporcional)`],
+    ['Concepto', 'Monto (MXN)', '% del Total', `Gráfica (barra proporcional)`],
     ...catRows.map(([cat, amt]) => [
       cat,
       Number(amt),
@@ -193,10 +203,39 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
   if (ws3['A1']) ws3['A1'].s = { font: { bold: true, sz: 13 } };
   ['A3', 'B3', 'C3', 'D3'].forEach(ref => styleHeader(ws3, ref, 'FF6B00'));
 
-  XLSX.utils.book_append_sheet(wb, ws3, 'Por Categoría');
+  XLSX.utils.book_append_sheet(wb, ws3, 'Por Concepto');
 
   // ─────────────────────────────────────────────────────────────────
-  // HOJA 4: Por Proveedor
+  // HOJA 4: Por Destino
+  // ─────────────────────────────────────────────────────────────────
+  const destinationMap: Record<string, number> = {};
+  expenses.forEach(e => {
+    const key = getExpenseDestinationLabel(e.destination_scope);
+    destinationMap[key] = (destinationMap[key] ?? 0) + Number(e.amount_mxn);
+  });
+  const destinationRows = Object.entries(destinationMap).sort((a, b) => b[1] - a[1]);
+  const destinationMax = destinationRows[0]?.[1] ?? 0;
+  const destinationData = [
+    [`GASTOS POR DESTINO — ${label}`, '', '', ''],
+    ['', '', '', ''],
+    ['Destino', 'Monto (MXN)', '% del Total', 'Gráfica (barra proporcional)'],
+    ...destinationRows.map(([destination, amount]) => [
+      destination,
+      Number(amount),
+      pct(amount, total),
+      makeBar(amount, destinationMax),
+    ]),
+    ['', '', '', ''],
+    ['TOTAL', `$${currencyMX(total)}`, '100%', ''],
+  ];
+  const wsDestination = XLSX.utils.aoa_to_sheet(destinationData);
+  wsDestination['!cols'] = [{ wch: 24 }, { wch: 16 }, { wch: 12 }, { wch: 36 }];
+  if (wsDestination['A1']) wsDestination['A1'].s = { font: { bold: true, sz: 13 } };
+  ['A3', 'B3', 'C3', 'D3'].forEach(ref => styleHeader(wsDestination, ref, 'FF6B00'));
+  XLSX.utils.book_append_sheet(wb, wsDestination, 'Por Destino');
+
+  // ─────────────────────────────────────────────────────────────────
+  // HOJA 5: Por Proveedor
   // ─────────────────────────────────────────────────────────────────
   const vendorMap: Record<string, number> = {};
   expenses.forEach(e => {
@@ -228,7 +267,7 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
   XLSX.utils.book_append_sheet(wb, ws4, 'Por Proveedor');
 
   // ─────────────────────────────────────────────────────────────────
-  // HOJA 5: Por Tipo y Método de Pago
+  // HOJA 6: Por Tipo y Método de Pago
   // ─────────────────────────────────────────────────────────────────
   const tipoMax = Math.max(totalFijo, totalVariable, totalOtro);
   const pmMax   = Math.max(totalCash, totalCard, totalTransfer, totalOtherPM);

@@ -2,13 +2,19 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../supabase';
 import { X, Save, Upload, FileText, FileCode, Eye, RefreshCw, Loader2, AlertTriangle } from 'lucide-react';
 import { FinanceDocument, FINANCE_DOCS_BUCKET, getFinanceDocSignedUrl } from '../../lib/financeDocuments';
+import {
+  EXPENSE_CONCEPT_OPTIONS,
+  EXPENSE_DESTINATION_OPTIONS,
+  getExpenseDestinationLabel,
+  type ExpenseConceptCode,
+  type ManualExpenseDestinationScope,
+} from '../../lib/expenseClassification.js';
 
 interface Expense {
   id: string;
   expense_date: string;
   amount_mxn: number;
   type: 'FIXED' | 'VARIABLE' | 'OTHER';
-  category: string | null;
   vendor: string | null;
   has_invoice: boolean;
   payment_method: 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
@@ -17,6 +23,9 @@ interface Expense {
   is_unbudgeted_fixed?: boolean;
   fixed_cost_unbudgeted_reason?: string | null;
   commission_settlement_id?: string | null;
+  concept_code?: ExpenseConceptCode | null;
+  destination_scope?: ManualExpenseDestinationScope | 'MIXED' | 'UNKNOWN' | null;
+  classification_status?: 'CLASSIFIED' | 'SYSTEM' | null;
 }
 
 interface ExpenseFormModalProps {
@@ -37,7 +46,8 @@ interface FixedCostOption {
 export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) => {
   const [formData, setFormData] = useState<{
     expense_date: string; amount_mxn: number; type: 'FIXED' | 'VARIABLE' | 'OTHER';
-    category: string; vendor: string; has_invoice: boolean;
+    concept_code: ExpenseConceptCode | ''; destination_scope: ManualExpenseDestinationScope | '';
+    vendor: string; has_invoice: boolean;
     payment_method: 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER'; notes: string;
     fixed_cost_id: string | null; is_unbudgeted_fixed: boolean;
     fixed_cost_unbudgeted_reason: string;
@@ -45,7 +55,12 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     expense_date: expense?.expense_date || new Date().toISOString().split('T')[0],
     amount_mxn: expense?.amount_mxn || 0,
     type: expense?.type || 'VARIABLE' as const,
-    category: expense?.category || '',
+    concept_code: expense?.concept_code || '',
+    destination_scope: expense?.destination_scope === 'AURRERA'
+      || expense?.destination_scope === 'CHIPITLAN'
+      || expense?.destination_scope === 'SHARED'
+      ? expense.destination_scope
+      : '',
     vendor: expense?.vendor || '',
     has_invoice: expense?.has_invoice || false,
     payment_method: expense?.payment_method || 'CASH' as const,
@@ -57,6 +72,12 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
   const [saving, setSaving] = useState(false);
   const [fixedCostOptions, setFixedCostOptions] = useState<FixedCostOption[]>([]);
   const [fixedCostsLoading, setFixedCostsLoading] = useState(false);
+  const selectedFixedCost = fixedCostOptions.find(option => option.id === formData.fixed_cost_id);
+  const fixedCostDestination = selectedFixedCost?.scope === 'AURRERA'
+    || selectedFixedCost?.scope === 'CHIPITLAN'
+    || selectedFixedCost?.scope === 'SHARED'
+    ? selectedFixedCost.scope as ManualExpenseDestinationScope
+    : null;
 
   // ── Multi-document state (keyed by DocKind) ──
   const [existingDocs, setExistingDocs] = useState<Partial<Record<DocKind, FinanceDocument>>>({});
@@ -320,10 +341,24 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
         throw new Error('Explica por qué este gasto fijo no estaba presupuestado.');
       }
 
+      const effectiveDestination = formData.type === 'FIXED' && formData.fixed_cost_id && !formData.is_unbudgeted_fixed
+        ? fixedCostDestination
+        : formData.destination_scope || null;
+      const classificationComplete = Boolean(formData.concept_code && effectiveDestination);
+      if (!expense && !classificationComplete) {
+        throw new Error('Selecciona el concepto y el destino del gasto.');
+      }
+      if (formData.type === 'FIXED' && formData.fixed_cost_id && !fixedCostDestination) {
+        throw new Error('La obligación seleccionada no tiene un destino utilizable. Revisa su configuración.');
+      }
+
       const payload = {
-        ...formData,
-        category: formData.category || null,
+        expense_date: formData.expense_date,
+        amount_mxn: formData.amount_mxn,
+        type: formData.type,
         vendor: formData.vendor || null,
+        has_invoice: formData.has_invoice,
+        payment_method: formData.payment_method,
         notes: formData.notes || null,
         fixed_cost_id: formData.type === 'FIXED' && !formData.is_unbudgeted_fixed ? formData.fixed_cost_id : null,
         is_unbudgeted_fixed: formData.type === 'FIXED' && formData.is_unbudgeted_fixed,
@@ -331,6 +366,9 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
           formData.type === 'FIXED' && formData.is_unbudgeted_fixed
             ? formData.fixed_cost_unbudgeted_reason.trim()
             : null,
+        concept_code: classificationComplete ? formData.concept_code : null,
+        destination_scope: classificationComplete ? effectiveDestination : null,
+        classification_status: classificationComplete ? 'CLASSIFIED' : null,
       };
 
       let expenseId: string | undefined;
@@ -511,16 +549,51 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
 
             <div>
               <label className="block text-sm font-medium text-cc-text-muted mb-2">
-                Categoría
+                Concepto *
               </label>
-              <input
-                type="text"
-                value={formData.category}
-                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+              <select
+                value={formData.concept_code}
+                onChange={(e) => setFormData({ ...formData, concept_code: e.target.value as ExpenseConceptCode | '' })}
                 className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
-                placeholder="Ej: Insumos, Servicios, etc."
-              />
+                required={!expense}
+              >
+                <option value="">Seleccionar concepto…</option>
+                {EXPENSE_CONCEPT_OPTIONS.map(option => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+              {expense && !expense.concept_code && (
+                <p className="mt-1 text-xs text-amber-300">Registro anterior pendiente de clasificar.</p>
+              )}
             </div>
+
+            {formData.type === 'FIXED' && formData.fixed_cost_id && !formData.is_unbudgeted_fixed ? (
+              <div>
+                <label className="block text-sm font-medium text-cc-text-muted mb-2">Destino</label>
+                <div className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main">
+                  {fixedCostDestination ? getExpenseDestinationLabel(fixedCostDestination) : 'Pendiente en la obligación'}
+                </div>
+                <p className="mt-1 text-xs text-cc-text-muted">Se toma de la obligación seleccionada.</p>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-sm font-medium text-cc-text-muted mb-2">Destino *</label>
+                <select
+                  value={formData.destination_scope}
+                  onChange={(e) => setFormData({ ...formData, destination_scope: e.target.value as ManualExpenseDestinationScope | '' })}
+                  className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
+                  required={!expense}
+                >
+                  <option value="">Seleccionar destino…</option>
+                  {EXPENSE_DESTINATION_OPTIONS.map(option => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+                {expense && !expense.destination_scope && (
+                  <p className="mt-1 text-xs text-amber-300">Registro anterior pendiente de clasificar.</p>
+                )}
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-cc-text-muted mb-2">
