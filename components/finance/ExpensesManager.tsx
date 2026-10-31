@@ -15,6 +15,8 @@ interface Expense {
   payment_method: 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
   notes: string | null;
   fixed_cost_id: string | null;
+  is_unbudgeted_fixed?: boolean;
+  fixed_cost_unbudgeted_reason?: string | null;
   commission_settlement_id?: string | null;
   created_at: string;
 }
@@ -258,6 +260,7 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
               <thead>
                 <tr className="border-b border-white/10 bg-black/20">
                   <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Fecha</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Conciliación fija</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Tipo</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Categoría</th>
                   <th className="text-left py-3 px-4 text-sm font-medium text-cc-text-muted">Proveedor</th>
@@ -270,7 +273,7 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
               <tbody>
                 {expenses.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="text-center py-8 text-cc-text-muted">
+                    <td colSpan={9} className="text-center py-8 text-cc-text-muted">
                       No hay gastos registrados en este periodo
                     </td>
                   </tr>
@@ -279,6 +282,9 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
                     <tr key={expense.id} className="border-b border-white/5 hover:bg-white/5">
                       <td className="py-3 px-4 text-cc-text-main text-sm">
                         {formatDateOnly(expense.expense_date)}
+                      </td>
+                      <td className="py-3 px-4 text-xs text-cc-text-muted">
+                        {expense.type !== 'FIXED' ? '—' : expense.fixed_cost_id ? 'Vinculado' : expense.is_unbudgeted_fixed ? 'No presupuestado' : 'Sin conciliación'}
                       </td>
                       <td className="py-3 px-4">
                         <span className={`text-xs px-2 py-1 rounded ${

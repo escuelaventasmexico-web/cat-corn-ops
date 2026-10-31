@@ -1,243 +1,32 @@
-import { useState, useEffect } from 'react';
-import { X, TrendingUp, DollarSign, CheckCircle, AlertCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { X, TrendingUp, AlertCircle } from 'lucide-react';
 import { supabase } from '../../supabase';
 
-interface FixedCostsVsSalesProps {
-  onClose: () => void;
-}
+const mxn = (value: number | null | undefined) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(value || 0));
+interface Obligation { fixed_cost_id: string; obligation_name: string; obligation_scope: string; periodicity: string; payment_amount_mxn: number|null; monthly_provision_mxn: number|null; expected_payment_in_month_mxn:number|null; paid_in_month_mxn:number|null; pending_through_month_mxn:number|null; credit_through_month_mxn:number|null; configuration_status:string; }
 
-// Helper function to format currency in MXN
-const formatMXN = (amount: number | null | undefined): string => {
-  if (amount === null || amount === undefined) return '$0.00';
-  return new Intl.NumberFormat('es-MX', { 
-    style: 'currency', 
-    currency: 'MXN' 
-  }).format(amount);
+export const FixedCostsVsSales = ({ onClose }: { onClose: () => void }) => {
+  const now = new Date(); const month = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10);
+  const [data,setData]=useState<any>(); const [error,setError]=useState(''); const [scenario,setScenario]=useState(false);
+  useEffect(()=>{(async()=>{ if(!supabase)return; const {data,error}=await supabase.rpc('finance_month_summary',{p_month_start:month}); if(error)setError(error.message);else setData(data); })();},[month]);
+  const obligations: Obligation[] = data?.fixed_obligations || [];
+  return <div className="space-y-6">
+    <div className="flex justify-between"><div className="flex gap-3"><TrendingUp className="text-cc-primary"/><div><h2 className="text-3xl font-bold text-cc-cream">Presupuesto de gastos fijos</h2><p className="text-cc-text-muted">Mes consultado: {month}</p></div></div><button onClick={onClose}><X/></button></div>
+    {error&&<div className="text-red-400 flex gap-2"><AlertCircle/>{error}</div>}
+    {data&&<><div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <Metric title="Apartar este mes" value={data.fixed_reserved_mxn} note="Provisión mensual conocida" color="orange"/>
+      <Metric title="Pagos que vencen este mes" value={data.fixed_due_mxn} note="Sólo calendarios e importes configurados" color="blue"/>
+      <Metric title="Pagos registrados" value={data.fixed_registered_mxn} note="Todos los gastos FIXED del mes" color="green"/>
+    </div>
+    {data.fixed_reconciliation_status==='LEGACY_UNRECONCILED'&&<div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded text-amber-200">Sin conciliación por obligación. Los pagos históricos del mes siguen incluidos en gastos registrados, pero no se atribuyen a conceptos por coincidencias de texto.</div>}
+    {(data.fixed_amount_unknown_count>0||data.fixed_schedule_pending_count>0)&&<div className="bg-blue-500/10 border border-blue-500/30 p-4 rounded text-blue-200">Configuración pendiente: {data.fixed_amount_unknown_count} importe(s) desconocido(s) y {data.fixed_schedule_pending_count} calendario(s) sin mes ancla. No se presentan como cero.</div>}
+    <div className="bg-cc-surface rounded-xl overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-cc-text-muted border-b border-white/10"><th className="p-3 text-left">Obligación</th><th>Ámbito</th><th>Reserva</th><th>Vence</th><th>Registrado</th><th>Saldo acumulado</th><th>Crédito</th><th>Estado</th></tr></thead><tbody>{obligations.map(o=><tr key={o.fixed_cost_id} className="border-b border-white/5"><td className="p-3">{o.obligation_name}</td><td>{o.obligation_scope}</td><td>{o.monthly_provision_mxn==null?'Pendiente':mxn(o.monthly_provision_mxn)}</td><td>{o.expected_payment_in_month_mxn==null?'Pendiente':mxn(o.expected_payment_in_month_mxn)}</td><td>{o.paid_in_month_mxn==null?'Sin conciliación':mxn(o.paid_in_month_mxn)}</td><td>{o.pending_through_month_mxn==null?'—':mxn(o.pending_through_month_mxn)}</td><td>{o.credit_through_month_mxn==null?'—':mxn(o.credit_through_month_mxn)}</td><td>{o.configuration_status}</td></tr>)}</tbody></table></div>
+    <div className="bg-purple-500/10 border border-purple-500/30 p-4 rounded"><label className="flex gap-2"><input type="checkbox" checked={scenario} onChange={e=>setScenario(e.target.checked)}/><span>Escenario de flujo: incluir Pago Enrique por $6,000 (no se registra como gasto)</span></label>{scenario&&<p className="text-2xl font-bold mt-2">Reserva conocida + escenario: {mxn(Number(data.fixed_reserved_mxn)+6000)}</p>}</div>
+    </>}
+  </div>;
 };
 
-export const FixedCostsVsSales = ({ onClose }: FixedCostsVsSalesProps) => {
-  const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<any>(null);
-  const [error, setError] = useState<any>(null);
-
-  // Get current month start date
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth(); // 0-indexed
-  const monthStartDate = new Date(currentYear, currentMonth, 1);
-  const monthStartISO = monthStartDate.toISOString().slice(0, 10);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        
-        if (!supabase) {
-          throw new Error('Supabase no está configurado');
-        }
-
-        const { data: result, error: rpcError } = await supabase.rpc('finance_month_summary', {
-          p_month_start: monthStartISO
-        });
-
-        if (rpcError) {
-          throw rpcError;
-        }
-
-        setData(result);
-      } catch (err) {
-        setError(err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [monthStartISO]);
-
-  // Calculate coverage metrics
-  // A) Coverage paid percentage (what's actually been paid)
-  const calculateCoveragePaid = (): number => {
-    if (!data || !data.fixed_plan_mxn || data.fixed_plan_mxn <= 0) return 0;
-    const coverage = (data.fixed_covered_mxn / data.fixed_plan_mxn) * 100;
-    return Math.min(Math.max(coverage, 0), 100); // clamp 0-100
-  };
-
-  // B) Capacity by sales (whether sales are enough to cover the plan)
-  const capacityOk = data && data.sales_mtd_mxn >= data.fixed_plan_mxn;
-  const capacityDiff = data ? Math.abs(data.sales_mtd_mxn - data.fixed_plan_mxn) : 0;
-
-  const coveragePaidPct = calculateCoveragePaid();
-
-  return (
-    <div className="space-y-6 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <TrendingUp size={32} className="text-cc-primary" />
-          <h2 className="text-3xl font-bold text-cc-cream">Gastos Fijos vs Ventas</h2>
-        </div>
-        <button
-          onClick={onClose}
-          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-        >
-          <X size={24} className="text-cc-text-muted" />
-        </button>
-      </div>
-
-      {/* Month Info */}
-      <div className="bg-cc-surface p-4 rounded-lg border border-cc-primary/20">
-        <p className="text-cc-text-muted">
-          <span className="font-semibold text-cc-primary">Mes consultado:</span> {monthStartISO}
-        </p>
-      </div>
-
-      {/* Error Alert */}
-      {error && (
-        <div className="bg-red-950/30 border border-red-500/50 p-4 rounded-lg">
-          <div className="flex items-center gap-2 text-red-400 font-bold mb-2">
-            <AlertCircle size={20} />
-            Error al cargar datos
-          </div>
-          <p className="text-red-300 text-sm">{error.message || 'Error desconocido'}</p>
-        </div>
-      )}
-
-      {/* Loading State */}
-      {loading && (
-        <div className="bg-cc-surface p-8 rounded-lg border border-blue-500/20 text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cc-primary mx-auto mb-4"></div>
-          <p className="text-cc-cream">Cargando análisis de cobertura...</p>
-        </div>
-      )}
-
-      {/* Data State */}
-      {!loading && !error && data && (
-        <>
-          {/* Status Message - Based on Sales Capacity */}
-          <div className={`p-6 rounded-xl border ${
-            capacityOk 
-              ? 'bg-green-950/30 border-green-500/50' 
-              : 'bg-yellow-950/30 border-yellow-500/50'
-          }`}>
-            <div className="flex items-center gap-3 mb-2">
-              {capacityOk ? (
-                <CheckCircle size={32} className="text-green-400" />
-              ) : (
-                <AlertCircle size={32} className="text-yellow-400" />
-              )}
-              <h3 className={`text-2xl font-bold ${
-                capacityOk ? 'text-green-400' : 'text-yellow-400'
-              }`}>
-                {capacityOk 
-                  ? 'Ventas alcanzan para cubrir el plan' 
-                  : `Ventas aún no alcanzan el plan`
-                }
-              </h3>
-            </div>
-            <p className={`text-sm ${capacityOk ? 'text-green-300' : 'text-yellow-300'} ml-11`}>
-              {capacityOk 
-                ? 'Las ventas del mes ya alcanzan el plan de gastos fijos (esto no implica que estén pagados).'
-                : `Te faltan ${formatMXN(capacityDiff)} para alcanzar el plan de gastos fijos del mes.`
-              }
-            </p>
-          </div>
-
-          {/* Sección 1 - Resumen */}
-          <div className="bg-cc-surface p-6 rounded-xl border border-white/10">
-            <h3 className="text-xl font-bold text-cc-cream mb-4 flex items-center gap-2">
-              <DollarSign size={24} className="text-cc-primary" />
-              Resumen del Mes
-            </h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-gradient-to-br from-green-500/10 to-green-600/5 border border-green-500/30 p-5 rounded-lg">
-                <p className="text-sm text-green-400 font-semibold mb-1">Ventas Acumuladas</p>
-                <p className="text-3xl font-bold text-cc-cream">{formatMXN(data.sales_mtd_mxn)}</p>
-                <p className="text-xs text-cc-text-muted mt-1">MTD (Month to Date)</p>
-              </div>
-
-              <div className="bg-gradient-to-br from-orange-500/10 to-orange-600/5 border border-orange-500/30 p-5 rounded-lg">
-                <p className="text-sm text-orange-400 font-semibold mb-1">Gastos Fijos Planificados</p>
-                <p className="text-3xl font-bold text-cc-cream">{formatMXN(data.fixed_plan_mxn)}</p>
-                <p className="text-xs text-cc-text-muted mt-1">Costos recurrentes mensuales</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Sección 2 - Cobertura de Pagos */}
-          <div className="bg-cc-surface p-6 rounded-xl border border-white/10">
-            <h3 className="text-xl font-bold text-cc-cream mb-4 flex items-center gap-2">
-              <TrendingUp size={24} className="text-cc-primary" />
-              Estado de Pagos
-            </h3>
-
-            {/* Progress Bar - Shows actual paid coverage */}
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-semibold text-cc-text-muted">% de gastos fijos pagados</span>
-                <span className="text-2xl font-bold text-cc-primary">{coveragePaidPct.toFixed(1)}%</span>
-              </div>
-              
-              <div className="w-full bg-gray-700 rounded-full h-6 overflow-hidden">
-                <div 
-                  className={`h-6 transition-all duration-500 rounded-full ${
-                    coveragePaidPct >= 100 
-                      ? 'bg-gradient-to-r from-green-500 to-green-400' 
-                      : coveragePaidPct >= 75
-                      ? 'bg-gradient-to-r from-yellow-500 to-cc-primary'
-                      : 'bg-gradient-to-r from-red-500 to-orange-500'
-                  }`}
-                  style={{ width: `${coveragePaidPct}%` }}
-                ></div>
-              </div>
-
-              <div className="flex justify-between text-xs text-cc-text-muted mt-2">
-                <span>0%</span>
-                <span>50%</span>
-                <span>100%</span>
-              </div>
-            </div>
-
-            {/* Coverage Details */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-green-950/20 border border-green-500/30 p-5 rounded-lg">
-                <p className="text-sm text-green-400 font-semibold mb-1">Gastos Pagados</p>
-                <p className="text-3xl font-bold text-cc-cream">{formatMXN(data.fixed_covered_mxn)}</p>
-                <p className="text-xs text-cc-text-muted mt-1">Efectivamente pagados</p>
-              </div>
-
-              <div className="bg-red-950/20 border border-red-500/30 p-5 rounded-lg">
-                <p className="text-sm text-red-400 font-semibold mb-1">Gastos Pendientes</p>
-                <p className="text-3xl font-bold text-cc-cream">{formatMXN(data.fixed_pending_mxn)}</p>
-                <p className="text-xs text-cc-text-muted mt-1">Por pagar este mes</p>
-              </div>
-            </div>
-
-            {/* Additional Info - Capacity by Sales */}
-            {data.fixed_plan_mxn > 0 && (
-              <div className="mt-4 p-4 bg-blue-950/20 border border-blue-500/30 rounded-lg">
-                <p className="text-sm text-blue-300">
-                  <span className="font-semibold">Análisis:</span> 
-                  {capacityOk 
-                    ? ` Has superado el plan de fijos por ${formatMXN(capacityDiff)}.`
-                    : ` Te faltan ${formatMXN(capacityDiff)} para cubrir el plan de fijos con ventas.`
-                  }
-                </p>
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      {/* No Data State */}
-      {!loading && !error && !data && (
-        <div className="bg-cc-surface p-8 rounded-lg border border-yellow-500/20 text-center">
-          <AlertCircle size={48} className="mx-auto mb-4 text-yellow-400" />
-          <p className="text-cc-text-muted">No hay datos disponibles para este mes</p>
-        </div>
-      )}
-    </div>
-  );
+const Metric=({title,value,note,color}:{title:string;value:number;note:string;color:'orange'|'blue'|'green'})=>{
+  const classes = color === 'orange' ? 'bg-orange-500/10 border-orange-500/30' : color === 'blue' ? 'bg-blue-500/10 border-blue-500/30' : 'bg-green-500/10 border-green-500/30';
+  return <div className={`${classes} border p-5 rounded-xl`}><p className="text-sm text-cc-text-muted">{title}</p><p className="text-3xl font-bold text-cc-cream">{mxn(value)}</p><p className="text-xs text-cc-text-muted">{note}</p></div>;
 };

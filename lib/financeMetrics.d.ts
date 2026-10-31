@@ -10,8 +10,18 @@ export interface FinanceRpcSummary {
   expenses_other_mxn: number;
   expenses_total_mxn: number;
   fixed_plan_mxn: number;
-  fixed_covered_mxn: number;
-  fixed_pending_mxn: number;
+  fixed_covered_mxn: number | null;
+  fixed_pending_mxn: number | null;
+  fixed_reserved_mxn: number;
+  fixed_due_mxn: number;
+  fixed_registered_mxn: number;
+  fixed_linked_registered_mxn: number;
+  fixed_unbudgeted_registered_mxn: number;
+  fixed_legacy_unlinked_mxn: number;
+  fixed_amount_unknown_count: number;
+  fixed_schedule_pending_count: number;
+  fixed_reconciliation_status: 'LEGACY_UNRECONCILED' | 'BY_OBLIGATION';
+  fixed_obligations: Array<Record<string, unknown>>;
   pnl?: Record<string, number>;
   [key: string]: unknown;
 }

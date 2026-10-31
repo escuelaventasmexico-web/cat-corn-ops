@@ -385,8 +385,8 @@ const FinanceResumenTest = () => {
                   <span className="text-cc-cream">{formatMXN(data.expenses_fixed_mxn || 0)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Fijos (planificados):</span>
-                  <span className="text-orange-300">{formatMXN(data.fixed_plan_mxn || 0)}</span>
+                  <span>Apartado fijo del mes:</span>
+                  <span className="text-orange-300">{formatMXN(data.fixed_reserved_mxn || 0)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Gastos variables registrados:</span>
@@ -401,7 +401,7 @@ const FinanceResumenTest = () => {
               {/* Plan note */}
               <div className="mt-3 pt-3 border-t border-red-500/20">
                 <p className="text-xs text-cc-text-muted">
-                  Plan fijo del mes: <span className="font-semibold text-orange-300">{formatMXN(data.fixed_plan_mxn || 0)}</span>
+                  Vencimientos configurados: <span className="font-semibold text-orange-300">{formatMXN(data.fixed_due_mxn || 0)}</span>
                 </p>
               </div>
             </div>
@@ -424,16 +424,18 @@ const FinanceResumenTest = () => {
               </p>
             </div>
 
-            {/* Fijos Pagados */}
+            {/* Presupuesto fijo: reserva, vencimientos y pagos son conceptos distintos. */}
             <div className="bg-gradient-to-br from-orange-500/10 to-orange-600/5 border border-orange-500/30 p-6 rounded-xl">
               <div className="flex items-center gap-2 mb-2">
                 <Receipt className="text-orange-400" size={24} />
-                <h4 className="text-sm font-semibold text-orange-400">Fijos Pagados</h4>
+                <h4 className="text-sm font-semibold text-orange-400">Apartado de gastos fijos</h4>
               </div>
-              <p className="text-3xl font-bold text-cc-cream">{formatMXN(data.fixed_covered_mxn)}</p>
-              <p className="text-xs text-cc-text-muted mt-1">
-                Pendiente por pagar: <span className="text-cc-cream font-semibold">{formatMXN(data.fixed_pending_mxn)}</span>
-              </p>
+              <p className="text-3xl font-bold text-cc-cream">{formatMXN(data.fixed_reserved_mxn)}</p>
+              <div className="text-xs text-cc-text-muted mt-2 space-y-1">
+                <p>Vence este mes: <span className="text-cc-cream font-semibold">{formatMXN(data.fixed_due_mxn)}</span></p>
+                <p>Pagos registrados: <span className="text-cc-cream font-semibold">{formatMXN(data.fixed_registered_mxn)}</span></p>
+                {data.fixed_reconciliation_status === 'LEGACY_UNRECONCILED' && <p className="text-amber-300">Sin conciliación por obligación</p>}
+              </div>
             </div>
 
             {/* Meta Mensual */}

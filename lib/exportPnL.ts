@@ -22,8 +22,12 @@ interface FinanceSummary {
   expenses_other_mxn: number;
   expenses_total_mxn: number;
   fixed_plan_mxn: number;
-  fixed_covered_mxn: number;
-  fixed_pending_mxn: number;
+  fixed_covered_mxn: number | null;
+  fixed_pending_mxn: number | null;
+  fixed_reserved_mxn?: number;
+  fixed_due_mxn?: number;
+  fixed_registered_mxn?: number;
+  fixed_reconciliation_status?: string;
   pnl?: PLData;
 }
 
@@ -77,9 +81,10 @@ export const exportPnLToExcel = (data: FinanceSummary, monthStart: string) => {
     ['Gastos Fijos Pagados (MXN)', formatMXN(data.expenses_fixed_mxn), 'Gastos fijos efectivamente pagados'],
     ['Gastos variables registrados (MXN)', formatMXN(data.expenses_variable_mxn), 'No representa costo de producción consumido'],
     ['Otros Gastos (MXN)', formatMXN(data.expenses_other_mxn), 'Gastos no clasificados'],
-    ['Plan de Fijos del Mes (MXN)', formatMXN(data.fixed_plan_mxn), 'Presupuesto de gastos fijos'],
-    ['Fijos Cubiertos (Pagados) (MXN)', formatMXN(data.fixed_covered_mxn), 'Mismo valor que Fijos Pagados'],
-    ['Fijos Pendientes (MXN)', formatMXN(data.fixed_pending_mxn), 'Diferencia entre plan y pagado'],
+    ['Apartado de fijos del mes (MXN)', formatMXN(data.fixed_reserved_mxn ?? data.fixed_plan_mxn), 'Provisión mensual conocida'],
+    ['Pagos fijos que vencen (MXN)', formatMXN(data.fixed_due_mxn ?? 0), 'Sólo obligaciones con importe y calendario configurados'],
+    ['Pagos fijos registrados (MXN)', formatMXN(data.fixed_registered_mxn ?? data.expenses_fixed_mxn), 'Todos los gastos FIXED registrados'],
+    ['Estado de conciliación', data.fixed_reconciliation_status ?? '', 'No se infieren vínculos históricos'],
     ['Utilidad Neta (MXN)', formatMXN(figures.netProfit), 'Resultado final después de gastos'],
     ['Margen Neto (%)', formatPercent(netMargin), 'Utilidad Neta / Ventas']
   ];
@@ -147,9 +152,10 @@ export const exportPnLToExcel = (data: FinanceSummary, monthStart: string) => {
     ['Gastos variables', formatMXN(data.expenses_variable_mxn)],
     ['Otros gastos', formatMXN(data.expenses_other_mxn)],
     ['Gastos totales', formatMXN(data.expenses_total_mxn)],
-    ['Plan de gastos fijos del mes', formatMXN(data.fixed_plan_mxn)],
-    ['Fijos cubiertos (pagados)', formatMXN(data.fixed_covered_mxn)],
-    ['Fijos pendientes por pagar', formatMXN(data.fixed_pending_mxn)],
+    ['Apartado de gastos fijos del mes', formatMXN(data.fixed_reserved_mxn ?? data.fixed_plan_mxn)],
+    ['Pagos fijos que vencen este mes', formatMXN(data.fixed_due_mxn ?? 0)],
+    ['Pagos fijos registrados', formatMXN(data.fixed_registered_mxn ?? data.expenses_fixed_mxn)],
+    ['Estado de conciliación', data.fixed_reconciliation_status ?? ''],
     ['', ''],
     ['--- Estado de Resultados (P&L) ---', ''],
     ['P&L: Ventas', formatMXN(figures.sales)],

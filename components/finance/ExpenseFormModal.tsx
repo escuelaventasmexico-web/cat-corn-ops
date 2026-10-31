@@ -14,6 +14,8 @@ interface Expense {
   payment_method: 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
   notes: string | null;
   fixed_cost_id: string | null;
+  is_unbudgeted_fixed?: boolean;
+  fixed_cost_unbudgeted_reason?: string | null;
   commission_settlement_id?: string | null;
 }
 
@@ -24,8 +26,22 @@ interface ExpenseFormModalProps {
 
 type DocKind = 'invoice_pdf' | 'invoice_xml' | 'receipt_image';
 
+interface FixedCostOption {
+  id: string;
+  name: string;
+  scope: string;
+  periodicity: string;
+  amount_mxn: number | null;
+}
+
 export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) => {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    expense_date: string; amount_mxn: number; type: 'FIXED' | 'VARIABLE' | 'OTHER';
+    category: string; vendor: string; has_invoice: boolean;
+    payment_method: 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER'; notes: string;
+    fixed_cost_id: string | null; is_unbudgeted_fixed: boolean;
+    fixed_cost_unbudgeted_reason: string;
+  }>({
     expense_date: expense?.expense_date || new Date().toISOString().split('T')[0],
     amount_mxn: expense?.amount_mxn || 0,
     type: expense?.type || 'VARIABLE' as const,
@@ -34,9 +50,13 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     has_invoice: expense?.has_invoice || false,
     payment_method: expense?.payment_method || 'CASH' as const,
     notes: expense?.notes || '',
-    fixed_cost_id: expense?.fixed_cost_id || null
+    fixed_cost_id: expense?.fixed_cost_id || null,
+    is_unbudgeted_fixed: expense?.is_unbudgeted_fixed || false,
+    fixed_cost_unbudgeted_reason: expense?.fixed_cost_unbudgeted_reason || ''
   });
   const [saving, setSaving] = useState(false);
+  const [fixedCostOptions, setFixedCostOptions] = useState<FixedCostOption[]>([]);
+  const [fixedCostsLoading, setFixedCostsLoading] = useState(false);
 
   // ── Multi-document state (keyed by DocKind) ──
   const [existingDocs, setExistingDocs] = useState<Partial<Record<DocKind, FinanceDocument>>>({});
@@ -54,6 +74,28 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
   useEffect(() => {
     if (expense?.id) loadExistingDocs(expense.id);
   }, [expense?.id]);
+
+  useEffect(() => {
+    const client = supabase;
+    if (formData.type !== 'FIXED' || !client) {
+      setFixedCostOptions([]);
+      return;
+    }
+    const loadOptions = async () => {
+      setFixedCostsLoading(true);
+      const { data, error } = await client
+        .from('fixed_costs')
+        .select('id,name,scope,periodicity,amount_mxn')
+        .lte('effective_from', formData.expense_date)
+        .or(`effective_to.is.null,effective_to.gte.${formData.expense_date}`)
+        .order('scope')
+        .order('name');
+      if (error) setDocError(`No se pudo cargar el catálogo de obligaciones: ${error.message}`);
+      setFixedCostOptions((data || []) as FixedCostOption[]);
+      setFixedCostsLoading(false);
+    };
+    loadOptions();
+  }, [formData.type, formData.expense_date]);
 
   // Clear incompatible pending files when toggling has_invoice
   useEffect(() => {
@@ -270,11 +312,25 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     try {
       if (!supabase) throw new Error('Supabase no configurado');
 
+      const requiresClassification = formData.type === 'FIXED' && formData.expense_date >= '2026-11-01';
+      if (requiresClassification && !formData.fixed_cost_id && !formData.is_unbudgeted_fixed) {
+        throw new Error('Selecciona una obligación o marca el gasto fijo como no presupuestado.');
+      }
+      if (formData.type === 'FIXED' && formData.is_unbudgeted_fixed && !formData.fixed_cost_unbudgeted_reason.trim()) {
+        throw new Error('Explica por qué este gasto fijo no estaba presupuestado.');
+      }
+
       const payload = {
         ...formData,
         category: formData.category || null,
         vendor: formData.vendor || null,
         notes: formData.notes || null,
+        fixed_cost_id: formData.type === 'FIXED' && !formData.is_unbudgeted_fixed ? formData.fixed_cost_id : null,
+        is_unbudgeted_fixed: formData.type === 'FIXED' && formData.is_unbudgeted_fixed,
+        fixed_cost_unbudgeted_reason:
+          formData.type === 'FIXED' && formData.is_unbudgeted_fixed
+            ? formData.fixed_cost_unbudgeted_reason.trim()
+            : null,
       };
 
       let expenseId: string | undefined;
@@ -373,7 +429,13 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
               </label>
               <select
                 value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
+                onChange={(e) => setFormData({
+                  ...formData,
+                  type: e.target.value as any,
+                  fixed_cost_id: e.target.value === 'FIXED' ? formData.fixed_cost_id : null,
+                  is_unbudgeted_fixed: e.target.value === 'FIXED' ? formData.is_unbudgeted_fixed : false,
+                  fixed_cost_unbudgeted_reason: e.target.value === 'FIXED' ? formData.fixed_cost_unbudgeted_reason : '',
+                })}
                 className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
                 required
               >
@@ -382,6 +444,53 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
                 <option value="OTHER">Otro</option>
               </select>
             </div>
+
+            {formData.type === 'FIXED' && (
+              <div className="md:col-span-2 bg-orange-500/5 border border-orange-500/25 rounded-lg p-4 space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-orange-300 mb-2">Obligación del presupuesto</label>
+                  <select
+                    value={formData.fixed_cost_id || ''}
+                    disabled={formData.is_unbudgeted_fixed || fixedCostsLoading}
+                    onChange={(e) => setFormData({ ...formData, fixed_cost_id: e.target.value || null })}
+                    className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main disabled:opacity-50"
+                  >
+                    <option value="">{fixedCostsLoading ? 'Cargando…' : 'Seleccionar obligación…'}</option>
+                    {fixedCostOptions.map(option => (
+                      <option key={option.id} value={option.id}>
+                        {option.scope} · {option.name} · {option.amount_mxn == null ? 'importe pendiente' : `$${Number(option.amount_mxn).toLocaleString('es-MX')}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {formData.expense_date < '2026-11-01' && !formData.fixed_cost_id && !formData.is_unbudgeted_fixed && (
+                  <p className="text-xs text-amber-300">Registro legado: puede conservarse sin conciliación por obligación.</p>
+                )}
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.is_unbudgeted_fixed}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      is_unbudgeted_fixed: e.target.checked,
+                      fixed_cost_id: e.target.checked ? null : formData.fixed_cost_id,
+                    })}
+                    className="mt-1 w-4 h-4 rounded"
+                  />
+                  <span className="text-sm text-cc-text-muted">Es un gasto fijo no presupuestado</span>
+                </label>
+                {formData.is_unbudgeted_fixed && (
+                  <textarea
+                    value={formData.fixed_cost_unbudgeted_reason}
+                    onChange={(e) => setFormData({ ...formData, fixed_cost_unbudgeted_reason: e.target.value })}
+                    className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main"
+                    rows={2}
+                    placeholder="Motivo obligatorio"
+                    required
+                  />
+                )}
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-cc-text-muted mb-2">
