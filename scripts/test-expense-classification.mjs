@@ -12,6 +12,11 @@ import {
   summarizePendingClassification,
   sumExpensesOnce,
 } from '../lib/expenseClassification.js';
+import {
+  EXPENSE_TIME_ZONE,
+  getInitialExpenseDate,
+  getMexicoCityExpenseDate,
+} from '../lib/expenseDate.js';
 
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 const migration = read('../supabase/migrations/20261031200000_expense_concept_destination.sql');
@@ -23,6 +28,25 @@ const form = read('../components/finance/ExpenseFormModal.tsx');
 const manager = read('../components/finance/ExpensesManager.tsx');
 const exporter = read('../lib/exportExpenses.ts');
 const publicationNotes = read('../docs/finance-expense-classification.md');
+
+assert.equal(EXPENSE_TIME_ZONE, 'America/Mexico_City');
+assert.equal(
+  getMexicoCityExpenseDate('2026-11-01T05:59:59Z'),
+  '2026-10-31',
+  'UTC ya está en noviembre, pero Ciudad de México sigue en octubre',
+);
+assert.equal(
+  getMexicoCityExpenseDate('2026-11-01T06:00:00Z'),
+  '2026-11-01',
+  'la fecha cambia al llegar la medianoche de Ciudad de México',
+);
+assert.equal(
+  getInitialExpenseDate('2026-10-14', '2026-11-01T05:59:59Z'),
+  '2026-10-14',
+  'guardar y volver a editar conserva la fecha civil almacenada',
+);
+assert.equal(getInitialExpenseDate(null, '2026-11-01T05:59:59Z'), '2026-10-31');
+assert.throws(() => getInitialExpenseDate('31/10/2026'), /inválida/);
 
 assert.deepEqual(
   EXPENSE_CONCEPT_OPTIONS.map(option => option.id),
@@ -98,6 +122,8 @@ assert.doesNotMatch(enforcement, /\bUPDATE\s+public\.expenses\b/i);
 assert.doesNotMatch(enforcement, /\bINSERT\s+INTO\s+public\.expenses\b/i);
 
 assert.match(form, /EXPENSE_CONCEPT_OPTIONS/);
+assert.match(form, /getInitialExpenseDate\(expense\?\.expense_date\)/);
+assert.doesNotMatch(form, /new Date\(\)\.toISOString\(\)\.split\('T'\)\[0\]/);
 assert.match(form, /EXPENSE_DESTINATION_OPTIONS/);
 assert.match(form, /Se toma de la obligación seleccionada/);
 assert.match(form, /classification_status: classificationComplete \? 'CLASSIFIED' : null/);

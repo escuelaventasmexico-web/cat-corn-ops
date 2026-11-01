@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../supabase';
 import { X, Save, Upload, FileText, FileCode, Eye, RefreshCw, Loader2, AlertTriangle } from 'lucide-react';
 import { FinanceDocument, FINANCE_DOCS_BUCKET, getFinanceDocSignedUrl } from '../../lib/financeDocuments';
+import { getInitialExpenseDate } from '../../lib/expenseDate.js';
 import {
   EXPENSE_CONCEPT_OPTIONS,
   EXPENSE_DESTINATION_OPTIONS,
@@ -52,7 +53,7 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     fixed_cost_id: string | null; is_unbudgeted_fixed: boolean;
     fixed_cost_unbudgeted_reason: string;
   }>({
-    expense_date: expense?.expense_date || new Date().toISOString().split('T')[0],
+    expense_date: getInitialExpenseDate(expense?.expense_date),
     amount_mxn: expense?.amount_mxn || 0,
     type: expense?.type || 'VARIABLE' as const,
     concept_code: expense?.concept_code || '',
