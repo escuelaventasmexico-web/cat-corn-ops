@@ -21,6 +21,12 @@ export const EXPENSE_REPORT_DESTINATION_OPTIONS: readonly ExpenseClassificationO
 export const PENDING_CLASSIFICATION_LABEL: 'Pendiente de clasificar';
 export function getExpenseConceptLabel(code?: string | null): string;
 export function getExpenseDestinationLabel(scope?: string | null): string;
+export function getLegacyExpenseCategory(code?: string | null): ExpenseConceptCode | null;
+export function getExpenseSaveErrorMessage(error?: {
+  message?: unknown;
+  details?: unknown;
+  code?: unknown;
+} | null): string;
 export function isExpenseClassificationComplete(expense?: ClassifiableExpense | null): boolean;
 export function filterExpensesByClassification<T extends ClassifiableExpense>(
   expenses: readonly T[],

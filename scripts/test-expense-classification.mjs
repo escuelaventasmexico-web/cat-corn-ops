@@ -7,6 +7,8 @@ import {
   filterExpensesByClassification,
   getExpenseConceptLabel,
   getExpenseDestinationLabel,
+  getExpenseSaveErrorMessage,
+  getLegacyExpenseCategory,
   isExpenseClassificationComplete,
   resolveCommissionDestination,
   summarizePendingClassification,
@@ -71,6 +73,17 @@ assert.equal(getExpenseConceptLabel('PAYROLL'), 'Nómina');
 assert.equal(getExpenseConceptLabel('RENT'), 'Renta');
 assert.equal(getExpenseDestinationLabel('UNKNOWN'), 'Destino por determinar');
 assert.equal(getExpenseDestinationLabel('MIXED'), 'Mixto');
+assert.equal(getLegacyExpenseCategory('PAYROLL'), 'PAYROLL');
+assert.equal(getLegacyExpenseCategory('RENT'), 'RENT');
+assert.equal(getLegacyExpenseCategory(''), null);
+assert.match(
+  getExpenseSaveErrorMessage(new TypeError('Failed to fetch')),
+  /No se pudo conectar con Supabase[\s\S]*no se guardó/i,
+);
+assert.match(
+  getExpenseSaveErrorMessage({ code: '23502', message: 'null value in column "category" violates not-null constraint' }),
+  /falta un dato obligatorio[\s\S]*no se guardó/i,
+);
 
 const fixtures = [
   { id: 'legacy', amount_mxn: 100, concept_code: null, destination_scope: null, classification_status: null },
@@ -117,6 +130,7 @@ assert.equal(effectiveOn(obligationFixtures, '2026-11-01').length, 10);
 const octoberAngelicaPayroll = {
   amount_mxn: 1250,
   concept_code: 'PAYROLL',
+  category: getLegacyExpenseCategory('PAYROLL'),
   destination_scope: 'SHARED',
   classification_status: 'CLASSIFIED',
   fixed_cost_id: null,
@@ -125,6 +139,8 @@ const octoberAngelicaPayroll = {
 assert.equal(isExpenseClassificationComplete(octoberAngelicaPayroll), true);
 assert.equal(octoberAngelicaPayroll.fixed_cost_id, null,
   'October payroll must not link to a November obligation');
+assert.equal(octoberAngelicaPayroll.category, 'PAYROLL',
+  'new capture mirrors the stable concept into the required legacy category column');
 assert.equal(octoberAngelicaPayroll.amount_mxn, 1250, 'classification preserves the real amount');
 assert.equal(octoberAngelicaPayroll.expense_date, '2026-10-31', 'classification preserves the real date');
 
@@ -172,6 +188,9 @@ assert.match(form, /EXPENSE_DESTINATION_OPTIONS/);
 assert.match(form, /Se toma de la obligación seleccionada/);
 assert.match(form, /Hasta el 31\/10\/2026 sólo aparecen las obligaciones históricas vigentes/);
 assert.match(form, /classification_status: classificationComplete \? 'CLASSIFIED' : null/);
+assert.match(form, /!expense \? \{ category: legacyCategory \} : \{\}/);
+assert.match(form, /role="alert"/);
+assert.match(form, /getExpenseSaveErrorMessage/);
 assert.doesNotMatch(form, /value=\{formData\.category\}/);
 assert.match(manager, /Pendientes de clasificar/);
 assert.match(manager, /getExpenseConceptLabel/);

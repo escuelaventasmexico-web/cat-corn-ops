@@ -7,6 +7,8 @@ import {
   EXPENSE_CONCEPT_OPTIONS,
   EXPENSE_DESTINATION_OPTIONS,
   getExpenseDestinationLabel,
+  getExpenseSaveErrorMessage,
+  getLegacyExpenseCategory,
   type ExpenseConceptCode,
   type ManualExpenseDestinationScope,
 } from '../../lib/expenseClassification.js';
@@ -71,6 +73,7 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     fixed_cost_unbudgeted_reason: expense?.fixed_cost_unbudgeted_reason || ''
   });
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [fixedCostOptions, setFixedCostOptions] = useState<FixedCostOption[]>([]);
   const [fixedCostsLoading, setFixedCostsLoading] = useState(false);
   const selectedFixedCost = fixedCostOptions.find(option => option.id === formData.fixed_cost_id);
@@ -329,6 +332,7 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSaveError(null);
     setSaving(true);
 
     try {
@@ -353,6 +357,7 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
         throw new Error('La obligación seleccionada no tiene un destino utilizable. Revisa su configuración.');
       }
 
+      const legacyCategory = getLegacyExpenseCategory(formData.concept_code);
       const payload = {
         expense_date: formData.expense_date,
         amount_mxn: formData.amount_mxn,
@@ -370,6 +375,9 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
         concept_code: classificationComplete ? formData.concept_code : null,
         destination_scope: classificationComplete ? effectiveDestination : null,
         classification_status: classificationComplete ? 'CLASSIFIED' : null,
+        // The live table still has legacy category NOT NULL. Keep concept_code
+        // canonical and mirror its stable identifier only on new rows.
+        ...(!expense ? { category: legacyCategory } : {}),
       };
 
       let expenseId: string | undefined;
@@ -411,7 +419,8 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
 
       onClose();
     } catch (err: any) {
-      alert(err.message || 'Error al guardar gasto');
+      console.error('Error saving expense:', err);
+      setSaveError(getExpenseSaveErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -637,6 +646,13 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
               />
             </div>
           </div>
+
+          {saveError && (
+            <div role="alert" className="mt-5 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+              <span>{saveError}</span>
+            </div>
+          )}
 
           {/* ── Document attachment section ── */}
           <div className="mt-6 pt-5 border-t border-white/10">
