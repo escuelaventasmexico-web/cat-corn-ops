@@ -68,26 +68,48 @@ sin `fixed_cost_id` y se clasifica explícitamente por concepto y destino.
    cambio de tipo, gasto no presupuestado y liquidación automática.
 6. Revisar humanamente cualquier pendiente creado durante la ventana de
    publicación. No inferirlo por proveedor, notas, importe o categoría heredada.
-7. Sólo entonces mover el SQL de `supabase/pending` al historial oficial,
-   aplicar la fase 2 y ejecutar su verificador. Desde ese momento todo `INSERT`
-   manual incompleto falla; los históricos permanecen intactos, pero deben
-   clasificarse antes de cambiar tipo, fecha u obligación fija.
+7. Sólo entonces aplicar manualmente la fase 2 revisada y ejecutar su
+   verificador. En este proyecto se archiva fuera de `supabase/migrations`
+   porque la ejecución manual no quedó registrada automáticamente en ese
+   historial. Desde ese momento todo `INSERT` manual incompleto falla; los
+   históricos permanecen intactos, pero deben clasificarse antes de cambiar
+   tipo, fecha u obligación fija.
 
 Publicar la interfaz antes de la fase 1 no es compatible porque intentaría
 escribir columnas que aún no existen.
 
-La fase 2 se conserva deliberadamente fuera de `supabase/migrations`: un proceso
-automático no debe aplicarla junto con la fase 1 antes de validar los
-capturadores. Los reportes muestran `SHARED`, `MIXED` y `UNKNOWN` como grupos
-separados; nunca reparten sus importes entre Aurrera y Chipitlán.
+La fase 2 se aplicó manualmente en Supabase el 01/11/2026, después de validar
+los capturadores, y su verificador fue ejecutado satisfactoriamente. El SQL
+exacto aplicado se conserva en
+`supabase/applied-manually/20261031210000_enforce_manual_expense_classification.sql`
+con SHA-256
+`4435e50d61a699eae53b4442f2b04d2872d788edf01115742a671ef36feadf81`.
+El verificador exacto está en
+`supabase/verification/20261031210000_verify_manual_expense_classification_enforcement.sql`
+con SHA-256
+`ca97c793c0fc871f4f71cc5b77b84cc92c917b2184f4c89463ceb0e7e4487caf`.
+
+La migración permanece deliberadamente fuera de `supabase/migrations` porque
+su ejecución manual no crea por sí sola una entrada en el historial de
+migraciones administrado por Supabase. No debe copiarse ni moverse a esa
+carpeta: una ejecución futura de migraciones podría intentar aplicarla otra
+vez. Si posteriormente se decide incorporarla al historial oficial, primero
+debe conciliarse explícitamente la versión remota como ya aplicada mediante un
+procedimiento revisado de reparación del historial; este repositorio no hace
+esa modificación automáticamente.
+
+El despliegue actual de la aplicación tampoco contiene un workflow que ejecute
+comandos de Supabase: el build de `package.json` sólo ejecuta TypeScript y Vite.
+Los reportes muestran `SHARED`, `MIXED` y `UNKNOWN` como grupos separados;
+nunca reparten sus importes entre Aurrera y Chipitlán.
 
 La ampliación posterior `PAYROLL`/`RENT` fue aplicada manualmente en Supabase y
 quedó registrada, sin reconstruirla, en
 `supabase/migrations/20261031203000_add_payroll_rent_expense_concepts.sql`
 (SHA-256 `6be928874ae22a7102b1ea46e077d4e75da227f4e925161e64992bc277163895`).
 Su verificador confirmó la estructura antes de publicar la interfaz. No debe
-ejecutarse otra vez. Esto no activa ni reemplaza la fase 2 de obligatoriedad,
-que sigue deliberadamente bajo `supabase/pending/`.
+ejecutarse otra vez. Esta ampliación precedió a la fase 2 de obligatoriedad que
+ahora ya está aplicada manualmente y archivada fuera del directorio automático.
 
 ## Retiros y pagos personales
 

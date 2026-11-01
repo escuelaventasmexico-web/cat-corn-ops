@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import {
   EXPENSE_CONCEPT_OPTIONS,
   EXPENSE_DESTINATION_OPTIONS,
@@ -24,14 +25,32 @@ const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 const migration = read('../supabase/migrations/20261031200000_expense_concept_destination.sql');
 const diagnostic = read('../supabase/diagnostics/20261031_diagnose_expense_concept_destination.sql');
 const verification = read('../supabase/verification/20261031200000_verify_expense_concept_destination.sql');
-const enforcement = read('../supabase/pending/20261031210000_enforce_manual_expense_classification.sql');
+const enforcement = read('../supabase/applied-manually/20261031210000_enforce_manual_expense_classification.sql');
 const enforcementVerification = read('../supabase/verification/20261031210000_verify_manual_expense_classification_enforcement.sql');
 const conceptExpansion = read('../supabase/migrations/20261031203000_add_payroll_rent_expense_concepts.sql');
 const conceptExpansionVerification = read('../supabase/verification/20261031203000_verify_payroll_rent_expense_concepts.sql');
+const commissionExpenseMigration = read('../migration_commission_settlement_expenses.sql');
 const form = read('../components/finance/ExpenseFormModal.tsx');
 const manager = read('../components/finance/ExpensesManager.tsx');
 const exporter = read('../lib/exportExpenses.ts');
 const publicationNotes = read('../docs/finance-expense-classification.md');
+
+const sha256 = value => createHash('sha256').update(value).digest('hex');
+assert.equal(
+  sha256(enforcement),
+  '4435e50d61a699eae53b4442f2b04d2872d788edf01115742a671ef36feadf81',
+  'the repository must preserve the exact phase 2 SQL applied manually',
+);
+assert.equal(
+  sha256(enforcementVerification),
+  'ca97c793c0fc871f4f71cc5b77b84cc92c917b2184f4c89463ceb0e7e4487caf',
+  'the repository must preserve the exact phase 2 verification SQL',
+);
+assert.equal(
+  existsSync(new URL('../supabase/migrations/20261031210000_enforce_manual_expense_classification.sql', import.meta.url)),
+  false,
+  'the manually applied phase 2 must stay outside the automatic migration directory',
+);
 
 assert.equal(EXPENSE_TIME_ZONE, 'America/Mexico_City');
 assert.equal(
@@ -110,6 +129,36 @@ assert.equal(resolveCommissionDestination(['AURRERA', 'CHIPITLAN']), 'MIXED');
 assert.equal(resolveCommissionDestination(['AURRERA', null]), 'UNKNOWN');
 assert.equal(resolveCommissionDestination([]), 'UNKNOWN');
 
+const isInvalidNewAutomaticCommission = expense => (
+  expense.commission_settlement_id != null
+  && expense.classification_status != null
+  && !(
+    expense.classification_status === 'SYSTEM'
+    && expense.concept_code === 'COMMISSIONS'
+    && ['AURRERA', 'CHIPITLAN', 'MIXED', 'UNKNOWN'].includes(expense.destination_scope)
+  )
+);
+const historicalAutomaticCommission = {
+  amount_mxn: 75,
+  commission_settlement_id: 'historical-settlement',
+  concept_code: null,
+  destination_scope: null,
+  classification_status: null,
+};
+const malformedNewAutomaticCommission = {
+  amount_mxn: 75,
+  commission_settlement_id: 'new-settlement',
+  concept_code: 'OTHER',
+  destination_scope: 'SHARED',
+  classification_status: 'CLASSIFIED',
+};
+assert.equal(isInvalidNewAutomaticCommission(historicalAutomaticCommission), false,
+  'historical automatic commission remains pending and does not fail structural checks');
+assert.equal(isExpenseClassificationComplete(historicalAutomaticCommission), false,
+  'historical automatic commission is still reported as pending');
+assert.equal(isInvalidNewAutomaticCommission(malformedNewAutomaticCommission), true,
+  'a newly classified automatic commission with the wrong system tuple is invalid');
+
 const historicalObligations = Array.from({ length: 4 }, (_, index) => ({
   id: `legacy-${index + 1}`,
   effective_from: '1900-01-01',
@@ -169,8 +218,46 @@ assert.match(enforcement, /COMMIT;\s*$/);
 assert.match(enforcement, /TG_OP = 'INSERT'/);
 assert.match(enforcement, /New manual expenses require concept and destination/);
 assert.match(enforcement, /NEW\.type IS DISTINCT FROM OLD\.type/);
-assert.doesNotMatch(enforcement, /\bUPDATE\s+public\.expenses\b/i);
-assert.doesNotMatch(enforcement, /\bINSERT\s+INTO\s+public\.expenses\b/i);
+assert.match(enforcement, /create_expense_for_paid_commission_settlement/);
+assert.match(enforcement, /commission_settlement_paid_expense_trigger/);
+assert.match(enforcement, /expenses_commission_settlement_id_key/);
+assert.match(enforcement, /protect_commission_settlement_expense_trigger/);
+assert.match(enforcement, /PAYROLL/);
+assert.match(enforcement, /RENT/);
+assert.match(enforcement, /REVOKE INSERT, UPDATE ON TABLE public\.expenses FROM authenticated/);
+assert.match(enforcement, /REVOKE INSERT \(commission_settlement_id\), UPDATE \(commission_settlement_id\)/);
+assert.match(enforcement, /GRANT INSERT \([\s\S]*concept_code[\s\S]*classification_status[\s\S]*TO authenticated/);
+assert.match(enforcement, /HAS_COLUMN_PRIVILEGE\([\s\S]*commission_settlement_id[\s\S]*'INSERT'/);
+assert.match(enforcement, /v_commission_writer_security_definer/);
+assert.match(enforcement, /rolbypassrls/);
+const authenticatedColumnGrants = [...enforcement.matchAll(
+  /GRANT (?:INSERT|UPDATE) \(([\s\S]*?)\) ON TABLE public\.expenses TO authenticated;/g,
+)];
+assert.equal(authenticatedColumnGrants.length, 2);
+for (const [, grantedColumns] of authenticatedColumnGrants) {
+  assert.doesNotMatch(grantedColumns, /commission_settlement_id/,
+    'the authenticated client must never receive the automatic settlement link');
+  assert.match(grantedColumns, /concept_code/);
+  assert.match(grantedColumns, /destination_scope/);
+  assert.match(grantedColumns, /classification_status/);
+}
+for (const automaticWriterColumn of [
+  'expense_date', 'amount_mxn', 'type', 'category', 'vendor', 'has_invoice',
+  'payment_method', 'notes', 'fixed_cost_id', 'created_by', 'commission_settlement_id',
+]) {
+  assert.match(enforcement, new RegExp(
+    `HAS_COLUMN_PRIVILEGE\\(v_commission_writer_owner, 'public\\.expenses', '${automaticWriterColumn}', 'INSERT'\\)`,
+  ));
+}
+assert.doesNotMatch(enforcement, /^\s*UPDATE\s+public\.expenses\b/im);
+assert.doesNotMatch(enforcement, /^\s*INSERT\s+INTO\s+public\.expenses\b/im);
+
+assert.match(commissionExpenseMigration, /CREATE OR REPLACE FUNCTION public\.create_expense_for_paid_commission_settlement/);
+assert.match(commissionExpenseMigration, /INSERT INTO public\.expenses[\s\S]*category[\s\S]*commission_settlement_id/);
+assert.match(commissionExpenseMigration, /'Comisiones'/);
+assert.match(commissionExpenseMigration, /ON CONFLICT ON CONSTRAINT expenses_commission_settlement_id_key/);
+assert.match(commissionExpenseMigration, /CREATE TRIGGER commission_settlement_paid_expense_trigger/);
+assert.match(commissionExpenseMigration, /CREATE TRIGGER protect_commission_settlement_expense_trigger/);
 
 assert.match(conceptExpansion, /^BEGIN;/m);
 assert.match(conceptExpansion, /COMMIT;\s*$/);
@@ -219,7 +306,19 @@ assert.match(verification, /compatibility_mode_allows_pending/);
 assert.doesNotMatch(withoutComments(enforcementVerification), forbiddenWrites);
 assert.doesNotMatch(enforcementVerification, /all_checks_passed/);
 assert.match(enforcementVerification, /manual_enforcement_enabled/);
+assert.match(enforcementVerification, /legacy_pending_compatibility_valid/);
+assert.match(enforcementVerification, /fixed_expense_obligation_contract_valid/);
 assert.match(enforcementVerification, /pending_classification_amount_mxn/);
+assert.match(enforcementVerification, /automatic_commission_writer_valid/);
+assert.match(enforcementVerification, /automatic_commission_generation_trigger_valid/);
+assert.match(enforcementVerification, /automatic_commission_idempotency_valid/);
+assert.match(enforcementVerification, /automatic_commission_protection_valid/);
+assert.match(enforcementVerification, /invalid_classified_manual_count/);
+assert.match(enforcementVerification, /invalid_new_automatic_commission_count/);
+assert.match(enforcementVerification, /legacy_automatic_commission_pending_count/);
+assert.match(enforcementVerification, /commission_settlement_id_write_protected/);
+assert.match(enforcementVerification, /authenticated_manual_columns_valid/);
+assert.match(enforcementVerification, /structural_checks_passed/);
 assert.doesNotMatch(withoutComments(conceptExpansionVerification), forbiddenWrites);
 assert.match(conceptExpansionVerification, /october_effective_obligation_count/);
 assert.match(conceptExpansionVerification, /november_effective_obligation_count/);
