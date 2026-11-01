@@ -503,7 +503,10 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
                   </select>
                 </div>
                 {formData.expense_date < '2026-11-01' && !formData.fixed_cost_id && !formData.is_unbudgeted_fixed && (
-                  <p className="text-xs text-amber-300">Registro legado: puede conservarse sin conciliación por obligación.</p>
+                  <p className="text-xs text-amber-300">
+                    Hasta el 31/10/2026 sólo aparecen las obligaciones históricas vigentes. Si ninguna corresponde,
+                    deja el gasto sin vincular y clasifica su concepto y destino.
+                  </p>
                 )}
                 <label className="flex items-start gap-2 cursor-pointer">
                   <input

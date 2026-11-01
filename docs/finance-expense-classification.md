@@ -4,7 +4,8 @@
 
 Los gastos manuales nuevos se capturan con un identificador estable de concepto
 (`CORN`, `OIL`, `SEASONINGS`, `CARAMEL`, `PACKAGING`, `FUEL`, `SERVICES`,
-`COMMISSIONS` u `OTHER`) y un destino (`AURRERA`, `CHIPITLAN` o `SHARED`).
+`PAYROLL`, `RENT`, `COMMISSIONS` u `OTHER`) y un destino (`AURRERA`,
+`CHIPITLAN` o `SHARED`).
 `SHARED` describe una
 sola compra central: la fila y su importe se registran una vez, sin reparto ni
 duplicación por sucursal.
@@ -41,6 +42,16 @@ una inferencia por vendedor, nota o importe.
 de `concept_code = 'OTHER'`. Las comisiones pueden seguir siendo tipo `OTHER`,
 pero su concepto es `COMMISSIONS`.
 
+`PAYROLL` evita clasificar la nómina como servicio u otro. `RENT` cubre renta,
+que tampoco tiene equivalencia semántica en los conceptos de insumos o
+servicios. Mantenimiento, internet, luz y contador permanecen correctamente
+bajo `SERVICES`; esta clasificación no vincula por sí misma una obligación.
+
+Las diez obligaciones presupuestales nuevas son aplicables desde el
+01/11/2026. Un gasto con fecha hasta el 31/10/2026 sólo puede elegir una de las
+cuatro obligaciones históricas vigentes; si ninguna corresponde, se conserva
+sin `fixed_cost_id` y se clasifica explícitamente por concepto y destino.
+
 ## Orden de publicación compatible
 
 1. Ejecutar el diagnóstico de solo lectura y revisar el esquema, las políticas,
@@ -69,6 +80,14 @@ La fase 2 se conserva deliberadamente fuera de `supabase/migrations`: un proceso
 automático no debe aplicarla junto con la fase 1 antes de validar los
 capturadores. Los reportes muestran `SHARED`, `MIXED` y `UNKNOWN` como grupos
 separados; nunca reparten sus importes entre Aurrera y Chipitlán.
+
+La ampliación posterior `PAYROLL`/`RENT` fue aplicada manualmente en Supabase y
+quedó registrada, sin reconstruirla, en
+`supabase/migrations/20261031203000_add_payroll_rent_expense_concepts.sql`
+(SHA-256 `6be928874ae22a7102b1ea46e077d4e75da227f4e925161e64992bc277163895`).
+Su verificador confirmó la estructura antes de publicar la interfaz. No debe
+ejecutarse otra vez. Esto no activa ni reemplaza la fase 2 de obligatoriedad,
+que sigue deliberadamente bajo `supabase/pending/`.
 
 ## Retiros y pagos personales
 

@@ -24,6 +24,8 @@ const diagnostic = read('../supabase/diagnostics/20261031_diagnose_expense_conce
 const verification = read('../supabase/verification/20261031200000_verify_expense_concept_destination.sql');
 const enforcement = read('../supabase/pending/20261031210000_enforce_manual_expense_classification.sql');
 const enforcementVerification = read('../supabase/verification/20261031210000_verify_manual_expense_classification_enforcement.sql');
+const conceptExpansion = read('../supabase/migrations/20261031203000_add_payroll_rent_expense_concepts.sql');
+const conceptExpansionVerification = read('../supabase/verification/20261031203000_verify_payroll_rent_expense_concepts.sql');
 const form = read('../components/finance/ExpenseFormModal.tsx');
 const manager = read('../components/finance/ExpensesManager.tsx');
 const exporter = read('../lib/exportExpenses.ts');
@@ -50,7 +52,7 @@ assert.throws(() => getInitialExpenseDate('31/10/2026'), /inválida/);
 
 assert.deepEqual(
   EXPENSE_CONCEPT_OPTIONS.map(option => option.id),
-  ['CORN', 'OIL', 'SEASONINGS', 'CARAMEL', 'PACKAGING', 'FUEL', 'SERVICES', 'COMMISSIONS', 'OTHER'],
+  ['CORN', 'OIL', 'SEASONINGS', 'CARAMEL', 'PACKAGING', 'FUEL', 'SERVICES', 'PAYROLL', 'RENT', 'COMMISSIONS', 'OTHER'],
 );
 assert.deepEqual(
   EXPENSE_REPORT_DESTINATION_OPTIONS.map(option => option.id),
@@ -65,6 +67,8 @@ assert.equal(getExpenseDestinationLabel(null), 'Pendiente de clasificar');
 assert.equal(getExpenseConceptLabel('CORN'), 'Maíz');
 assert.equal(getExpenseDestinationLabel('CHIPITLAN'), 'Chipitlán');
 assert.equal(getExpenseConceptLabel('COMMISSIONS'), 'Comisiones');
+assert.equal(getExpenseConceptLabel('PAYROLL'), 'Nómina');
+assert.equal(getExpenseConceptLabel('RENT'), 'Renta');
 assert.equal(getExpenseDestinationLabel('UNKNOWN'), 'Destino por determinar');
 assert.equal(getExpenseDestinationLabel('MIXED'), 'Mixto');
 
@@ -92,6 +96,37 @@ assert.equal(resolveCommissionDestination(['CHIPITLAN']), 'CHIPITLAN');
 assert.equal(resolveCommissionDestination(['AURRERA', 'CHIPITLAN']), 'MIXED');
 assert.equal(resolveCommissionDestination(['AURRERA', null]), 'UNKNOWN');
 assert.equal(resolveCommissionDestination([]), 'UNKNOWN');
+
+const historicalObligations = Array.from({ length: 4 }, (_, index) => ({
+  id: `legacy-${index + 1}`,
+  effective_from: '1900-01-01',
+  effective_to: '2026-10-31',
+}));
+const novemberObligations = Array.from({ length: 10 }, (_, index) => ({
+  id: `november-${index + 1}`,
+  effective_from: '2026-11-01',
+  effective_to: null,
+}));
+const effectiveOn = (rows, date) => rows.filter(row => (
+  row.effective_from <= date && (!row.effective_to || row.effective_to >= date)
+));
+const obligationFixtures = [...historicalObligations, ...novemberObligations];
+assert.equal(effectiveOn(obligationFixtures, '2026-10-31').length, 4);
+assert.equal(effectiveOn(obligationFixtures, '2026-11-01').length, 10);
+
+const octoberAngelicaPayroll = {
+  amount_mxn: 1250,
+  concept_code: 'PAYROLL',
+  destination_scope: 'SHARED',
+  classification_status: 'CLASSIFIED',
+  fixed_cost_id: null,
+  expense_date: '2026-10-31',
+};
+assert.equal(isExpenseClassificationComplete(octoberAngelicaPayroll), true);
+assert.equal(octoberAngelicaPayroll.fixed_cost_id, null,
+  'October payroll must not link to a November obligation');
+assert.equal(octoberAngelicaPayroll.amount_mxn, 1250, 'classification preserves the real amount');
+assert.equal(octoberAngelicaPayroll.expense_date, '2026-10-31', 'classification preserves the real date');
 
 assert.match(migration, /^BEGIN;/m);
 assert.match(migration, /COMMIT;\s*$/);
@@ -121,11 +156,21 @@ assert.match(enforcement, /NEW\.type IS DISTINCT FROM OLD\.type/);
 assert.doesNotMatch(enforcement, /\bUPDATE\s+public\.expenses\b/i);
 assert.doesNotMatch(enforcement, /\bINSERT\s+INTO\s+public\.expenses\b/i);
 
+assert.match(conceptExpansion, /^BEGIN;/m);
+assert.match(conceptExpansion, /COMMIT;\s*$/);
+assert.match(conceptExpansion, /'PAYROLL', 'RENT', 'COMMISSIONS'/);
+assert.match(conceptExpansion, /DATE '2026-10-31'[\s\S]*\) <> 4/);
+assert.match(conceptExpansion, /DATE '2026-11-01'[\s\S]*\) <> 10/);
+assert.match(conceptExpansion, /Phase 2 manual enforcement is already enabled/);
+assert.doesNotMatch(conceptExpansion, /\bUPDATE\s+public\.expenses\b/i);
+assert.doesNotMatch(conceptExpansion, /\bINSERT\s+INTO\s+public\.expenses\b/i);
+
 assert.match(form, /EXPENSE_CONCEPT_OPTIONS/);
 assert.match(form, /getInitialExpenseDate\(expense\?\.expense_date\)/);
 assert.doesNotMatch(form, /new Date\(\)\.toISOString\(\)\.split\('T'\)\[0\]/);
 assert.match(form, /EXPENSE_DESTINATION_OPTIONS/);
 assert.match(form, /Se toma de la obligación seleccionada/);
+assert.match(form, /Hasta el 31\/10\/2026 sólo aparecen las obligaciones históricas vigentes/);
 assert.match(form, /classification_status: classificationComplete \? 'CLASSIFIED' : null/);
 assert.doesNotMatch(form, /value=\{formData\.category\}/);
 assert.match(manager, /Pendientes de clasificar/);
@@ -156,6 +201,11 @@ assert.doesNotMatch(withoutComments(enforcementVerification), forbiddenWrites);
 assert.doesNotMatch(enforcementVerification, /all_checks_passed/);
 assert.match(enforcementVerification, /manual_enforcement_enabled/);
 assert.match(enforcementVerification, /pending_classification_amount_mxn/);
+assert.doesNotMatch(withoutComments(conceptExpansionVerification), forbiddenWrites);
+assert.match(conceptExpansionVerification, /october_effective_obligation_count/);
+assert.match(conceptExpansionVerification, /november_effective_obligation_count/);
+assert.match(conceptExpansionVerification, /manual_enforcement_enabled/);
+assert.match(conceptExpansionVerification, /pending_classification_amount_mxn/);
 
 assert.match(publicationNotes, /Aplicar la migración transaccional/);
 assert.match(publicationNotes, /Publicar la interfaz antes de la fase 1 no es compatible/);
