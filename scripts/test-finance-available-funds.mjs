@@ -123,6 +123,13 @@ assert.match(expenseForm, /Mercado Pago · disponible\/pago inmediato/);
 assert.match(expenseForm, /liquidity_treatment: liquidityTreatment/);
 assert.match(expenseForm, /credit_card_id: liquidityTreatment === 'CREDIT'/);
 assert.match(panel, /Registrar pago de tarjeta/);
+for (const label of ['Saldo inicial', 'Cobros POS', 'Cobranza B2B', 'Gastos pagados', 'Pagos de tarjeta', 'Saldo disponible']) {
+  assert.match(panel, new RegExp(label), `el desglose visible incluye ${label}`);
+}
+assert.match(panel, /Cómo se obtiene el saldo disponible/);
+assert.match(panel, /Saldo inicial \+ cobros POS \+ cobranza B2B − gastos pagados − pagos de tarjeta/);
+assert.match(panel, /El saldo inicial sólo pertenece a este flujo/);
+assert.match(panel, /No se presenta como saldo exacto/, 'se conservan advertencias cuando falta información');
 assert.match(panel, /idempotencyKey: paymentToken/);
 assert.match(panel, /no crea otro gasto en P&L/);
 assert.match(panel, /Ocurrió después/);

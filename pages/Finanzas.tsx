@@ -409,7 +409,7 @@ const FinanceResumenTest = () => {
               </div>
             </div>
 
-            {/* Utilidad Neta */}
+            {/* Resultado según los registros del periodo. */}
             <div className={`bg-gradient-to-br p-6 rounded-xl ${
               ((data.sales_mtd_mxn || 0) - (data.expenses_total_mxn || 0)) >= 0 
                 ? 'from-purple-500/10 to-purple-600/5 border border-purple-500/30' 
@@ -418,13 +418,11 @@ const FinanceResumenTest = () => {
               <div className="flex items-center gap-2 mb-2">
                 <FileText className={`${((data.sales_mtd_mxn || 0) - (data.expenses_total_mxn || 0)) >= 0 ? 'text-purple-400' : 'text-red-400'}`} size={24} />
                 <h4 className={`text-sm font-semibold ${((data.sales_mtd_mxn || 0) - (data.expenses_total_mxn || 0)) >= 0 ? 'text-purple-400' : 'text-red-400'}`}>
-                  Utilidad Neta
+                  Resultado según registros
                 </h4>
               </div>
               <p className="text-3xl font-bold text-cc-cream">{formatMXN((data.sales_mtd_mxn || 0) - (data.expenses_total_mxn || 0))}</p>
-              <p className="text-xs text-cc-text-muted mt-1">
-                {((data.sales_mtd_mxn || 0) - (data.expenses_total_mxn || 0)) >= 0 ? 'Ganancia' : 'Pérdida'}
-              </p>
+              <p className="text-xs text-cc-text-muted mt-1">Ventas generadas − gastos registrados</p>
             </div>
 
             {/* Presupuesto fijo: reserva, vencimientos y pagos son conceptos distintos. */}
@@ -455,6 +453,11 @@ const FinanceResumenTest = () => {
                   Alcanzado: <span className="text-cc-primary font-semibold">{progressPercent.toFixed(1)}%</span>
                 </p>
               )}
+            </div>
+
+            <div className="md:col-span-2 rounded-xl border border-purple-500/20 bg-purple-500/5 p-4 text-sm text-cc-text-muted">
+              <p><span className="font-semibold text-purple-200">Qué significa el resultado:</span> compara las ventas y los gastos registrados en el periodo. El saldo inicial se considera sólo en Dinero disponible y no se vuelve a sumar como venta del mes.</p>
+              <p className="mt-2">Puede incluir pagos correspondientes a otros meses y compras de inventario que todavía no se vende. Por ejemplo, el contador pagado en noviembre puede corresponder a octubre.</p>
             </div>
           </div>
 

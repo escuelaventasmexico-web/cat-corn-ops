@@ -210,7 +210,7 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2"><Wallet className="text-cyan-300" size={24} /><h3 className="text-lg font-bold text-cc-cream">Dinero disponible</h3></div>
-          <p className="text-xs text-cc-text-muted mt-1">Flujo desde un saldo y corte explícitos; no modifica ventas ni utilidad.</p>
+          <p className="text-xs text-cc-text-muted mt-1">Dinero real disponible desde un saldo y corte explícitos; no es la venta ni el resultado del mes.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => { setError(''); setOpeningOpen(true); }} className="px-3 py-2 rounded-lg bg-cyan-500/20 text-cyan-200 text-sm hover:bg-cyan-500/30">
@@ -239,13 +239,31 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
                 <Metric label="− Gastos pagados" value={snapshot.outflows.immediate_expenses_mxn} negative />
                 <Metric label="− Pagos de tarjeta" value={snapshot.outflows.credit_card_payments_mxn} negative />
               </div>
+              <div className="rounded-lg border border-cyan-400/20 bg-black/20 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-200">Cómo se obtiene el saldo disponible</p>
+                <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-cc-cream">
+                  <span>{money(snapshot.opening_balance.amount_mxn)}</span>
+                  <span className="text-green-300">+</span>
+                  <span>{money(snapshot.inflows.pos_collections_mxn)}</span>
+                  <span className="text-green-300">+</span>
+                  <span>{money(snapshot.inflows.b2b_collections_mxn)}</span>
+                  <span className="text-red-300">−</span>
+                  <span>{money(snapshot.outflows.immediate_expenses_mxn)}</span>
+                  <span className="text-red-300">−</span>
+                  <span>{money(snapshot.outflows.credit_card_payments_mxn)}</span>
+                  <span className="text-cyan-300">=</span>
+                  <span className={Number(snapshot.known_available_mxn) < 0 ? 'text-red-300' : 'text-cyan-200'}>{money(snapshot.known_available_mxn)}</span>
+                </p>
+                <p className="mt-1 text-xs text-cc-text-muted">Saldo inicial + cobros POS + cobranza B2B − gastos pagados − pagos de tarjeta.</p>
+                <p className="mt-2 text-xs text-cc-text-muted">El saldo inicial sólo pertenece a este flujo: no se vuelve a sumar como venta del mes.</p>
+              </div>
               <div className="flex flex-wrap items-end justify-between gap-3 border-t border-cyan-500/20 pt-4">
                 <div>
                   <p className="text-xs text-cc-text-muted">Día del saldo inicial: {snapshot.opening_balance.cutoff_business_date}</p>
                   <p className="text-xs text-cc-text-muted">Compras nuevas a crédito (no restadas): {money(snapshot.informational.credit_purchases_mxn)}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs uppercase tracking-wide text-cc-text-muted">{snapshot.is_exact ? 'Disponible' : 'Saldo conocido, incompleto'}</p>
+                  <p className="text-xs uppercase tracking-wide text-cc-text-muted">{snapshot.is_exact ? 'Saldo disponible' : 'Saldo conocido, incompleto'}</p>
                   <p className={`text-3xl font-bold ${Number(snapshot.known_available_mxn) < 0 ? 'text-red-300' : 'text-cyan-200'}`}>{money(snapshot.known_available_mxn)}</p>
                 </div>
               </div>

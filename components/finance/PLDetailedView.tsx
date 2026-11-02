@@ -175,7 +175,7 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
                 <h4 className="text-sm font-semibold text-violet-400">Cobranza B2B</h4>
               </div>
               <p className="text-3xl font-bold text-cc-cream">{formatCurrencyMXN(data.commercial_collections)}</p>
-              <p className="text-xs text-cc-text-muted mt-1">Indicador separado; no incrementa ventas ni utilidad</p>
+              <p className="text-xs text-cc-text-muted mt-1">Indicador separado; no incrementa ventas ni el resultado</p>
             </div>
 
             {/* Utilidad Bruta */}
@@ -208,7 +208,7 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
               <p className="text-xs text-cc-text-muted mt-1">Gastos adicionales</p>
             </div>
 
-            {/* Utilidad Neta */}
+            {/* Resultado según los registros del periodo. */}
             <div className={`bg-gradient-to-br p-5 rounded-xl ${
               netProfit >= 0 
                 ? 'from-purple-500/10 to-purple-600/5 border border-purple-500/30' 
@@ -223,7 +223,7 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
                 <h4 className={`text-sm font-semibold ${
                   netProfit >= 0 ? 'text-purple-400' : 'text-red-400'
                 }`}>
-                  Utilidad Neta
+                  Resultado según registros
                 </h4>
               </div>
               <p className="text-3xl font-bold text-cc-cream">{formatCurrencyMXN(netProfit)}</p>
@@ -233,6 +233,11 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
                 Margen: {formatMargin(netMargin)}
               </p>
             </div>
+          </div>
+
+          <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 p-4 text-sm text-cc-text-muted">
+            <p><span className="font-semibold text-purple-200">Qué significa el resultado:</span> compara las ventas y los gastos registrados en el periodo. El saldo inicial se considera sólo en Dinero disponible y no se vuelve a sumar como venta del mes.</p>
+            <p className="mt-2">Puede incluir pagos correspondientes a otros meses —por ejemplo, el contador pagado en noviembre por octubre— y compras de inventario que todavía no se vende.</p>
           </div>
 
           {/* Estado de Resultados - Table Format */}
@@ -270,7 +275,7 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
                 <span className="text-red-400 font-semibold">{otherExpenses > 0 ? `(${formatCurrencyMXN(otherExpenses)})` : formatCurrencyMXN(0)}</span>
               </div>
 
-              {/* (=) Utilidad Neta */}
+              {/* (=) Resultado según registros */}
               <div className={`flex justify-between items-center py-3 px-2 rounded ${
                 netProfit >= 0 
                   ? 'bg-purple-500/10 border border-purple-500/30' 
@@ -279,7 +284,7 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
                 <span className={`font-bold text-lg ${
                   netProfit >= 0 ? 'text-purple-400' : 'text-red-400'
                 }`}>
-                  (=) Utilidad Neta
+                  (=) Resultado según registros
                 </span>
                 <span className={`font-bold text-2xl ${
                   netProfit >= 0 ? 'text-purple-400' : 'text-red-400'
@@ -308,11 +313,11 @@ export const PLDetailedView = ({ onClose }: PLDetailedViewProps) => {
               <h4 className={`text-sm font-semibold mb-2 ${
                 netProfit >= 0 ? 'text-purple-400' : 'text-red-400'
               }`}>
-                Margen Neto
+                Margen del resultado
               </h4>
               <p className="text-4xl font-bold text-cc-cream">{formatMargin(netMargin)}</p>
               <p className="text-xs text-cc-text-muted mt-1">
-                Utilidad neta / Ventas
+                Resultado según registros / Ventas
               </p>
             </div>
           </div>

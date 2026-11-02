@@ -70,8 +70,22 @@ const figures = getFinanceSurfaceFigures(october);
 assert.equal(figures.sales, october.sales_mtd_mxn, 'Resumen y exportación comparten ventas');
 assert.equal(figures.sales, october.pnl.sales_mxn, 'Resumen y P&L comparten ventas');
 assert.equal(figures.grossProfit, october.pnl.gross_profit_mxn, 'P&L y exportación comparten utilidad bruta');
-assert.equal(figures.netProfit, october.pnl.net_profit_mxn, 'Resumen, P&L y exportación comparten utilidad neta');
+assert.equal(figures.netProfit, october.pnl.net_profit_mxn, 'Resumen, P&L y exportación comparten el resultado según registros');
 assert.equal(figures.b2bCollected, 3_615);
+
+const novemberPhoto = buildFinancePresentation({
+  sales_mtd_mxn: 285,
+  expenses_fixed_mxn: 6_000,
+  expenses_variable_mxn: 390,
+  expenses_other_mxn: 100,
+  pnl: {},
+}, {
+  b2bGenerated: 0,
+  b2bCollected: 0,
+});
+assert.equal(novemberPhoto.sales_mtd_mxn, 285, 'el saldo inicial no se incorpora a las ventas del periodo');
+assert.equal(novemberPhoto.expenses_total_mxn, 6_490, 'los gastos de la fotografía se cuentan una sola vez');
+assert.equal(novemberPhoto.pnl.net_profit_mxn, -6_205, 'el resultado según registros es $285 - $6,490 = -$6,205');
 
 const migration = readFileSync(
   new URL('../supabase/migrations/20261030_finance_generated_sales_consistency.sql', import.meta.url),
@@ -85,4 +99,19 @@ assert.ok(
   'resumen, series, desglose, calendario actual y comparación anual excluyen devoluciones',
 );
 
-console.log('OK: devoluciones, métodos, B2B generado/cobrado y conciliación Resumen/P&L/exportación');
+const presentationFiles = [
+  '../pages/Finanzas.tsx',
+  '../components/finance/PLDetailedView.tsx',
+  '../components/finance/FinanceSummaryPanel.tsx',
+  '../lib/exportPnL.ts',
+].map(path => readFileSync(new URL(path, import.meta.url), 'utf8'));
+for (const source of presentationFiles) {
+  assert.match(source, /Resultado según registros/, 'las superficies financieras usan el mismo nombre');
+  assert.doesNotMatch(source, /Utilidad Neta|Utilidad neta|Margen Neto|Margen neto|Margen de Utilidad/,
+    'las superficies no conservan etiquetas contradictorias');
+}
+assert.match(presentationFiles[0], /El saldo inicial se considera sólo en Dinero disponible/);
+assert.match(presentationFiles[1], /contador pagado en noviembre por octubre/);
+assert.match(presentationFiles[3], /compras de inventario todavía no vendido/);
+
+console.log('OK: devoluciones, B2B, conciliación y resultado $285 - $6,490 = -$6,205');

@@ -107,11 +107,11 @@ export const FinanceSummaryPanel = ({ onClose }: FinanceSummaryPanelProps) => {
             </p>
           </div>
 
-          {/* Net Income */}
+          {/* Result according to registered sales and expenses. */}
           <div className={`bg-gradient-to-br ${summary.net_income >= 0 ? 'from-blue-500/10 to-blue-600/10 border-blue-500/30' : 'from-orange-500/10 to-orange-600/10 border-orange-500/30'} border p-6 rounded-xl`}>
             <div className="flex items-center gap-2 mb-2">
               <DollarSign size={20} className={summary.net_income >= 0 ? 'text-blue-400' : 'text-orange-400'} />
-              <h3 className="text-sm font-medium text-cc-text-muted">Utilidad Neta</h3>
+              <h3 className="text-sm font-medium text-cc-text-muted">Resultado según registros</h3>
             </div>
             <p className={`text-3xl font-bold ${summary.net_income >= 0 ? 'text-blue-400' : 'text-orange-400'}`}>
               ${summary.net_income.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
@@ -141,12 +141,17 @@ export const FinanceSummaryPanel = ({ onClose }: FinanceSummaryPanelProps) => {
             </p>
           </div>
 
-          {/* Profit Margin */}
+          {/* Result Margin */}
           <div className="bg-cc-surface border border-white/5 p-6 rounded-xl">
-            <h3 className="text-sm font-medium text-cc-text-muted mb-2">Margen de Utilidad</h3>
+            <h3 className="text-sm font-medium text-cc-text-muted mb-2">Margen del resultado</h3>
             <p className={`text-2xl font-bold ${summary.profit_margin >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {summary.profit_margin.toFixed(1)}%
             </p>
+          </div>
+
+          <div className="md:col-span-2 lg:col-span-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 text-sm text-cc-text-muted">
+            <p>Este resultado compara ventas y gastos registrados en el periodo. El saldo inicial pertenece a Dinero disponible y no se vuelve a sumar como venta.</p>
+            <p className="mt-2">Puede incluir pagos correspondientes a otros meses y compras de inventario todavía no vendido; por ejemplo, el contador pagado en noviembre puede corresponder a octubre.</p>
           </div>
 
           {/* Monthly Target */}

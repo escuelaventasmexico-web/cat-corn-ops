@@ -85,8 +85,10 @@ export const exportPnLToExcel = (data: FinanceSummary, monthStart: string) => {
     ['Pagos fijos que vencen (MXN)', formatMXN(data.fixed_due_mxn ?? 0), 'Sólo obligaciones con importe y calendario configurados'],
     ['Pagos fijos registrados (MXN)', formatMXN(data.fixed_registered_mxn ?? data.expenses_fixed_mxn), 'Todos los gastos FIXED registrados'],
     ['Estado de conciliación', data.fixed_reconciliation_status ?? '', 'No se infieren vínculos históricos'],
-    ['Utilidad Neta (MXN)', formatMXN(figures.netProfit), 'Resultado final después de gastos'],
-    ['Margen Neto (%)', formatPercent(netMargin), 'Utilidad Neta / Ventas']
+    ['Resultado según registros (MXN)', formatMXN(figures.netProfit), 'Ventas generadas menos gastos registrados del periodo'],
+    ['Margen del resultado (%)', formatPercent(netMargin), 'Resultado según registros / Ventas'],
+    ['Alcance del resultado', '', 'El saldo inicial sólo se considera en Dinero disponible; no se suma como venta'],
+    ['Limitación del periodo', '', 'Puede incluir pagos de otros meses y compras de inventario todavía no vendido']
   ];
 
   const wsResumen = XLSX.utils.aoa_to_sheet(resumenData);
@@ -116,10 +118,10 @@ export const exportPnLToExcel = (data: FinanceSummary, monthStart: string) => {
     ['(=) Resultado tras gastos variables', formatMXN(figures.grossProfit)],
     ['(-) Gastos Fijos Pagados', formatMXN(pnl.fixed_expenses_mxn)],
     ['(-) Otros Gastos', formatMXN(pnl.other_expenses_mxn)],
-    ['(=) Utilidad Neta', formatMXN(figures.netProfit)],
+    ['(=) Resultado según registros', formatMXN(figures.netProfit)],
     ['', ''], // Spacer
     ['Margen tras gastos variables (%)', formatPercent(grossMargin)],
-    ['Margen Neto (%)', formatPercent(netMargin)]
+    ['Margen del resultado (%)', formatPercent(netMargin)]
   ];
 
   const wsPnL = XLSX.utils.aoa_to_sheet(pnlData);
@@ -163,11 +165,14 @@ export const exportPnLToExcel = (data: FinanceSummary, monthStart: string) => {
     ['P&L: Resultado tras gastos variables', formatMXN(figures.grossProfit)],
     ['P&L: Gastos fijos pagados', formatMXN(pnl.fixed_expenses_mxn)],
     ['P&L: Otros gastos', formatMXN(pnl.other_expenses_mxn)],
-    ['P&L: Utilidad neta', formatMXN(figures.netProfit)],
+    ['P&L: Resultado según registros', formatMXN(figures.netProfit)],
     ['', ''],
     ['--- Márgenes Calculados ---', ''],
     ['Margen tras gastos variables (%)', formatPercent(grossMargin)],
-    ['Margen neto (%)', formatPercent(netMargin)]
+    ['Margen del resultado (%)', formatPercent(netMargin)],
+    ['', ''],
+    ['Nota sobre el saldo inicial', 'Sólo se considera en Dinero disponible; no se suma como venta'],
+    ['Limitación del resultado', 'Puede incluir pagos de otros meses y compras de inventario todavía no vendido']
   ];
 
   const wsDetalle = XLSX.utils.aoa_to_sheet(detalleData);
