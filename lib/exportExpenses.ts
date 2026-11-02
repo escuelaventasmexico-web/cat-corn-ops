@@ -154,7 +154,10 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
   const totalOtherPM  = expenses.filter(e => e.payment_method === 'OTHER').reduce((s, e) => s + Number(e.amount_mxn), 0);
   const totalConFact  = expenses.filter(e => e.has_invoice).reduce((s, e) => s + Number(e.amount_mxn), 0);
   const totalSinFact  = expenses.filter(e => !e.has_invoice).reduce((s, e) => s + Number(e.amount_mxn), 0);
-  const totalPersonal = expenses.filter(e => getExpenseConceptGroupLabel(e.concept_code) === 'Personal').reduce((s, e) => s + Number(e.amount_mxn), 0);
+  const payrollExpenses = expenses.filter(e => getExpenseConceptGroupLabel(e.concept_code) === 'Nómina');
+  const totalPayrollGroup = payrollExpenses.reduce((s, e) => s + Number(e.amount_mxn), 0);
+  const totalFixedPayroll = expenses.filter(e => e.concept_code === 'PAYROLL').reduce((s, e) => s + Number(e.amount_mxn), 0);
+  const totalCommissions = expenses.filter(e => e.concept_code === 'COMMISSIONS').reduce((s, e) => s + Number(e.amount_mxn), 0);
 
   const resumeData = [
     [`RESUMEN DE GASTOS — ${label}`, ''],
@@ -169,8 +172,10 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
     [`Gastos Variables`, `$${currencyMX(totalVariable)}`],
     [`Otros`, `$${currencyMX(totalOtro)}`],
     ['', ''],
-    ['👥 PERSONAL', ''],
-    ['Nómina + comisiones', `$${currencyMX(totalPersonal)}`],
+    ['👥 NÓMINA', ''],
+    ['Total nómina + comisiones', `$${currencyMX(totalPayrollGroup)}`],
+    ['Nómina fija', `$${currencyMX(totalFixedPayroll)}`],
+    ['Comisiones', `$${currencyMX(totalCommissions)}`],
     ['', ''],
     ['💳 POR MÉTODO DE PAGO', ''],
     ['Método', 'Monto (MXN)'],
@@ -190,7 +195,7 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
 
   // Bold title
   if (ws2['A1']) ws2['A1'].s = { font: { bold: true, sz: 14 } };
-  ['A3', 'A7', 'A13', 'A16', 'A23'].forEach(ref => {
+  ['A3', 'A7', 'A13', 'A18', 'A25'].forEach(ref => {
     if (ws2[ref]) ws2[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'FFF0E0' }, patternType: 'solid' } };
   });
 

@@ -2,6 +2,7 @@ export type ExpenseConceptCode = 'CORN' | 'OIL' | 'SEASONINGS' | 'CARAMEL' | 'PA
 export type ManualExpenseDestinationScope = 'AURRERA' | 'CHIPITLAN' | 'SHARED';
 export type ExpenseDestinationScope = ManualExpenseDestinationScope | 'MIXED' | 'UNKNOWN';
 export type ExpenseClassificationStatus = 'CLASSIFIED' | 'SYSTEM';
+export type ExpenseConceptFilter = ExpenseConceptCode | 'ALL' | 'PENDING' | 'PAYROLL_GROUP';
 
 export interface ExpenseClassificationOption<T extends string> {
   id: T;
@@ -20,6 +21,7 @@ export const EXPENSE_CONCEPT_OPTIONS: readonly ExpenseClassificationOption<Expen
 export const EXPENSE_DESTINATION_OPTIONS: readonly ExpenseClassificationOption<ManualExpenseDestinationScope>[];
 export const EXPENSE_REPORT_DESTINATION_OPTIONS: readonly ExpenseClassificationOption<ExpenseDestinationScope>[];
 export const PENDING_CLASSIFICATION_LABEL: 'Pendiente de clasificar';
+export const PAYROLL_REPORT_GROUP: 'PAYROLL_GROUP';
 export function getExpenseConceptLabel(code?: string | null): string;
 export function getExpenseDestinationLabel(scope?: string | null): string;
 export function getExpenseConceptGroupLabel(code?: string | null): string;
@@ -34,7 +36,7 @@ export function getExpenseSaveErrorMessage(error?: {
 export function isExpenseClassificationComplete(expense?: ClassifiableExpense | null): boolean;
 export function filterExpensesByClassification<T extends ClassifiableExpense>(
   expenses: readonly T[],
-  conceptFilter?: ExpenseConceptCode | 'ALL' | 'PENDING',
+  conceptFilter?: ExpenseConceptFilter,
   destinationFilter?: ExpenseDestinationScope | 'ALL' | 'PENDING',
 ): T[];
 export function sumExpensesOnce(expenses: readonly ClassifiableExpense[]): number;

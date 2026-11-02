@@ -5,6 +5,7 @@ import {
   EXPENSE_CONCEPT_OPTIONS,
   EXPENSE_DESTINATION_OPTIONS,
   EXPENSE_REPORT_DESTINATION_OPTIONS,
+  PAYROLL_REPORT_GROUP,
   filterExpensesByClassification,
   getExpenseBudgetDestination,
   getExpenseCommissionOrigin,
@@ -37,6 +38,12 @@ const form = read('../components/finance/ExpenseFormModal.tsx');
 const manager = read('../components/finance/ExpensesManager.tsx');
 const exporter = read('../lib/exportExpenses.ts');
 const publicationNotes = read('../docs/finance-expense-classification.md');
+const withoutComments = sql => sql
+  .split('\n')
+  .filter(line => !line.trim().startsWith('--'))
+  .join('\n')
+  .replace(/'(?:''|[^'])*'/g, "''");
+const forbiddenWrites = /\b(INSERT|UPDATE|DELETE|ALTER|DROP|TRUNCATE|CREATE|GRANT|REVOKE)\b/i;
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 assert.equal(
@@ -203,8 +210,24 @@ const automaticCommission = {
   commission_origin_scope: null,
   classification_status: 'SYSTEM',
 };
-assert.equal(getExpenseConceptGroupLabel('PAYROLL'), 'Personal');
-assert.equal(getExpenseConceptGroupLabel('COMMISSIONS'), 'Personal');
+assert.equal(getExpenseConceptGroupLabel('PAYROLL'), 'Nómina');
+assert.equal(getExpenseConceptGroupLabel('COMMISSIONS'), 'Nómina');
+assert.equal(PAYROLL_REPORT_GROUP, 'PAYROLL_GROUP');
+const payrollGroupFixtures = [
+  { id: 'payroll', amount_mxn: 1250, concept_code: 'PAYROLL', destination_scope: 'SHARED', classification_status: 'CLASSIFIED' },
+  { ...automaticCommission, id: 'commission' },
+  { id: 'service', amount_mxn: 500, concept_code: 'SERVICES', destination_scope: 'SHARED', classification_status: 'CLASSIFIED' },
+];
+assert.deepEqual(
+  filterExpensesByClassification(payrollGroupFixtures, PAYROLL_REPORT_GROUP, 'ALL').map(row => row.id),
+  ['payroll', 'commission'],
+  'the payroll report group includes fixed payroll and each commission row exactly once',
+);
+assert.equal(
+  sumExpensesOnce(filterExpensesByClassification(payrollGroupFixtures, PAYROLL_REPORT_GROUP, 'ALL')),
+  1350,
+  'the grouped payroll filter does not duplicate commissions',
+);
 assert.equal(getExpenseBudgetDestination(automaticCommission), 'SHARED',
   'commission reporting uses the shared budget destination');
 assert.equal(getExpenseCommissionOrigin(automaticCommission), 'AURRERA',
@@ -274,6 +297,10 @@ assert.doesNotMatch(enforcement, /^\s*INSERT\s+INTO\s+public\.expenses\b/im);
 assert.match(commissionExpenseMigration, /CREATE OR REPLACE FUNCTION public\.create_expense_for_paid_commission_settlement/);
 assert.match(commissionExpenseMigration, /INSERT INTO public\.expenses[\s\S]*category[\s\S]*commission_settlement_id/);
 assert.match(commissionExpenseMigration, /'Comisiones'/);
+assert.match(commissionExpenseMigration, /'OTHER'::public\.expense_type/,
+  'the visual payroll-group change must preserve the deployed internal commission type');
+assert.doesNotMatch(commissionExpenseMigration, /'VARIABLE'::public\.expense_type/,
+  'this publication must not move commissions between P&L buckets');
 assert.match(commissionExpenseMigration, /ON CONFLICT ON CONSTRAINT expenses_commission_settlement_id_key/);
 assert.match(commissionExpenseMigration, /CREATE TRIGGER commission_settlement_paid_expense_trigger/);
 assert.match(commissionExpenseMigration, /CREATE TRIGGER protect_commission_settlement_expense_trigger/);
@@ -306,13 +333,11 @@ assert.match(exporter, /'Grupo', 'Concepto', 'Destino presupuestal', 'Origen de 
 assert.match(exporter, /'Por Concepto'/);
 assert.match(exporter, /'Por Grupo'/);
 assert.match(exporter, /'Por Destino'/);
+assert.match(exporter, /'👥 NÓMINA'/);
+assert.match(exporter, /'Nómina fija'/);
+assert.match(exporter, /'Comisiones'/);
+assert.doesNotMatch(exporter, /👥 PERSONAL/);
 
-const withoutComments = sql => sql
-  .split('\n')
-  .filter(line => !line.trim().startsWith('--'))
-  .join('\n')
-  .replace(/'(?:''|[^'])*'/g, "''");
-const forbiddenWrites = /\b(INSERT|UPDATE|DELETE|ALTER|DROP|TRUNCATE|CREATE|GRANT|REVOKE)\b/i;
 assert.doesNotMatch(withoutComments(diagnostic), forbiddenWrites);
 assert.match(diagnostic, /COUNT\(DISTINCT source_type\)/);
 assert.match(diagnostic, /october_core_data_md5/);

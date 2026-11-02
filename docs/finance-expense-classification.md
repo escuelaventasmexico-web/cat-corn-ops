@@ -39,8 +39,10 @@ edición manual posterior; resolverlos requeriría otra migración auditada, nun
 una inferencia por vendedor, nota o importe.
 
 `type = 'OTHER'` conserva su significado financiero actual y es independiente
-de `concept_code = 'OTHER'`. Las comisiones pueden seguir siendo tipo `OTHER`,
-pero su concepto es `COMMISSIONS`.
+de `concept_code = 'OTHER'`. Las comisiones siguen siendo tipo `OTHER`, pero su
+concepto es `COMMISSIONS` y en la presentación se agrupan bajo Nómina sin ocultar
+su desglose separado. Este cambio de etiqueta y filtro no modifica el P&L, las
+obligaciones fijas ni el dinero disponible.
 
 `PAYROLL` evita clasificar la nómina como servicio u otro. `RENT` cubre renta,
 que tampoco tiene equivalencia semántica en los conceptos de insumos o

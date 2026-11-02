@@ -126,7 +126,7 @@ del historial remoto requiere un procedimiento revisado y explícito.
 - Las liquidaciones automáticas continúan creando exactamente un gasto mediante
   la relación única `commission_settlement_id`. Efectivo y transferencia son
   salida inmediata; no se crea una segunda fila de gasto ni se altera el P&L.
-- `COMMISSIONS` se agrupa presupuestalmente en `SHARED` y en el grupo Personal
+- `COMMISSIONS` se agrupa presupuestalmente en `SHARED` y en el grupo Nómina
   junto con `PAYROLL`. La sucursal que originó los eventos se conserva aparte en
   `commission_origin_scope` (`AURRERA`, `CHIPITLAN`, `MIXED` o `UNKNOWN`).
 - El gasto protegido de Gerardo por `$100` no se edita. La migración exige un

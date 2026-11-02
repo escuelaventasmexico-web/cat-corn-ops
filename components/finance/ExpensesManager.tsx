@@ -6,6 +6,7 @@ import { exportExpensesToExcel } from '../../lib/exportExpenses';
 import {
   EXPENSE_CONCEPT_OPTIONS,
   EXPENSE_REPORT_DESTINATION_OPTIONS,
+  PAYROLL_REPORT_GROUP,
   filterExpensesByClassification,
   getExpenseBudgetDestination,
   getExpenseCommissionOrigin,
@@ -14,6 +15,7 @@ import {
   getExpenseDestinationLabel,
   sumExpensesOnce,
   type ExpenseConceptCode,
+  type ExpenseConceptFilter,
   type ExpenseDestinationScope,
 } from '../../lib/expenseClassification.js';
 import type { ExpenseLiquidityTreatment, ExpensePaymentInstrument } from '../../lib/availableFunds.js';
@@ -64,7 +66,7 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [dateError, setDateError] = useState<string>('');
-  const [conceptFilter, setConceptFilter] = useState<ExpenseConceptCode | 'ALL' | 'PENDING'>('ALL');
+  const [conceptFilter, setConceptFilter] = useState<ExpenseConceptFilter>('ALL');
   const [destinationFilter, setDestinationFilter] = useState<ExpenseDestinationScope | 'ALL' | 'PENDING'>('ALL');
 
   // Date range state — default: current month
@@ -298,11 +300,12 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
             <label className="text-xs text-cc-text-muted">Concepto</label>
             <select
               value={conceptFilter}
-              onChange={(event) => setConceptFilter(event.target.value as ExpenseConceptCode | 'ALL' | 'PENDING')}
+              onChange={(event) => setConceptFilter(event.target.value as ExpenseConceptFilter)}
               className="bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-cc-cream"
             >
               <option value="ALL">Todos los conceptos</option>
               <option value="PENDING">Pendientes de clasificar</option>
+              <option value={PAYROLL_REPORT_GROUP}>Nómina (fija + comisiones)</option>
               {EXPENSE_CONCEPT_OPTIONS.map(option => (
                 <option key={option.id} value={option.id}>{option.label}</option>
               ))}
