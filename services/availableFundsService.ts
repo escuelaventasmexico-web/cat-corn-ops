@@ -55,6 +55,13 @@ export interface AvailableFundsSnapshot {
   available_mxn: number | null;
   limitations: AvailableFundsLimitations;
   ambiguous_movements: AvailableFundsMovement[];
+  opening_day_pos: {
+    default_position: 'BEFORE_OPENING' | 'AFTER_OPENING' | null;
+    count: number;
+    amount_mxn: number;
+    exception_count: number;
+    sales: AvailableFundsPosSale[];
+  };
 }
 
 export interface AvailableFundsMovement {
@@ -64,6 +71,15 @@ export interface AvailableFundsMovement {
   amount_mxn: number;
   direction: 'INFLOW' | 'OUTFLOW' | 'LIABILITY' | 'LIMITATION';
   label: string;
+}
+
+export interface AvailableFundsPosSale {
+  source_id: string;
+  business_date: string;
+  amount_mxn: number;
+  payment_method: string;
+  individual_position: 'BEFORE_OPENING' | 'AFTER_OPENING' | null;
+  effective_position: 'BEFORE_OPENING' | 'AFTER_OPENING' | null;
 }
 
 export interface ExpenseLiquidityFields {
@@ -190,5 +206,35 @@ export const saveOpeningMovementDecision = async (input: {
       source_id: input.sourceId,
       position: input.position,
     }, { onConflict: 'opening_balance_id,source_type,source_id' });
+  if (error) throw error;
+};
+
+export const saveOpeningSourceDefault = async (input: {
+  openingBalanceId: string;
+  sourceType: 'POS_SALE';
+  position: 'BEFORE_OPENING' | 'AFTER_OPENING';
+  notes?: string;
+}): Promise<void> => {
+  const { error } = await requireClient()
+    .from('finance_opening_day_source_defaults')
+    .upsert({
+      opening_balance_id: input.openingBalanceId,
+      source_type: input.sourceType,
+      position: input.position,
+      notes: input.notes?.trim() || null,
+    }, { onConflict: 'opening_balance_id,source_type' });
+  if (error) throw error;
+};
+
+export const clearOpeningMovementDecision = async (input: {
+  openingBalanceId: string;
+  sourceType: string;
+  sourceId: string;
+}): Promise<void> => {
+  const { error } = await requireClient().rpc('finance_clear_opening_movement_decision', {
+    p_opening_balance_id: input.openingBalanceId,
+    p_source_type: input.sourceType,
+    p_source_id: input.sourceId,
+  });
   if (error) throw error;
 };

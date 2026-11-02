@@ -32,4 +32,5 @@ export function resolveMovementAfterOpening(input: {
   movementDate: string;
   cutoffBusinessDate: string;
   sameDayDecision?: 'BEFORE_OPENING' | 'AFTER_OPENING' | null;
+  sameDaySourceDefault?: 'BEFORE_OPENING' | 'AFTER_OPENING' | null;
 }): boolean | null;

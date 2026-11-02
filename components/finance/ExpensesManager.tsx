@@ -7,7 +7,10 @@ import {
   EXPENSE_CONCEPT_OPTIONS,
   EXPENSE_REPORT_DESTINATION_OPTIONS,
   filterExpensesByClassification,
+  getExpenseBudgetDestination,
+  getExpenseCommissionOrigin,
   getExpenseConceptLabel,
+  getExpenseConceptGroupLabel,
   getExpenseDestinationLabel,
   sumExpensesOnce,
   type ExpenseConceptCode,
@@ -30,10 +33,13 @@ interface Expense {
   commission_settlement_id?: string | null;
   concept_code?: ExpenseConceptCode | null;
   destination_scope?: ExpenseDestinationScope | null;
+  commission_origin_scope?: ExpenseDestinationScope | null;
   classification_status?: 'CLASSIFIED' | 'SYSTEM' | null;
   liquidity_treatment?: ExpenseLiquidityTreatment | null;
   payment_instrument?: ExpensePaymentInstrument | null;
   credit_card_id?: string | null;
+  liquidity_adjusted?: boolean;
+  liquidity_adjustment_reason?: string | null;
   created_at: string;
 }
 
@@ -82,7 +88,32 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
         .lte('expense_date', to)
         .order('expense_date', { ascending: false });
       if (dbError) throw dbError;
-      setExpenses(data || []);
+      const expenseRows = (data || []) as Expense[];
+      if (expenseRows.length === 0) {
+        setExpenses([]);
+        return;
+      }
+      const { data: adjustmentData, error: adjustmentError } = await supabase
+        .from('finance_expense_liquidity_adjustments')
+        .select('expense_id,liquidity_treatment,payment_instrument,reason,created_at,id')
+        .in('expense_id', expenseRows.map(expense => expense.id))
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false });
+      if (adjustmentError) throw adjustmentError;
+      const latestByExpense = new Map<string, any>();
+      for (const adjustment of adjustmentData || []) {
+        if (!latestByExpense.has(adjustment.expense_id)) latestByExpense.set(adjustment.expense_id, adjustment);
+      }
+      setExpenses(expenseRows.map(expense => {
+        const adjustment = latestByExpense.get(expense.id);
+        return adjustment ? {
+          ...expense,
+          liquidity_treatment: adjustment.liquidity_treatment,
+          payment_instrument: adjustment.payment_instrument,
+          liquidity_adjusted: true,
+          liquidity_adjustment_reason: adjustment.reason,
+        } : expense;
+      }));
     } catch (err: any) {
       console.error('Error loading expenses:', err);
       setError(err.message || 'Error al cargar gastos');
@@ -352,10 +383,14 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
                         </span>
                       </td>
                       <td className="py-3 px-4 text-cc-text-main text-sm">
-                        {getExpenseConceptLabel(expense.concept_code)}
+                        <p>{getExpenseConceptLabel(expense.concept_code)}</p>
+                        <p className="text-[11px] text-cc-text-muted">Grupo: {getExpenseConceptGroupLabel(expense.concept_code)}</p>
                       </td>
                       <td className="py-3 px-4 text-cc-text-main text-sm">
-                        {getExpenseDestinationLabel(expense.destination_scope)}
+                        <p>{getExpenseDestinationLabel(getExpenseBudgetDestination(expense))}</p>
+                        {expense.concept_code === 'COMMISSIONS' && (
+                          <p className="text-[11px] text-cc-text-muted">Origen: {getExpenseDestinationLabel(getExpenseCommissionOrigin(expense))}</p>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-cc-text-main text-sm">
                         {expense.vendor || '-'}
@@ -368,6 +403,9 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
                         <p className={`text-[11px] ${expense.liquidity_treatment ? 'text-cc-text-muted' : 'text-amber-300'}`}>
                           {getLiquidityLabel(expense)}
                         </p>
+                        {expense.liquidity_adjusted && (
+                          <p className="text-[11px] text-cyan-300" title={expense.liquidity_adjustment_reason || undefined}>Ajuste auditado</p>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-center">
                         {expense.has_invoice ? (

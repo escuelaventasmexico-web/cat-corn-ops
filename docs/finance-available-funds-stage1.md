@@ -102,3 +102,39 @@ incorporarla al historial oficial, primero debe conciliarse explícitamente la
 versión remota como ya aplicada mediante un procedimiento revisado; este cambio
 no altera automáticamente el historial remoto. El repositorio no contiene un
 workflow que ejecute migraciones durante el build de Vercel.
+
+## Ajuste aplicado: decisión POS conjunta y comisiones
+
+La migración fue aplicada manualmente en Supabase y su verificador confirmó
+`structural_checks_passed: true`, el ajuste único de Gerardo sin cambio de
+importe y un saldo calculado de `$3,805`. No debe ejecutarse nuevamente.
+El SQL aplicado se conserva en
+`supabase/applied-manually/20261101220000_available_funds_pos_defaults_commission_liquidity.sql`
+con SHA-256
+`d421aa3ceb1df9e4a0c13cb44b73e03a5fc546aa6789409956b201d26988d5a2`.
+Permanece fuera de `supabase/migrations` para que un descubrimiento automático
+no intente reproducir una ejecución hecha desde SQL Editor. No debe copiarse a
+esa carpeta ni ejecutarse con `supabase db push`; cualquier conciliación futura
+del historial remoto requiere un procedimiento revisado y explícito.
+
+- Las ventas POS del día del saldo inicial reciben una sola regla conjunta
+  `BEFORE_OPENING` o `AFTER_OPENING`. Una decisión individual conserva prioridad
+  como excepción auditable y puede eliminarse para volver a la regla conjunta.
+- La regla conjunta de noviembre se prepara como `AFTER_OPENING`, conforme a la
+  confirmación de la usuaria. Los cobros POS posteriores siguen entrando una
+  sola vez; `CARD` continúa representando Mercado Pago disponible de inmediato.
+- Las liquidaciones automáticas continúan creando exactamente un gasto mediante
+  la relación única `commission_settlement_id`. Efectivo y transferencia son
+  salida inmediata; no se crea una segunda fila de gasto ni se altera el P&L.
+- `COMMISSIONS` se agrupa presupuestalmente en `SHARED` y en el grupo Personal
+  junto con `PAYROLL`. La sucursal que originó los eventos se conserva aparte en
+  `commission_origin_scope` (`AURRERA`, `CHIPITLAN`, `MIXED` o `UNKNOWN`).
+- El gasto protegido de Gerardo por `$100` no se edita. La migración exige un
+  único gasto automático de ese importe, pagado en efectivo y ya conciliado
+  `AFTER_OPENING`, y añade un evento de liquidez inmutable e idempotente. Así se
+  descuenta una vez y el verificador reconcilia el saldo esperado de `$3,805`.
+
+El verificador de solo lectura está en
+`supabase/verification/20261101220000_verify_available_funds_pos_defaults_commission_liquidity.sql`.
+La obligatoriedad general futura de liquidez permanece separada en
+`supabase/pending/20261101100000_enforce_expense_liquidity_classification.sql`.

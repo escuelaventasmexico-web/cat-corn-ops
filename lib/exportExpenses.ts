@@ -2,6 +2,9 @@ import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import {
   getExpenseConceptLabel,
+  getExpenseConceptGroupLabel,
+  getExpenseBudgetDestination,
+  getExpenseCommissionOrigin,
   getExpenseDestinationLabel,
   type ExpenseConceptCode,
   type ExpenseDestinationScope,
@@ -20,6 +23,7 @@ interface Expense {
   commission_settlement_id?: string | null;
   concept_code?: ExpenseConceptCode | null;
   destination_scope?: ExpenseDestinationScope | null;
+  commission_origin_scope?: ExpenseDestinationScope | null;
   classification_status?: 'CLASSIFIED' | 'SYSTEM' | null;
   liquidity_treatment?: ExpenseLiquidityTreatment | null;
   payment_instrument?: ExpensePaymentInstrument | null;
@@ -91,13 +95,15 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
   // ─────────────────────────────────────────────────────────────────
   // HOJA 1: Gastos del Mes
   // ─────────────────────────────────────────────────────────────────
-  const headers = ['Fecha', 'Tipo', 'Concepto', 'Destino', 'Proveedor', 'Monto (MXN)', 'Instrumento', 'Efecto en liquidez', 'Factura', 'Notas'];
+  const headers = ['Fecha', 'Tipo', 'Grupo', 'Concepto', 'Destino presupuestal', 'Origen de comisión', 'Proveedor', 'Monto (MXN)', 'Instrumento', 'Efecto en liquidez', 'Factura', 'Notas'];
 
   const rows = expenses.map((e) => [
     formatDateOnly(e.expense_date),
     TYPE_LABELS[e.type] ?? e.type,
+    getExpenseConceptGroupLabel(e.concept_code),
     getExpenseConceptLabel(e.concept_code),
-    getExpenseDestinationLabel(e.destination_scope),
+    getExpenseDestinationLabel(getExpenseBudgetDestination(e)),
+    e.concept_code === 'COMMISSIONS' ? getExpenseDestinationLabel(getExpenseCommissionOrigin(e)) : '-',
     e.vendor ?? '-',
     Number(e.amount_mxn),
     e.payment_instrument ? INSTRUMENT_LABELS[e.payment_instrument] : (PM_LABELS[e.payment_method] ?? e.payment_method),
@@ -114,8 +120,10 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
   ws1['!cols'] = [
     { wch: 14 }, // Fecha
     { wch: 10 }, // Tipo
-    { wch: 20 }, // Categoría
-    { wch: 20 }, // Destino
+    { wch: 20 }, // Grupo
+    { wch: 20 }, // Concepto
+    { wch: 20 }, // Destino presupuestal
+    { wch: 20 }, // Origen de comisión
     { wch: 24 }, // Proveedor
     { wch: 16 }, // Monto
     { wch: 18 }, // Método de Pago
@@ -146,6 +154,7 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
   const totalOtherPM  = expenses.filter(e => e.payment_method === 'OTHER').reduce((s, e) => s + Number(e.amount_mxn), 0);
   const totalConFact  = expenses.filter(e => e.has_invoice).reduce((s, e) => s + Number(e.amount_mxn), 0);
   const totalSinFact  = expenses.filter(e => !e.has_invoice).reduce((s, e) => s + Number(e.amount_mxn), 0);
+  const totalPersonal = expenses.filter(e => getExpenseConceptGroupLabel(e.concept_code) === 'Personal').reduce((s, e) => s + Number(e.amount_mxn), 0);
 
   const resumeData = [
     [`RESUMEN DE GASTOS — ${label}`, ''],
@@ -159,6 +168,9 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
     [`Gastos Fijos`, `$${currencyMX(totalFijo)}`],
     [`Gastos Variables`, `$${currencyMX(totalVariable)}`],
     [`Otros`, `$${currencyMX(totalOtro)}`],
+    ['', ''],
+    ['👥 PERSONAL', ''],
+    ['Nómina + comisiones', `$${currencyMX(totalPersonal)}`],
     ['', ''],
     ['💳 POR MÉTODO DE PAGO', ''],
     ['Método', 'Monto (MXN)'],
@@ -178,7 +190,7 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
 
   // Bold title
   if (ws2['A1']) ws2['A1'].s = { font: { bold: true, sz: 14 } };
-  ['A3', 'A7', 'A13', 'A20'].forEach(ref => {
+  ['A3', 'A7', 'A13', 'A16', 'A23'].forEach(ref => {
     if (ws2[ref]) ws2[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'FFF0E0' }, patternType: 'solid' } };
   });
 
@@ -216,12 +228,31 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
 
   XLSX.utils.book_append_sheet(wb, ws3, 'Por Concepto');
 
+  const groupMap: Record<string, number> = {};
+  expenses.forEach(e => {
+    const group = getExpenseConceptGroupLabel(e.concept_code);
+    groupMap[group] = (groupMap[group] ?? 0) + Number(e.amount_mxn);
+  });
+  const groupRows = Object.entries(groupMap).sort((a, b) => b[1] - a[1]);
+  const groupData = [
+    [`GASTOS POR GRUPO — ${label}`, '', ''],
+    ['', '', ''],
+    ['Grupo', 'Monto (MXN)', '% del Total'],
+    ...groupRows.map(([group, amount]) => [group, amount, pct(amount, total)]),
+    ['', '', ''],
+    ['TOTAL', `$${currencyMX(total)}`, '100%'],
+  ];
+  const wsGroup = XLSX.utils.aoa_to_sheet(groupData);
+  wsGroup['!cols'] = [{ wch: 24 }, { wch: 16 }, { wch: 14 }];
+  ['A3', 'B3', 'C3'].forEach(ref => styleHeader(wsGroup, ref, 'FF6B00'));
+  XLSX.utils.book_append_sheet(wb, wsGroup, 'Por Grupo');
+
   // ─────────────────────────────────────────────────────────────────
   // HOJA 4: Por Destino
   // ─────────────────────────────────────────────────────────────────
   const destinationMap: Record<string, number> = {};
   expenses.forEach(e => {
-    const key = getExpenseDestinationLabel(e.destination_scope);
+    const key = getExpenseDestinationLabel(getExpenseBudgetDestination(e));
     destinationMap[key] = (destinationMap[key] ?? 0) + Number(e.amount_mxn);
   });
   const destinationRows = Object.entries(destinationMap).sort((a, b) => b[1] - a[1]);

@@ -6,7 +6,10 @@ import {
   EXPENSE_DESTINATION_OPTIONS,
   EXPENSE_REPORT_DESTINATION_OPTIONS,
   filterExpensesByClassification,
+  getExpenseBudgetDestination,
+  getExpenseCommissionOrigin,
   getExpenseConceptLabel,
+  getExpenseConceptGroupLabel,
   getExpenseDestinationLabel,
   getExpenseSaveErrorMessage,
   getLegacyExpenseCategory,
@@ -116,11 +119,11 @@ assert.equal(isExpenseClassificationComplete(fixtures[1]), true);
 assert.equal(isExpenseClassificationComplete(fixtures[3]), false);
 assert.equal(isExpenseClassificationComplete(fixtures[4]), true);
 assert.deepEqual(filterExpensesByClassification(fixtures, 'PENDING', 'ALL').map(row => row.id), ['legacy']);
-assert.deepEqual(filterExpensesByClassification(fixtures, 'ALL', 'SHARED').map(row => row.id), ['shared']);
+assert.deepEqual(filterExpensesByClassification(fixtures, 'ALL', 'SHARED').map(row => row.id), ['shared', 'commission-unknown', 'commission-mixed']);
 assert.deepEqual(filterExpensesByClassification(fixtures, 'ALL', 'PENDING').map(row => row.id), ['legacy', 'commission-unknown']);
 assert.equal(sumExpensesOnce(fixtures), 1075);
-assert.equal(sumExpensesOnce(filterExpensesByClassification(fixtures, 'ALL', 'SHARED')), 600,
-  'A shared central purchase is represented and summed once');
+assert.equal(sumExpensesOnce(filterExpensesByClassification(fixtures, 'ALL', 'SHARED')), 725,
+  'shared purchases and commissions are each represented and summed once');
 assert.deepEqual(summarizePendingClassification(fixtures), { count: 2, amount_mxn: 150 });
 
 assert.equal(resolveCommissionDestination(['AURRERA', 'AURRERA']), 'AURRERA');
@@ -192,6 +195,22 @@ assert.equal(octoberAngelicaPayroll.category, 'PAYROLL',
   'new capture mirrors the stable concept into the required legacy category column');
 assert.equal(octoberAngelicaPayroll.amount_mxn, 1250, 'classification preserves the real amount');
 assert.equal(octoberAngelicaPayroll.expense_date, '2026-10-31', 'classification preserves the real date');
+
+const automaticCommission = {
+  amount_mxn: 100,
+  concept_code: 'COMMISSIONS',
+  destination_scope: 'AURRERA',
+  commission_origin_scope: null,
+  classification_status: 'SYSTEM',
+};
+assert.equal(getExpenseConceptGroupLabel('PAYROLL'), 'Personal');
+assert.equal(getExpenseConceptGroupLabel('COMMISSIONS'), 'Personal');
+assert.equal(getExpenseBudgetDestination(automaticCommission), 'SHARED',
+  'commission reporting uses the shared budget destination');
+assert.equal(getExpenseCommissionOrigin(automaticCommission), 'AURRERA',
+  'legacy commission destination remains available as operational origin');
+assert.equal(filterExpensesByClassification([automaticCommission], 'ALL', 'SHARED').length, 1,
+  'shared report filter includes automatic commissions once');
 
 assert.match(migration, /^BEGIN;/m);
 assert.match(migration, /COMMIT;\s*$/);
@@ -283,8 +302,9 @@ assert.match(manager, /Pendientes de clasificar/);
 assert.match(manager, /getExpenseConceptLabel/);
 assert.match(manager, /getExpenseDestinationLabel/);
 assert.match(manager, /EXPENSE_REPORT_DESTINATION_OPTIONS/);
-assert.match(exporter, /'Concepto', 'Destino'/);
+assert.match(exporter, /'Grupo', 'Concepto', 'Destino presupuestal', 'Origen de comisión'/);
 assert.match(exporter, /'Por Concepto'/);
+assert.match(exporter, /'Por Grupo'/);
 assert.match(exporter, /'Por Destino'/);
 
 const withoutComments = sql => sql

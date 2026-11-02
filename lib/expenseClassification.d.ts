@@ -12,6 +12,7 @@ export interface ClassifiableExpense {
   amount_mxn?: number | string | null;
   concept_code?: ExpenseConceptCode | null;
   destination_scope?: ExpenseDestinationScope | null;
+  commission_origin_scope?: ExpenseDestinationScope | null;
   classification_status?: ExpenseClassificationStatus | null;
 }
 
@@ -21,6 +22,9 @@ export const EXPENSE_REPORT_DESTINATION_OPTIONS: readonly ExpenseClassificationO
 export const PENDING_CLASSIFICATION_LABEL: 'Pendiente de clasificar';
 export function getExpenseConceptLabel(code?: string | null): string;
 export function getExpenseDestinationLabel(scope?: string | null): string;
+export function getExpenseConceptGroupLabel(code?: string | null): string;
+export function getExpenseBudgetDestination(expense?: ClassifiableExpense | null): ExpenseDestinationScope | null;
+export function getExpenseCommissionOrigin(expense?: ClassifiableExpense | null): ExpenseDestinationScope | null;
 export function getLegacyExpenseCategory(code?: string | null): ExpenseConceptCode | null;
 export function getExpenseSaveErrorMessage(error?: {
   message?: unknown;

@@ -6,8 +6,10 @@ import {
   listFinanceCreditCardPayments,
   registerCreditCardPayment,
   reverseCreditCardPayment,
+  clearOpeningMovementDecision,
   saveOpeningBalance,
   saveOpeningMovementDecision,
+  saveOpeningSourceDefault,
   type AvailableFundsSnapshot,
   type CreditCardPaymentKind,
   type CreditCardPaymentSource,
@@ -43,6 +45,7 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
   const [reversalPayment, setReversalPayment] = useState<FinanceCreditCardPayment | null>(null);
   const [reversalReason, setReversalReason] = useState('');
   const [saving, setSaving] = useState(false);
+  const [posDetailsOpen, setPosDetailsOpen] = useState(false);
 
   const [openingAmount, setOpeningAmount] = useState('');
   const [cutoffBusinessDate, setCutoffBusinessDate] = useState(monthStartISO);
@@ -157,6 +160,37 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
     } finally { setSaving(false); }
   };
 
+  const decideAllOpeningDayPos = async (position: 'BEFORE_OPENING' | 'AFTER_OPENING') => {
+    if (!snapshot?.opening_balance) return;
+    setSaving(true); setError('');
+    try {
+      await saveOpeningSourceDefault({
+        openingBalanceId: snapshot.opening_balance.id,
+        sourceType: 'POS_SALE',
+        position,
+        notes: 'Confirmación conjunta desde Finanzas',
+      });
+      await load();
+    } catch (cause: any) {
+      setError(cause?.message || 'No se pudo confirmar conjuntamente las ventas POS del día.');
+    } finally { setSaving(false); }
+  };
+
+  const clearMovementException = async (sourceType: string, sourceId: string) => {
+    if (!snapshot?.opening_balance) return;
+    setSaving(true); setError('');
+    try {
+      await clearOpeningMovementDecision({
+        openingBalanceId: snapshot.opening_balance.id,
+        sourceType,
+        sourceId,
+      });
+      await load();
+    } catch (cause: any) {
+      setError(cause?.message || 'No se pudo restaurar la regla conjunta para esta venta.');
+    } finally { setSaving(false); }
+  };
+
   const reversePayment = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!reversalPayment) return;
@@ -223,6 +257,50 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
                   </ul>
                 </div>
               )}
+              {Number(snapshot.opening_day_pos?.count || 0) > 0 && (
+                <div className="rounded-lg border border-cyan-400/25 bg-black/20 p-3 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-cyan-100">Ventas POS del día del saldo inicial</p>
+                      <p className="text-xs text-cc-text-muted">
+                        {snapshot.opening_day_pos.count} venta(s) · {money(snapshot.opening_day_pos.amount_mxn)} · {' '}
+                        {snapshot.opening_day_pos.default_position === 'AFTER_OPENING'
+                          ? 'Regla conjunta: ocurrieron después'
+                          : snapshot.opening_day_pos.default_position === 'BEFORE_OPENING'
+                            ? 'Regla conjunta: ya estaban incluidas'
+                            : 'Falta una regla conjunta'}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button disabled={saving} onClick={() => void decideAllOpeningDayPos('BEFORE_OPENING')} className="rounded bg-white/10 px-3 py-1.5 text-xs text-cc-text-muted disabled:opacity-50">Todas ya incluidas</button>
+                      <button disabled={saving} onClick={() => void decideAllOpeningDayPos('AFTER_OPENING')} className="rounded bg-cyan-500/20 px-3 py-1.5 text-xs text-cyan-200 disabled:opacity-50">Todas ocurrieron después</button>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => setPosDetailsOpen(open => !open)} className="text-xs text-cyan-300 hover:text-cyan-200">
+                    {posDetailsOpen ? 'Ocultar ventas y excepciones' : `Revisar ventas y excepciones (${snapshot.opening_day_pos.exception_count})`}
+                  </button>
+                  {posDetailsOpen && <div className="space-y-2">
+                    <p className="text-xs text-cc-text-muted">Una decisión individual prevalece sobre la regla conjunta. “Usar regla conjunta” elimina sólo esa excepción.</p>
+                    {snapshot.opening_day_pos.sales.map(sale => (
+                      <div key={sale.source_id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 p-2">
+                        <div>
+                          <p className="text-sm text-cc-cream">POS · {sale.payment_method} · {money(sale.amount_mxn)}</p>
+                          <p className="text-xs text-cc-text-muted">
+                            {sale.business_date} · {sale.individual_position
+                              ? `Excepción: ${sale.individual_position === 'AFTER_OPENING' ? 'después' : 'incluida'}`
+                              : `Regla conjunta: ${sale.effective_position === 'AFTER_OPENING' ? 'después' : sale.effective_position === 'BEFORE_OPENING' ? 'incluida' : 'sin confirmar'}`}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button disabled={saving} onClick={() => void decideMovement('POS_SALE', sale.source_id, 'BEFORE_OPENING')} className="rounded bg-white/10 px-2 py-1 text-xs text-cc-text-muted disabled:opacity-50">Excepción: incluida</button>
+                          <button disabled={saving} onClick={() => void decideMovement('POS_SALE', sale.source_id, 'AFTER_OPENING')} className="rounded bg-cyan-500/20 px-2 py-1 text-xs text-cyan-200 disabled:opacity-50">Excepción: después</button>
+                          {sale.individual_position && <button disabled={saving} onClick={() => void clearMovementException('POS_SALE', sale.source_id)} className="rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-200 disabled:opacity-50">Usar regla conjunta</button>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>}
+                </div>
+              )}
               {snapshot.ambiguous_movements.length > 0 && (
                 <div className="rounded-lg border border-yellow-400/30 bg-black/20 p-3 space-y-2">
                   <p className="text-sm font-semibold text-yellow-200">Confirma los movimientos del día del saldo inicial</p>
@@ -273,7 +351,7 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
           <InlineError error={error} />
           <Field label="Saldo disponible en el corte (MXN)"><input type="number" step="0.01" value={openingAmount} onChange={e => setOpeningAmount(e.target.value)} required className={inputClass} /></Field>
           <Field label="Día de corte · Ciudad de México"><input type="date" value={cutoffBusinessDate} onChange={e => setCutoffBusinessDate(e.target.value)} required className={inputClass} /></Field>
-          <p className="text-xs text-amber-200">No se inventa una hora: después de guardar, cada movimiento de ese día deberá marcarse como ya incluido en el saldo u ocurrido después.</p>
+          <p className="text-xs text-amber-200">No se inventa una hora: las ventas POS pueden confirmarse juntas; otros movimientos y las excepciones conservan conciliación individual.</p>
           <Field label="Notas"><textarea value={openingNotes} onChange={e => setOpeningNotes(e.target.value)} rows={2} className={inputClass} /></Field>
           <SubmitButton saving={saving} label="Guardar saldo y corte" />
         </form>

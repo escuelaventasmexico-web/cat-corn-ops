@@ -15,6 +15,8 @@ const diagnostic = read('../supabase/diagnostics/20261101_diagnose_available_fun
 const verification = read('../supabase/verification/20261101090000_verify_finance_available_funds_stage1.sql');
 const authenticatedVerification = read('../supabase/verification/20261101091000_verify_finance_available_funds_authenticated.sql');
 const enforcement = read('../supabase/pending/20261101100000_enforce_expense_liquidity_classification.sql');
+const followup = read('../supabase/applied-manually/20261101220000_available_funds_pos_defaults_commission_liquidity.sql');
+const followupVerification = read('../supabase/verification/20261101220000_verify_available_funds_pos_defaults_commission_liquidity.sql');
 const panel = read('../components/finance/AvailableFundsPanel.tsx');
 const expenseForm = read('../components/finance/ExpenseFormModal.tsx');
 const service = read('../services/availableFundsService.ts');
@@ -46,6 +48,13 @@ assert.equal(isBusinessDateOnOrAfterCutoff('2026-11-02', '2026-11-01'), true);
 assert.equal(resolveMovementAfterOpening({ movementDate: '2026-11-01', cutoffBusinessDate: '2026-11-01' }), null);
 assert.equal(resolveMovementAfterOpening({ movementDate: '2026-11-01', cutoffBusinessDate: '2026-11-01', sameDayDecision: 'AFTER_OPENING' }), true);
 assert.equal(resolveMovementAfterOpening({ movementDate: '2026-11-01', cutoffBusinessDate: '2026-11-01', sameDayDecision: 'BEFORE_OPENING' }), false);
+assert.equal(resolveMovementAfterOpening({
+  movementDate: '2026-11-01', cutoffBusinessDate: '2026-11-01', sameDaySourceDefault: 'AFTER_OPENING',
+}), true, 'a joint POS decision resolves all same-day sales without per-sale confirmation');
+assert.equal(resolveMovementAfterOpening({
+  movementDate: '2026-11-01', cutoffBusinessDate: '2026-11-01',
+  sameDayDecision: 'BEFORE_OPENING', sameDaySourceDefault: 'AFTER_OPENING',
+}), false, 'an individual exception overrides the joint POS decision');
 assert.equal(resolveMovementAfterOpening({ movementDate: '2026-11-02', cutoffBusinessDate: '2026-11-01' }), true);
 const diagnosedPos = [65, 65, 65, 90];
 assert.equal(diagnosedPos.length, 4);
@@ -60,6 +69,8 @@ assert.equal(realPayments.filter(payment =>
   'all three real payments are post-opening by explicit decision, regardless of capturedAt');
 assert.equal(realPayments.reduce((sum, payment) => sum + payment.amount, 0), 6390);
 assert.equal(calculateKnownAvailableFunds({ openingBalance: 10010, posCollections: 285, immediateExpenses: 6390 }), 3905);
+assert.equal(calculateKnownAvailableFunds({ openingBalance: 10010, posCollections: 285, immediateExpenses: 6490 }), 3805,
+  'the audited $100 Gerardo cash commission is subtracted once');
 assert.equal(resolveMovementAfterOpening({
   movementDate: '2026-11-03', cutoffBusinessDate: '2026-11-01', sameDayDecision: null,
 }), true, 'a later refund is detected even when its original sale predates the opening');
@@ -122,10 +133,31 @@ assert.match(service, /finance_register_credit_card_payment/);
 assert.match(service, /finance_reverse_credit_card_payment/);
 assert.match(service, /listFinanceCreditCardPayments/);
 assert.match(service, /finance_opening_day_movement_decisions/);
+assert.match(service, /finance_opening_day_source_defaults/);
+assert.match(service, /finance_clear_opening_movement_decision/);
+assert.match(panel, /Todas ocurrieron después/);
+assert.match(panel, /Usar regla conjunta/);
+
+assert.match(followup, /^BEGIN;/m);
+assert.match(followup, /COMMIT;\s*$/);
+assert.match(followup, /CREATE TABLE public\.finance_opening_day_source_defaults/);
+assert.match(followup, /CREATE TABLE public\.finance_expense_liquidity_adjustments/);
+assert.match(followup, /individual decisions remain audited overrides/);
+assert.match(followup, /COALESCE\([\s\S]*decision\.position = 'AFTER_OPENING'[\s\S]*source_default\.position = 'AFTER_OPENING'/);
+assert.match(followup, /NEW\.destination_scope := 'SHARED'/);
+assert.match(followup, /NEW\.commission_origin_scope := CASE/);
+assert.match(followup, /COALESCE\(adjustment\.liquidity_treatment, expense\.liquidity_treatment\)/);
+assert.match(followup, /20261101-2200-4000-8000-000000000100/);
+assert.match(followup, /expense\.amount_mxn = 100/);
+assert.match(followup, /decision\.position = 'AFTER_OPENING'/);
+assert.doesNotMatch(followup, /UPDATE\s+public\.expenses/i);
+assert.doesNotMatch(followup, /INSERT\s+INTO\s+public\.expenses/i);
+assert.doesNotMatch(followup, /CREATE OR REPLACE FUNCTION public\.finance_month_summary/);
+assert.doesNotMatch(followup, /CREATE OR REPLACE FUNCTION public\.create_expense_for_paid_commission_settlement/);
 
 const stripComments = sql => sql.split('\n').filter(line => !line.trim().startsWith('--')).join('\n')
   .replace(/'([^']|'')*'/g, "''");
-for (const sql of [diagnostic, verification]) {
+for (const sql of [diagnostic, verification, followupVerification]) {
   assert.doesNotMatch(stripComments(sql), /\b(INSERT|UPDATE|DELETE|ALTER|DROP|TRUNCATE|CREATE|GRANT|REVOKE)\b/i);
 }
 assert.match(verification, /structural_checks_passed/);
@@ -141,5 +173,7 @@ assert.match(authenticatedVerification, /authenticated unexpectedly changed immu
 assert.match(authenticatedVerification, /known_available_mxn'\)::NUMERIC <> 3920/);
 assert.match(authenticatedVerification, /finance_reverse_credit_card_payment/);
 assert.match(authenticatedVerification, /ROLLBACK;\s*$/);
+assert.match(followupVerification, /expected_available_mxn = 3805 AS expected_3805_confirmed/);
+assert.match(followupVerification, /structural_checks_passed/);
 
 console.log('OK: corte; POS/MP; B2B cobrado; gastos inmediatos/crédito; pagos parciales; limitaciones; -$1,020');
