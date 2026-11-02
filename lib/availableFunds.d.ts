@@ -34,3 +34,28 @@ export function resolveMovementAfterOpening(input: {
   sameDayDecision?: 'BEFORE_OPENING' | 'AFTER_OPENING' | null;
   sameDaySourceDefault?: 'BEFORE_OPENING' | 'AFTER_OPENING' | null;
 }): boolean | null;
+
+export interface OpeningDayPosSummaryInput {
+  default_position?: 'BEFORE_OPENING' | 'AFTER_OPENING' | null;
+  count?: number;
+  amount_mxn?: number;
+  sales?: Array<{
+    amount_mxn?: number;
+    individual_position?: 'BEFORE_OPENING' | 'AFTER_OPENING' | null;
+    effective_position?: 'BEFORE_OPENING' | 'AFTER_OPENING' | null;
+  }>;
+}
+
+export interface OpeningDayPosSummary {
+  status: 'EMPTY' | 'PENDING' | 'ALL_AFTER' | 'ALL_BEFORE' | 'MIXED';
+  isResolved: boolean;
+  count: number;
+  amountMxn: number;
+  afterCount: number;
+  afterAmountMxn: number;
+  beforeCount: number;
+  beforeAmountMxn: number;
+  unresolvedCount: number;
+}
+
+export function summarizeOpeningDayPos(input?: OpeningDayPosSummaryInput): OpeningDayPosSummary;

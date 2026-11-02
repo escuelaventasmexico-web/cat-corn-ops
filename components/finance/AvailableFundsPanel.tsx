@@ -16,6 +16,7 @@ import {
   type FinanceCreditCard,
   type FinanceCreditCardPayment,
 } from '../../services/availableFundsService';
+import { summarizeOpeningDayPos } from '../../lib/availableFunds.js';
 import { getMexicoCityDateKey } from '../../lib/datetime';
 
 const money = (value: number | null | undefined) => new Intl.NumberFormat('es-MX', {
@@ -82,6 +83,7 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
   }, [monthStartISO]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setPosDetailsOpen(false); }, [monthStartISO]);
 
   useEffect(() => {
     if (!snapshot?.opening_balance) {
@@ -97,6 +99,14 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
 
   const activeLimitations = useMemo(() => Object.entries(snapshot?.limitations ?? {})
     .filter(([, value]) => Number(value?.count || 0) > 0), [snapshot]);
+  const openingDayPosSummary = useMemo(
+    () => summarizeOpeningDayPos(snapshot?.opening_day_pos),
+    [snapshot?.opening_day_pos],
+  );
+  const otherAmbiguousMovements = useMemo(
+    () => (snapshot?.ambiguous_movements ?? []).filter(movement => movement.source_type !== 'POS_SALE'),
+    [snapshot?.ambiguous_movements],
+  );
 
   const saveOpening = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -276,29 +286,44 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
                 </div>
               )}
               {Number(snapshot.opening_day_pos?.count || 0) > 0 && (
-                <div className="rounded-lg border border-cyan-400/25 bg-black/20 p-3 space-y-3">
+                <div className={`rounded-lg border p-3 space-y-3 ${openingDayPosSummary.isResolved ? 'border-emerald-400/25 bg-emerald-500/5' : 'border-yellow-400/30 bg-yellow-500/5'}`}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-cyan-100">Ventas POS del día del saldo inicial</p>
+                      <p className={`text-sm font-semibold ${openingDayPosSummary.isResolved ? 'text-emerald-200' : 'text-yellow-200'}`}>
+                        {openingDayPosSummary.status === 'ALL_AFTER'
+                          ? 'Ventas del día inicial: incluidas en el saldo disponible'
+                          : openingDayPosSummary.status === 'ALL_BEFORE'
+                            ? 'Ventas del día inicial: ya incluidas en el saldo inicial'
+                            : openingDayPosSummary.status === 'MIXED'
+                              ? 'Ventas del día inicial: conciliadas con excepciones'
+                              : 'Ventas del día inicial: falta confirmar su posición'}
+                      </p>
                       <p className="text-xs text-cc-text-muted">
-                        {snapshot.opening_day_pos.count} venta(s) · {money(snapshot.opening_day_pos.amount_mxn)} · {' '}
-                        {snapshot.opening_day_pos.default_position === 'AFTER_OPENING'
-                          ? 'Regla conjunta: ocurrieron después'
-                          : snapshot.opening_day_pos.default_position === 'BEFORE_OPENING'
-                            ? 'Regla conjunta: ya estaban incluidas'
-                            : 'Falta una regla conjunta'}
+                        {snapshot.opening_day_pos.count} venta(s) · {money(snapshot.opening_day_pos.amount_mxn)}
+                        {openingDayPosSummary.status === 'ALL_AFTER' && ' · Se suman una sola vez después del corte'}
+                        {openingDayPosSummary.status === 'ALL_BEFORE' && ' · No se vuelven a sumar'}
+                        {openingDayPosSummary.status === 'MIXED' && ` · ${openingDayPosSummary.afterCount} sumada(s), ${openingDayPosSummary.beforeCount} ya incluida(s)`}
+                        {openingDayPosSummary.status === 'PENDING' && ` · ${openingDayPosSummary.unresolvedCount} pendiente(s)`}
                       </p>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button disabled={saving} onClick={() => void decideAllOpeningDayPos('BEFORE_OPENING')} className="rounded bg-white/10 px-3 py-1.5 text-xs text-cc-text-muted disabled:opacity-50">Todas ya incluidas</button>
-                      <button disabled={saving} onClick={() => void decideAllOpeningDayPos('AFTER_OPENING')} className="rounded bg-cyan-500/20 px-3 py-1.5 text-xs text-cyan-200 disabled:opacity-50">Todas ocurrieron después</button>
-                    </div>
+                    {!openingDayPosSummary.isResolved && <div className="flex flex-wrap gap-2">
+                      <button disabled={saving} onClick={() => void decideAllOpeningDayPos('BEFORE_OPENING')} className="rounded bg-white/10 px-3 py-1.5 text-xs text-cc-text-muted disabled:opacity-50">Ya estaban en el saldo inicial</button>
+                      <button disabled={saving} onClick={() => void decideAllOpeningDayPos('AFTER_OPENING')} className="rounded bg-cyan-500/20 px-3 py-1.5 text-xs text-cyan-200 disabled:opacity-50">Ocurrieron después del saldo inicial</button>
+                    </div>}
                   </div>
                   <button type="button" onClick={() => setPosDetailsOpen(open => !open)} className="text-xs text-cyan-300 hover:text-cyan-200">
-                    {posDetailsOpen ? 'Ocultar ventas y excepciones' : `Revisar ventas y excepciones (${snapshot.opening_day_pos.exception_count})`}
+                    {posDetailsOpen
+                      ? 'Ocultar detalle del día inicial'
+                      : openingDayPosSummary.isResolved
+                        ? `Corregir decisión o revisar excepciones (${snapshot.opening_day_pos.exception_count})`
+                        : `Revisar ventas pendientes (${openingDayPosSummary.unresolvedCount})`}
                   </button>
                   {posDetailsOpen && <div className="space-y-2">
-                    <p className="text-xs text-cc-text-muted">Una decisión individual prevalece sobre la regla conjunta. “Usar regla conjunta” elimina sólo esa excepción.</p>
+                    {openingDayPosSummary.isResolved && <div className="flex flex-wrap gap-2 rounded-lg border border-white/10 bg-black/20 p-2">
+                      <button disabled={saving} onClick={() => void decideAllOpeningDayPos('BEFORE_OPENING')} className="rounded bg-white/10 px-3 py-1.5 text-xs text-cc-text-muted disabled:opacity-50">Cambiar todas: ya incluidas</button>
+                      <button disabled={saving} onClick={() => void decideAllOpeningDayPos('AFTER_OPENING')} className="rounded bg-cyan-500/20 px-3 py-1.5 text-xs text-cyan-200 disabled:opacity-50">Cambiar todas: ocurrieron después</button>
+                    </div>}
+                    <p className="text-xs text-cc-text-muted">La decisión individual prevalece sobre la regla conjunta y se conserva al recargar. “Usar regla conjunta” elimina sólo esa excepción.</p>
                     {snapshot.opening_day_pos.sales.map(sale => (
                       <div key={sale.source_id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 p-2">
                         <div>
@@ -319,11 +344,11 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
                   </div>}
                 </div>
               )}
-              {snapshot.ambiguous_movements.length > 0 && (
+              {otherAmbiguousMovements.length > 0 && (
                 <div className="rounded-lg border border-yellow-400/30 bg-black/20 p-3 space-y-2">
-                  <p className="text-sm font-semibold text-yellow-200">Confirma los movimientos del día del saldo inicial</p>
+                  <p className="text-sm font-semibold text-yellow-200">Movimientos del día inicial realmente pendientes</p>
                   <p className="text-xs text-cc-text-muted">“Antes” significa que ya estaba incluido en los {money(snapshot.opening_balance.amount_mxn)}. “Después” lo suma, resta o reporta como limitación.</p>
-                  {snapshot.ambiguous_movements.map(movement => (
+                  {otherAmbiguousMovements.map(movement => (
                     <div key={`${movement.source_type}-${movement.source_id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 p-2">
                       <div><p className="text-sm text-cc-cream">{movement.label}</p><p className="text-xs text-cc-text-muted">{movement.business_date} · {money(movement.amount_mxn)}</p></div>
                       <div className="flex gap-2">

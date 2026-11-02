@@ -7,6 +7,7 @@ import {
   getLegacyPaymentMethod,
   isBusinessDateOnOrAfterCutoff,
   resolveMovementAfterOpening,
+  summarizeOpeningDayPos,
 } from '../lib/availableFunds.js';
 
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -56,6 +57,23 @@ assert.equal(resolveMovementAfterOpening({
   sameDayDecision: 'BEFORE_OPENING', sameDaySourceDefault: 'AFTER_OPENING',
 }), false, 'an individual exception overrides the joint POS decision');
 assert.equal(resolveMovementAfterOpening({ movementDate: '2026-11-02', cutoffBusinessDate: '2026-11-01' }), true);
+assert.equal(resolveMovementAfterOpening({ movementDate: '2026-11-30', cutoffBusinessDate: '2026-11-01' }), true,
+  'later POS sales enter automatically without daily decisions');
+const automaticLaterPos = [
+  { id: 'nov-02-cash', businessDate: '2026-11-02', amount: 65, paymentMethod: 'CASH' },
+  { id: 'nov-02-mp', businessDate: '2026-11-02', amount: 90, paymentMethod: 'CARD' },
+  { id: 'nov-03-transfer', businessDate: '2026-11-03', amount: 50, paymentMethod: 'TRANSFER' },
+];
+const sumLaterPos = rows => rows
+  .filter(row => resolveMovementAfterOpening({
+    movementDate: row.businessDate,
+    cutoffBusinessDate: '2026-11-01',
+  }) === true)
+  .reduce((sum, row) => sum + row.amount, 0);
+assert.equal(sumLaterPos(automaticLaterPos), 205,
+  'later POS, including a Mercado Pago card collection, is included automatically once');
+assert.equal(sumLaterPos(structuredClone(automaticLaterPos)), 205,
+  'reloading or changing day does not duplicate or lose later POS sales');
 const diagnosedPos = [65, 65, 65, 90];
 assert.equal(diagnosedPos.length, 4);
 assert.equal(diagnosedPos.reduce((sum, value) => sum + value, 0), 285);
@@ -74,6 +92,52 @@ assert.equal(calculateKnownAvailableFunds({ openingBalance: 10010, posCollection
 assert.equal(resolveMovementAfterOpening({
   movementDate: '2026-11-03', cutoffBusinessDate: '2026-11-01', sameDayDecision: null,
 }), true, 'a later refund is detected even when its original sale predates the opening');
+
+const novemberOpeningDay = {
+  default_position: 'AFTER_OPENING',
+  count: 4,
+  amount_mxn: 285,
+  exception_count: 0,
+  sales: [65, 65, 65, 90].map((amount_mxn, index) => ({
+    source_id: `november-pos-${index}`,
+    amount_mxn,
+    individual_position: null,
+    effective_position: 'AFTER_OPENING',
+  })),
+};
+const firstLoadSummary = summarizeOpeningDayPos(novemberOpeningDay);
+const refreshedSummary = summarizeOpeningDayPos(JSON.parse(JSON.stringify(novemberOpeningDay)));
+assert.deepEqual(refreshedSummary, firstLoadSummary,
+  'reloading or re-entering Finanzas preserves the persisted opening-day decision');
+assert.equal(firstLoadSummary.status, 'ALL_AFTER');
+assert.equal(firstLoadSummary.afterCount, 4);
+assert.equal(firstLoadSummary.afterAmountMxn, 285);
+assert.equal(firstLoadSummary.unresolvedCount, 0);
+
+const newCutoffWithoutDecision = summarizeOpeningDayPos({
+  default_position: null,
+  count: 2,
+  amount_mxn: 130,
+  sales: [65, 65].map(amount_mxn => ({
+    amount_mxn,
+    individual_position: null,
+    effective_position: null,
+  })),
+});
+assert.equal(newCutoffWithoutDecision.status, 'PENDING',
+  'a new cutoff with same-day sales remains pending until its position is known');
+assert.equal(newCutoffWithoutDecision.unresolvedCount, 2);
+
+const individualOverride = summarizeOpeningDayPos({
+  ...novemberOpeningDay,
+  sales: novemberOpeningDay.sales.map((sale, index) => index === 0
+    ? { ...sale, individual_position: 'BEFORE_OPENING' }
+    : sale),
+});
+assert.equal(individualOverride.status, 'MIXED');
+assert.equal(individualOverride.afterCount, 3);
+assert.equal(individualOverride.beforeCount, 1,
+  'an individual decision retains priority over the joint rule');
 
 assert.match(migration, /^BEGIN;/m);
 assert.match(migration, /COMMIT;\s*$/);
@@ -141,13 +205,22 @@ assert.match(service, /finance_reverse_credit_card_payment/);
 assert.match(service, /listFinanceCreditCardPayments/);
 assert.match(service, /finance_opening_day_movement_decisions/);
 assert.match(service, /finance_opening_day_source_defaults/);
+assert.match(service, /onConflict: 'opening_balance_id,source_type'/,
+  'the joint decision is persisted idempotently and survives reloads');
 assert.match(service, /finance_clear_opening_movement_decision/);
-assert.match(panel, /Todas ocurrieron después/);
+assert.match(panel, /Ventas del día inicial: incluidas en el saldo disponible/);
+assert.match(panel, /Corregir decisión o revisar excepciones/);
+assert.match(panel, /Ocurrieron después del saldo inicial/);
+assert.match(panel, /Movimientos del día inicial realmente pendientes/);
 assert.match(panel, /Usar regla conjunta/);
 
 assert.match(followup, /^BEGIN;/m);
 assert.match(followup, /COMMIT;\s*$/);
 assert.match(followup, /CREATE TABLE public\.finance_opening_day_source_defaults/);
+assert.match(followup, /WHEN p_movement_business_date > p_cutoff_business_date THEN true/,
+  'all dates after the opening cutoff are automatic');
+assert.match(followup, /FROM public\.sales sale[\s\S]*finance_is_after_opening\([\s\S]*'POS_SALE', sale\.id/,
+  'POS collections are summed from unique sale rows through the cutoff resolver');
 assert.match(followup, /CREATE TABLE public\.finance_expense_liquidity_adjustments/);
 assert.match(followup, /individual decisions remain audited overrides/);
 assert.match(followup, /COALESCE\([\s\S]*decision\.position = 'AFTER_OPENING'[\s\S]*source_default\.position = 'AFTER_OPENING'/);
@@ -183,4 +256,4 @@ assert.match(authenticatedVerification, /ROLLBACK;\s*$/);
 assert.match(followupVerification, /expected_available_mxn = 3805 AS expected_3805_confirmed/);
 assert.match(followupVerification, /structural_checks_passed/);
 
-console.log('OK: corte; POS/MP; B2B cobrado; gastos inmediatos/crédito; pagos parciales; limitaciones; -$1,020');
+console.log('OK: corte; POS posterior automático; decisión persistente; POS/MP; limitaciones; -$1,020');
