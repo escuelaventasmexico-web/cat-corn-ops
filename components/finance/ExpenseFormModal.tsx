@@ -4,6 +4,13 @@ import { X, Save, Upload, FileText, FileCode, Eye, RefreshCw, Loader2, AlertTria
 import { FinanceDocument, FINANCE_DOCS_BUCKET, getFinanceDocSignedUrl } from '../../lib/financeDocuments';
 import { getInitialExpenseDate } from '../../lib/expenseDate.js';
 import {
+  getExpenseLiquidityTreatment,
+  getLegacyPaymentMethod,
+  type ExpenseLiquidityTreatment,
+  type ExpensePaymentInstrument,
+} from '../../lib/availableFunds.js';
+import { createFinanceCreditCard, listFinanceCreditCards, type FinanceCreditCard } from '../../services/availableFundsService';
+import {
   EXPENSE_CONCEPT_OPTIONS,
   EXPENSE_DESTINATION_OPTIONS,
   getExpenseDestinationLabel,
@@ -29,6 +36,9 @@ interface Expense {
   concept_code?: ExpenseConceptCode | null;
   destination_scope?: ManualExpenseDestinationScope | 'MIXED' | 'UNKNOWN' | null;
   classification_status?: 'CLASSIFIED' | 'SYSTEM' | null;
+  liquidity_treatment?: ExpenseLiquidityTreatment | null;
+  payment_instrument?: ExpensePaymentInstrument | null;
+  credit_card_id?: string | null;
 }
 
 interface ExpenseFormModalProps {
@@ -52,6 +62,8 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     concept_code: ExpenseConceptCode | ''; destination_scope: ManualExpenseDestinationScope | '';
     vendor: string; has_invoice: boolean;
     payment_method: 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER'; notes: string;
+    payment_instrument: ExpensePaymentInstrument | '';
+    credit_card_id: string | null;
     fixed_cost_id: string | null; is_unbudgeted_fixed: boolean;
     fixed_cost_unbudgeted_reason: string;
   }>({
@@ -67,6 +79,8 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     vendor: expense?.vendor || '',
     has_invoice: expense?.has_invoice || false,
     payment_method: expense?.payment_method || 'CASH' as const,
+    payment_instrument: expense?.payment_instrument || (expense ? '' : 'CASH'),
+    credit_card_id: expense?.credit_card_id || null,
     notes: expense?.notes || '',
     fixed_cost_id: expense?.fixed_cost_id || null,
     is_unbudgeted_fixed: expense?.is_unbudgeted_fixed || false,
@@ -76,6 +90,8 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
   const [saveError, setSaveError] = useState<string | null>(null);
   const [fixedCostOptions, setFixedCostOptions] = useState<FixedCostOption[]>([]);
   const [fixedCostsLoading, setFixedCostsLoading] = useState(false);
+  const [creditCards, setCreditCards] = useState<FinanceCreditCard[]>([]);
+  const [newCreditCardName, setNewCreditCardName] = useState('');
   const selectedFixedCost = fixedCostOptions.find(option => option.id === formData.fixed_cost_id);
   const fixedCostDestination = selectedFixedCost?.scope === 'AURRERA'
     || selectedFixedCost?.scope === 'CHIPITLAN'
@@ -121,6 +137,13 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     };
     loadOptions();
   }, [formData.type, formData.expense_date]);
+
+  useEffect(() => {
+    if (formData.payment_instrument !== 'CREDIT_CARD') return;
+    listFinanceCreditCards()
+      .then(setCreditCards)
+      .catch(error => setDocError(`No se pudo cargar el catálogo de tarjetas: ${error.message}`));
+  }, [formData.payment_instrument]);
 
   // Clear incompatible pending files when toggling has_invoice
   useEffect(() => {
@@ -356,15 +379,31 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
       if (formData.type === 'FIXED' && formData.fixed_cost_id && !fixedCostDestination) {
         throw new Error('La obligación seleccionada no tiene un destino utilizable. Revisa su configuración.');
       }
+      if (!formData.payment_instrument) {
+        throw new Error('Indica cómo se pagó el gasto o si fue una compra a crédito.');
+      }
+      if (formData.payment_instrument === 'CREDIT_CARD' && !formData.credit_card_id && !newCreditCardName.trim()) {
+        throw new Error('Selecciona la tarjeta que generó la obligación o registra su nombre.');
+      }
 
       const legacyCategory = getLegacyExpenseCategory(formData.concept_code);
+      const liquidityTreatment = getExpenseLiquidityTreatment(formData.payment_instrument);
+      let effectiveCreditCardId = formData.credit_card_id;
+      if (liquidityTreatment === 'CREDIT' && !effectiveCreditCardId) {
+        const createdCard = await createFinanceCreditCard(newCreditCardName);
+        effectiveCreditCardId = createdCard.id;
+        setCreditCards(previous => [...previous, createdCard]);
+      }
       const payload = {
         expense_date: formData.expense_date,
         amount_mxn: formData.amount_mxn,
         type: formData.type,
         vendor: formData.vendor || null,
         has_invoice: formData.has_invoice,
-        payment_method: formData.payment_method,
+        payment_method: getLegacyPaymentMethod(formData.payment_instrument),
+        payment_instrument: formData.payment_instrument,
+        liquidity_treatment: liquidityTreatment,
+        credit_card_id: liquidityTreatment === 'CREDIT' ? effectiveCreditCardId : null,
         notes: formData.notes || null,
         fixed_cost_id: formData.type === 'FIXED' && !formData.is_unbudgeted_fixed ? formData.fixed_cost_id : null,
         is_unbudgeted_fixed: formData.type === 'FIXED' && formData.is_unbudgeted_fixed,
@@ -543,22 +582,61 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
               </div>
             )}
 
-            <div>
+            <div className="md:col-span-2">
               <label className="block text-sm font-medium text-cc-text-muted mb-2">
-                Método de Pago *
+                Forma de pago y efecto en dinero disponible *
               </label>
               <select
-                value={formData.payment_method}
-                onChange={(e) => setFormData({ ...formData, payment_method: e.target.value as any })}
+                value={formData.payment_instrument}
+                onChange={(e) => {
+                  const paymentInstrument = e.target.value as ExpensePaymentInstrument | '';
+                  setFormData({
+                    ...formData,
+                    payment_instrument: paymentInstrument,
+                    payment_method: paymentInstrument ? getLegacyPaymentMethod(paymentInstrument) : formData.payment_method,
+                    credit_card_id: paymentInstrument === 'CREDIT_CARD' ? formData.credit_card_id : null,
+                  });
+                }}
                 className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
                 required
               >
+                <option value="">Seleccionar…</option>
                 <option value="CASH">Efectivo</option>
-                <option value="CARD">Tarjeta</option>
                 <option value="TRANSFER">Transferencia</option>
-                <option value="OTHER">Otro</option>
+                <option value="DEBIT_CARD">Tarjeta de débito · pago inmediato</option>
+                <option value="MERCADO_PAGO">Mercado Pago · disponible/pago inmediato</option>
+                <option value="CREDIT_CARD">Tarjeta de crédito · crea obligación</option>
+                <option value="OTHER">Otro pago inmediato</option>
               </select>
+              {expense && !expense.liquidity_treatment && (
+                <p className="mt-1 text-xs text-amber-300">El método histórico no distingue débito, crédito o Mercado Pago; selecciónalo sin inferencias.</p>
+              )}
             </div>
+
+            {formData.payment_instrument === 'CREDIT_CARD' && (
+              <div className="md:col-span-2 rounded-lg border border-blue-500/25 bg-blue-500/5 p-4">
+                <label className="block text-sm font-medium text-blue-200 mb-2">Tarjeta que queda por pagar *</label>
+                <select
+                  value={formData.credit_card_id || ''}
+                  onChange={(e) => setFormData({ ...formData, credit_card_id: e.target.value || null })}
+                  className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main"
+                  required
+                >
+                  <option value="">Registrar nueva…</option>
+                  {creditCards.map(card => <option key={card.id} value={card.id}>{card.name}</option>)}
+                </select>
+                {!formData.credit_card_id && (
+                  <input
+                    value={newCreditCardName}
+                    onChange={(e) => setNewCreditCardName(e.target.value)}
+                    className="mt-3 w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main"
+                    placeholder="Nombre de la tarjeta"
+                    required
+                  />
+                )}
+                <p className="mt-2 text-xs text-cc-text-muted">La compra entra al gasto/P&amp;L, pero no reduce el dinero disponible hasta registrar el pago total o parcial de la tarjeta.</p>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-cc-text-muted mb-2">

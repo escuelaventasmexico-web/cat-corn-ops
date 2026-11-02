@@ -25,6 +25,7 @@ import { FixedCostsVsSales } from '../components/finance/FixedCostsVsSales.tsx';
 import { DailyBreakdownModal } from '../components/finance/DailyBreakdownModal.tsx';
 import { MonthCalendar } from '../components/finance/MonthCalendar.tsx';
 import { FinanceSalesBreakdown } from '../components/finance/FinanceSalesBreakdown.tsx';
+import { AvailableFundsPanel } from '../components/finance/AvailableFundsPanel.tsx';
 
 interface FinanceCard {
   path: string;
@@ -303,6 +304,8 @@ const FinanceResumenTest = () => {
                 <p className="text-sm text-cc-text-muted">Define una meta mensual para ver el progreso</p>
               )}
             </div>
+
+          <AvailableFundsPanel monthStartISO={monthStartISO} />
 
           {/* Metrics Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

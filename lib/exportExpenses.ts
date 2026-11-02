@@ -6,6 +6,7 @@ import {
   type ExpenseConceptCode,
   type ExpenseDestinationScope,
 } from './expenseClassification.js';
+import type { ExpenseLiquidityTreatment, ExpensePaymentInstrument } from './availableFunds.js';
 
 interface Expense {
   id: string;
@@ -20,6 +21,8 @@ interface Expense {
   concept_code?: ExpenseConceptCode | null;
   destination_scope?: ExpenseDestinationScope | null;
   classification_status?: 'CLASSIFIED' | 'SYSTEM' | null;
+  liquidity_treatment?: ExpenseLiquidityTreatment | null;
+  payment_instrument?: ExpensePaymentInstrument | null;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -33,6 +36,10 @@ const PM_LABELS: Record<string, string> = {
   CARD: 'Tarjeta',
   TRANSFER: 'Transferencia',
   OTHER: 'Otro',
+};
+const INSTRUMENT_LABELS: Record<string, string> = {
+  CASH: 'Efectivo', TRANSFER: 'Transferencia', DEBIT_CARD: 'Débito',
+  CREDIT_CARD: 'Crédito', MERCADO_PAGO: 'Mercado Pago', OTHER: 'Otro',
 };
 
 const BAR_TOTAL = 30;
@@ -84,7 +91,7 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
   // ─────────────────────────────────────────────────────────────────
   // HOJA 1: Gastos del Mes
   // ─────────────────────────────────────────────────────────────────
-  const headers = ['Fecha', 'Tipo', 'Concepto', 'Destino', 'Proveedor', 'Monto (MXN)', 'Método de Pago', 'Factura', 'Notas'];
+  const headers = ['Fecha', 'Tipo', 'Concepto', 'Destino', 'Proveedor', 'Monto (MXN)', 'Instrumento', 'Efecto en liquidez', 'Factura', 'Notas'];
 
   const rows = expenses.map((e) => [
     formatDateOnly(e.expense_date),
@@ -93,7 +100,10 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
     getExpenseDestinationLabel(e.destination_scope),
     e.vendor ?? '-',
     Number(e.amount_mxn),
-    PM_LABELS[e.payment_method] ?? e.payment_method,
+    e.payment_instrument ? INSTRUMENT_LABELS[e.payment_instrument] : (PM_LABELS[e.payment_method] ?? e.payment_method),
+    e.liquidity_treatment === 'IMMEDIATE' ? 'Salida inmediata'
+      : e.liquidity_treatment === 'CREDIT' ? 'Compra a crédito'
+        : 'Pendiente de clasificar',
     e.has_invoice ? 'Sí' : 'No',
     e.notes ?? '',
   ]);
@@ -109,6 +119,7 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
     { wch: 24 }, // Proveedor
     { wch: 16 }, // Monto
     { wch: 18 }, // Método de Pago
+    { wch: 22 }, // Efecto en liquidez
     { wch: 10 }, // Factura
     { wch: 30 }, // Notas
   ];

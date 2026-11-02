@@ -13,6 +13,7 @@ import {
   type ExpenseConceptCode,
   type ExpenseDestinationScope,
 } from '../../lib/expenseClassification.js';
+import type { ExpenseLiquidityTreatment, ExpensePaymentInstrument } from '../../lib/availableFunds.js';
 
 interface Expense {
   id: string;
@@ -30,6 +31,9 @@ interface Expense {
   concept_code?: ExpenseConceptCode | null;
   destination_scope?: ExpenseDestinationScope | null;
   classification_status?: 'CLASSIFIED' | 'SYSTEM' | null;
+  liquidity_treatment?: ExpenseLiquidityTreatment | null;
+  payment_instrument?: ExpensePaymentInstrument | null;
+  credit_card_id?: string | null;
   created_at: string;
 }
 
@@ -162,6 +166,12 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
       OTHER: 'Otro'
     };
     return labels[method] || method;
+  };
+
+  const getLiquidityLabel = (expense: Expense) => {
+    if (expense.liquidity_treatment === 'CREDIT') return 'Compra a crédito';
+    if (expense.liquidity_treatment === 'IMMEDIATE') return 'Salida inmediata';
+    return 'Liquidez pendiente de clasificar';
   };
 
   const filteredExpenses = filterExpensesByClassification(expenses, conceptFilter, destinationFilter);
@@ -354,7 +364,10 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
                         ${Number(expense.amount_mxn).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
                       </td>
                       <td className="py-3 px-4 text-cc-text-muted text-sm">
-                        {getPaymentMethodLabel(expense.payment_method)}
+                        <p>{getPaymentMethodLabel(expense.payment_method)}</p>
+                        <p className={`text-[11px] ${expense.liquidity_treatment ? 'text-cc-text-muted' : 'text-amber-300'}`}>
+                          {getLiquidityLabel(expense)}
+                        </p>
                       </td>
                       <td className="py-3 px-4 text-center">
                         {expense.has_invoice ? (
