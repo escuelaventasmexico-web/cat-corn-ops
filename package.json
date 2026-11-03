@@ -13,6 +13,7 @@
     "test:finance-fixed-cost-obligations": "node scripts/test-finance-fixed-cost-obligations.mjs",
     "test:expense-classification": "node scripts/test-expense-classification.mjs",
     "test:finance-available-funds": "node scripts/test-finance-available-funds.mjs",
+    "test:finance-supply-budget": "node scripts/test-finance-supply-budget.mjs",
     "test:gato-mayor-3x2": "node scripts/test-gato-mayor-3x2.mjs",
     "verify:cash-inventory-control": "node scripts/verify-cash-inventory-control.mjs",
     "preview": "vite preview"

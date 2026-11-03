@@ -26,6 +26,7 @@ import { DailyBreakdownModal } from '../components/finance/DailyBreakdownModal.t
 import { MonthCalendar } from '../components/finance/MonthCalendar.tsx';
 import { FinanceSalesBreakdown } from '../components/finance/FinanceSalesBreakdown.tsx';
 import { AvailableFundsPanel } from '../components/finance/AvailableFundsPanel.tsx';
+import { SupplyBudgetPanel } from '../components/finance/SupplyBudgetPanel.tsx';
 
 interface FinanceCard {
   path: string;
@@ -306,6 +307,8 @@ const FinanceResumenTest = () => {
             </div>
 
           <AvailableFundsPanel monthStartISO={monthStartISO} />
+
+          <SupplyBudgetPanel monthStartISO={monthStartISO} />
 
           {/* Metrics Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

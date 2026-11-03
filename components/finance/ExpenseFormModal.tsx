@@ -19,6 +19,12 @@ import {
   type ExpenseConceptCode,
   type ManualExpenseDestinationScope,
 } from '../../lib/expenseClassification.js';
+import {
+  calculateSupplyBudgetProjection,
+  getMonthStart,
+  isSupplyConcept,
+} from '../../lib/supplyBudget.js';
+import { getSupplyBudgetSnapshot, type SupplyBudgetSnapshot } from '../../services/supplyBudgetService';
 
 interface Expense {
   id: string;
@@ -92,6 +98,9 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
   const [fixedCostsLoading, setFixedCostsLoading] = useState(false);
   const [creditCards, setCreditCards] = useState<FinanceCreditCard[]>([]);
   const [newCreditCardName, setNewCreditCardName] = useState('');
+  const [supplyBudget, setSupplyBudget] = useState<SupplyBudgetSnapshot | null>(null);
+  const [supplyBudgetLoading, setSupplyBudgetLoading] = useState(false);
+  const [supplyBudgetError, setSupplyBudgetError] = useState<string | null>(null);
   const selectedFixedCost = fixedCostOptions.find(option => option.id === formData.fixed_cost_id);
   const fixedCostDestination = selectedFixedCost?.scope === 'AURRERA'
     || selectedFixedCost?.scope === 'CHIPITLAN'
@@ -144,6 +153,47 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
       .then(setCreditCards)
       .catch(error => setDocError(`No se pudo cargar el catálogo de tarjetas: ${error.message}`));
   }, [formData.payment_instrument]);
+
+  useEffect(() => {
+    const monthStart = getMonthStart(formData.expense_date);
+    if (!monthStart) {
+      setSupplyBudget(null);
+      setSupplyBudgetLoading(false);
+      setSupplyBudgetError(null);
+      return;
+    }
+    let active = true;
+    setSupplyBudgetLoading(true);
+    setSupplyBudgetError(null);
+    const timer = window.setTimeout(async () => {
+      try {
+        const next = await getSupplyBudgetSnapshot(monthStart, expense?.id);
+        if (active) setSupplyBudget(next);
+      } catch (error: any) {
+        if (active) {
+          setSupplyBudget(null);
+          setSupplyBudgetError(error?.message || 'No se pudo calcular el presupuesto proyectado.');
+        }
+      } finally {
+        if (active) setSupplyBudgetLoading(false);
+      }
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [formData.expense_date, expense?.id]);
+
+  const supplyProjection = supplyBudget
+    ? calculateSupplyBudgetProjection({
+      limitMxn: supplyBudget.limit_mxn,
+      usedExcludingEditedExpenseMxn: supplyBudget.used_mxn,
+      amountMxn: formData.amount_mxn,
+      conceptCode: formData.concept_code,
+    })
+    : null;
+  const showSupplyProjection = isSupplyConcept(formData.concept_code)
+    || isSupplyConcept(expense?.concept_code);
 
   // Clear incompatible pending files when toggling has_invoice
   useEffect(() => {
@@ -683,6 +733,62 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
                 {expense && !expense.destination_scope && (
                   <p className="mt-1 text-xs text-amber-300">Registro anterior pendiente de clasificar.</p>
                 )}
+              </div>
+            )}
+
+            {showSupplyProjection && (
+              <div className="md:col-span-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-4">
+                <p className="text-sm font-semibold text-emerald-200">Presupuesto mensual de insumos</p>
+                {supplyBudgetLoading ? (
+                  <p className="mt-2 text-sm text-cc-text-muted">Calculando acumulado proyectado…</p>
+                ) : supplyBudget && supplyProjection ? (
+                  <>
+                    <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
+                      <div>
+                        <p className="text-xs text-cc-text-muted">Utilizado antes de este gasto</p>
+                        <p className="font-semibold text-cc-cream">${supplyBudget.used_mxn.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-cc-text-muted">Acumulado proyectado</p>
+                        <p className="font-semibold text-cc-cream">${supplyProjection.projectedUsedMxn.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-cc-text-muted">Límite del mes</p>
+                        <p className="font-semibold text-cc-cream">
+                          {supplyBudget.limit_mxn === null
+                            ? 'Sin presupuesto definido'
+                            : `$${supplyBudget.limit_mxn.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`}
+                        </p>
+                      </div>
+                    </div>
+                    {supplyProjection.isOverBudget && (
+                      <p className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+                        <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+                        La compra rebasará el límite por ${supplyProjection.exceededMxn.toLocaleString('es-MX', { minimumFractionDigits: 2 })}. Puedes registrar el gasto real.
+                      </p>
+                    )}
+                    {supplyProjection.isAtWarning && (
+                      <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+                        <AlertTriangle size={17} className="mt-0.5 shrink-0" />
+                        El acumulado alcanzará al menos el 80% del presupuesto
+                        {supplyProjection.warningThresholdMxn === null ? '' : ` (${supplyProjection.warningThresholdMxn.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })})`}.
+                      </p>
+                    )}
+                    {supplyBudget.potential_supply_unclassified.count > 0 && (
+                      <p className="mt-3 text-xs text-amber-300">
+                        Hay {supplyBudget.potential_supply_unclassified.count} gasto(s) sin concepto que podrían ser insumos; la proyección puede no ser definitiva.
+                      </p>
+                    )}
+                    {formData.payment_instrument === 'CREDIT_CARD' && isSupplyConcept(formData.concept_code) && (
+                      <p className="mt-2 text-xs text-blue-200">La compra a crédito consume este presupuesto al registrarse; el pago posterior de la tarjeta no se vuelve a contar.</p>
+                    )}
+                    {!isSupplyConcept(formData.concept_code) && isSupplyConcept(expense?.concept_code) && (
+                      <p className="mt-2 text-xs text-cc-text-muted">Al guardar, el gasto dejará de consumir el presupuesto de insumos de este mes.</p>
+                    )}
+                  </>
+                ) : supplyBudgetError ? (
+                  <p className="mt-2 text-sm text-amber-300">No se pudo obtener la proyección: {supplyBudgetError}. Esto no bloquea el registro del gasto real.</p>
+                ) : null}
               </div>
             )}
 
