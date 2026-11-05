@@ -25,6 +25,13 @@ import {
   isSupplyConcept,
 } from '../../lib/supplyBudget.js';
 import { getSupplyBudgetSnapshot, type SupplyBudgetSnapshot } from '../../services/supplyBudgetService';
+import {
+  calculateFuelBudgetProjection,
+  getFuelVehicleLabel,
+  isFuelConcept,
+  type FuelVehicleCode,
+} from '../../lib/fuelBudget.js';
+import { getFuelBudgetSnapshot, type FuelBudgetSnapshot } from '../../services/fuelBudgetService';
 
 interface Expense {
   id: string;
@@ -45,6 +52,7 @@ interface Expense {
   liquidity_treatment?: ExpenseLiquidityTreatment | null;
   payment_instrument?: ExpensePaymentInstrument | null;
   credit_card_id?: string | null;
+  fuel_vehicle_code?: FuelVehicleCode | null;
 }
 
 interface ExpenseFormModalProps {
@@ -72,6 +80,7 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     credit_card_id: string | null;
     fixed_cost_id: string | null; is_unbudgeted_fixed: boolean;
     fixed_cost_unbudgeted_reason: string;
+    fuel_vehicle_code: FuelVehicleCode | '';
   }>({
     expense_date: getInitialExpenseDate(expense?.expense_date),
     amount_mxn: expense?.amount_mxn || 0,
@@ -90,7 +99,8 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     notes: expense?.notes || '',
     fixed_cost_id: expense?.fixed_cost_id || null,
     is_unbudgeted_fixed: expense?.is_unbudgeted_fixed || false,
-    fixed_cost_unbudgeted_reason: expense?.fixed_cost_unbudgeted_reason || ''
+    fixed_cost_unbudgeted_reason: expense?.fixed_cost_unbudgeted_reason || '',
+    fuel_vehicle_code: expense?.fuel_vehicle_code || '',
   });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -101,6 +111,9 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
   const [supplyBudget, setSupplyBudget] = useState<SupplyBudgetSnapshot | null>(null);
   const [supplyBudgetLoading, setSupplyBudgetLoading] = useState(false);
   const [supplyBudgetError, setSupplyBudgetError] = useState<string | null>(null);
+  const [fuelBudget, setFuelBudget] = useState<FuelBudgetSnapshot | null>(null);
+  const [fuelBudgetLoading, setFuelBudgetLoading] = useState(false);
+  const [fuelBudgetError, setFuelBudgetError] = useState<string | null>(null);
   const selectedFixedCost = fixedCostOptions.find(option => option.id === formData.fixed_cost_id);
   const fixedCostDestination = selectedFixedCost?.scope === 'AURRERA'
     || selectedFixedCost?.scope === 'CHIPITLAN'
@@ -184,6 +197,36 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     };
   }, [formData.expense_date, expense?.id]);
 
+  useEffect(() => {
+    const monthStart = getMonthStart(formData.expense_date);
+    if (!monthStart) {
+      setFuelBudget(null);
+      setFuelBudgetLoading(false);
+      setFuelBudgetError(null);
+      return;
+    }
+    let active = true;
+    setFuelBudgetLoading(true);
+    setFuelBudgetError(null);
+    const timer = window.setTimeout(async () => {
+      try {
+        const next = await getFuelBudgetSnapshot(monthStart, expense?.id);
+        if (active) setFuelBudget(next);
+      } catch (error: any) {
+        if (active) {
+          setFuelBudget(null);
+          setFuelBudgetError(error?.message || 'No se pudo calcular el presupuesto de combustible.');
+        }
+      } finally {
+        if (active) setFuelBudgetLoading(false);
+      }
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [formData.expense_date, expense?.id]);
+
   const supplyProjection = supplyBudget
     ? calculateSupplyBudgetProjection({
       limitMxn: supplyBudget.limit_mxn,
@@ -194,6 +237,28 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     : null;
   const showSupplyProjection = isSupplyConcept(formData.concept_code)
     || isSupplyConcept(expense?.concept_code);
+  const fuelProjection = fuelBudget
+    ? calculateFuelBudgetProjection({
+      globalLimitMxn: fuelBudget.global_limit_mxn,
+      vehicleLimitsMxn: fuelBudget.vehicle_limits_mxn,
+      usedExcludingEditedExpenseMxn: fuelBudget.used_mxn,
+      usageByVehicleExcludingEditedExpense: fuelBudget.usage_by_vehicle,
+      amountMxn: formData.amount_mxn,
+      conceptCode: formData.concept_code,
+      fuelVehicleCode: formData.fuel_vehicle_code,
+    })
+    : null;
+  const showFuelProjection = isFuelConcept(formData.concept_code)
+    || isFuelConcept(expense?.concept_code);
+  const preservesHistoricalUnassignedFuel = Boolean(
+    expense
+    && expense.concept_code === 'FUEL'
+    && !expense.fuel_vehicle_code
+    && formData.concept_code === 'FUEL'
+    && !formData.fuel_vehicle_code,
+  );
+  const fuelVehicleRequired = formData.concept_code === 'FUEL'
+    && !preservesHistoricalUnassignedFuel;
 
   // Clear incompatible pending files when toggling has_invoice
   useEffect(() => {
@@ -435,6 +500,9 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
       if (formData.payment_instrument === 'CREDIT_CARD' && !formData.credit_card_id && !newCreditCardName.trim()) {
         throw new Error('Selecciona la tarjeta que generó la obligación o registra su nombre.');
       }
+      if (fuelVehicleRequired && !formData.fuel_vehicle_code) {
+        throw new Error('Selecciona el vehículo correspondiente a la carga de combustible.');
+      }
 
       const legacyCategory = getLegacyExpenseCategory(formData.concept_code);
       const liquidityTreatment = getExpenseLiquidityTreatment(formData.payment_instrument);
@@ -464,6 +532,7 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
         concept_code: classificationComplete ? formData.concept_code : null,
         destination_scope: classificationComplete ? effectiveDestination : null,
         classification_status: classificationComplete ? 'CLASSIFIED' : null,
+        fuel_vehicle_code: formData.concept_code === 'FUEL' ? formData.fuel_vehicle_code : null,
         // The live table still has legacy category NOT NULL. Keep concept_code
         // canonical and mirror its stable identifier only on new rows.
         ...(!expense ? { category: legacyCategory } : {}),
@@ -670,7 +739,7 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
                   value={formData.credit_card_id || ''}
                   onChange={(e) => setFormData({ ...formData, credit_card_id: e.target.value || null })}
                   className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main"
-                  required
+                  required={fuelVehicleRequired}
                 >
                   <option value="">Registrar nueva…</option>
                   {creditCards.map(card => <option key={card.id} value={card.id}>{card.name}</option>)}
@@ -694,7 +763,14 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
               </label>
               <select
                 value={formData.concept_code}
-                onChange={(e) => setFormData({ ...formData, concept_code: e.target.value as ExpenseConceptCode | '' })}
+                onChange={(e) => {
+                  const conceptCode = e.target.value as ExpenseConceptCode | '';
+                  setFormData({
+                    ...formData,
+                    concept_code: conceptCode,
+                    fuel_vehicle_code: conceptCode === 'FUEL' ? formData.fuel_vehicle_code : '',
+                  });
+                }}
                 className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main focus:ring-2 focus:ring-cc-primary outline-none"
                 required={!expense}
               >
@@ -732,6 +808,25 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
                 </select>
                 {expense && !expense.destination_scope && (
                   <p className="mt-1 text-xs text-amber-300">Registro anterior pendiente de clasificar.</p>
+                )}
+              </div>
+            )}
+
+            {formData.concept_code === 'FUEL' && (
+              <div className="md:col-span-2 rounded-lg border border-amber-500/25 bg-amber-500/5 p-4">
+                <label className="block text-sm font-medium text-amber-200 mb-2">Vehículo de la carga *</label>
+                <select
+                  value={formData.fuel_vehicle_code}
+                  onChange={(e) => setFormData({ ...formData, fuel_vehicle_code: e.target.value as FuelVehicleCode | '' })}
+                  className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main"
+                  required
+                >
+                  <option value="">Seleccionar vehículo…</option>
+                  <option value="UTILITY">Auto utilitario</option>
+                  <option value="MANAGERIAL">Auto gerencial</option>
+                </select>
+                {expense?.concept_code === 'FUEL' && !expense.fuel_vehicle_code && (
+                  <p className="mt-2 text-xs text-amber-300">Este gasto histórico está en “Sin vehículo asignado”. Puedes conservarlo así al editar; selecciona un vehículo sólo si existe evidencia.</p>
                 )}
               </div>
             )}
@@ -788,6 +883,48 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
                   </>
                 ) : supplyBudgetError ? (
                   <p className="mt-2 text-sm text-amber-300">No se pudo obtener la proyección: {supplyBudgetError}. Esto no bloquea el registro del gasto real.</p>
+                ) : null}
+              </div>
+            )}
+
+            {showFuelProjection && (
+              <div className="md:col-span-2 rounded-lg border border-amber-500/25 bg-amber-500/5 p-4">
+                <p className="text-sm font-semibold text-amber-200">Presupuesto mensual de combustible</p>
+                {fuelBudgetLoading ? (
+                  <p className="mt-2 text-sm text-cc-text-muted">Calculando acumulado proyectado…</p>
+                ) : fuelBudget && fuelProjection ? (
+                  <>
+                    <div className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                      <div className="rounded-lg border border-white/10 bg-black/10 p-3">
+                        <p className="text-xs text-cc-text-muted">Total proyectado</p>
+                        <p className="font-semibold text-cc-cream">${fuelProjection.total.projectedUsedMxn.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</p>
+                        <p className="mt-1 text-xs text-cc-text-muted">Límite: {fuelBudget.global_limit_mxn === null ? 'Sin presupuesto definido' : fuelBudget.global_limit_mxn.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</p>
+                      </div>
+                      <div className="rounded-lg border border-white/10 bg-black/10 p-3">
+                        <p className="text-xs text-cc-text-muted">{getFuelVehicleLabel(formData.fuel_vehicle_code)}</p>
+                        <p className="font-semibold text-cc-cream">${fuelProjection.vehicle.projectedUsedMxn.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</p>
+                        <p className="mt-1 text-xs text-cc-text-muted">Límite: {fuelProjection.vehicleCode && fuelBudget.vehicle_limits_mxn[fuelProjection.vehicleCode] !== null ? Number(fuelBudget.vehicle_limits_mxn[fuelProjection.vehicleCode]).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' }) : 'Sin presupuesto definido'}</p>
+                      </div>
+                    </div>
+                    {(fuelProjection.total.isOverBudget || fuelProjection.vehicle.isOverBudget) && (
+                      <p className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200"><AlertTriangle size={17} className="mt-0.5 shrink-0" />La carga rebasará {fuelProjection.total.isOverBudget && fuelProjection.vehicle.isOverBudget ? 'el límite global y el del vehículo' : fuelProjection.total.isOverBudget ? 'el límite global' : 'el límite del vehículo'}. Puedes registrar el gasto real.</p>
+                    )}
+                    {!fuelProjection.total.isOverBudget && !fuelProjection.vehicle.isOverBudget
+                      && (fuelProjection.total.isAtWarning || fuelProjection.vehicle.isAtWarning) && (
+                      <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200"><AlertTriangle size={17} className="mt-0.5 shrink-0" />La carga alcanzará al menos el 80% {fuelProjection.total.isAtWarning && fuelProjection.vehicle.isAtWarning ? 'del presupuesto global y del vehículo' : fuelProjection.total.isAtWarning ? 'del presupuesto global' : 'del presupuesto del vehículo'}.</p>
+                    )}
+                    {fuelBudget.unassigned_vehicle.count > 0 && (
+                      <p className="mt-3 text-xs text-amber-300">Hay {fuelBudget.unassigned_vehicle.count} gasto(s) histórico(s) sin vehículo por ${fuelBudget.unassigned_vehicle.amount_mxn.toLocaleString('es-MX', { minimumFractionDigits: 2 })}. Ya cuentan en el total global, no en un vehículo.</p>
+                    )}
+                    {formData.payment_instrument === 'CREDIT_CARD' && isFuelConcept(formData.concept_code) && (
+                      <p className="mt-2 text-xs text-blue-200">La compra a crédito consume este presupuesto al registrarse; el pago posterior de la tarjeta no se vuelve a contar.</p>
+                    )}
+                    {!isFuelConcept(formData.concept_code) && isFuelConcept(expense?.concept_code) && (
+                      <p className="mt-2 text-xs text-cc-text-muted">Al guardar, el gasto dejará de consumir el presupuesto de combustible de este mes.</p>
+                    )}
+                  </>
+                ) : fuelBudgetError ? (
+                  <p className="mt-2 text-sm text-amber-300">No se pudo obtener la proyección: {fuelBudgetError}. Esto no bloquea el registro del gasto real.</p>
                 ) : null}
               </div>
             )}

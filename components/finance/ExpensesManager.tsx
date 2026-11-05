@@ -19,6 +19,7 @@ import {
   type ExpenseDestinationScope,
 } from '../../lib/expenseClassification.js';
 import type { ExpenseLiquidityTreatment, ExpensePaymentInstrument } from '../../lib/availableFunds.js';
+import { getFuelVehicleLabel, type FuelVehicleCode } from '../../lib/fuelBudget.js';
 
 interface Expense {
   id: string;
@@ -42,6 +43,7 @@ interface Expense {
   credit_card_id?: string | null;
   liquidity_adjusted?: boolean;
   liquidity_adjustment_reason?: string | null;
+  fuel_vehicle_code?: FuelVehicleCode | null;
   created_at: string;
 }
 
@@ -388,6 +390,9 @@ export const ExpensesManager = ({ onClose }: ExpensesManagerProps) => {
                       <td className="py-3 px-4 text-cc-text-main text-sm">
                         <p>{getExpenseConceptLabel(expense.concept_code)}</p>
                         <p className="text-[11px] text-cc-text-muted">Grupo: {getExpenseConceptGroupLabel(expense.concept_code)}</p>
+                        {expense.concept_code === 'FUEL' && (
+                          <p className={`text-[11px] ${expense.fuel_vehicle_code ? 'text-amber-200' : 'text-amber-300'}`}>{getFuelVehicleLabel(expense.fuel_vehicle_code)}</p>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-cc-text-main text-sm">
                         <p>{getExpenseDestinationLabel(getExpenseBudgetDestination(expense))}</p>

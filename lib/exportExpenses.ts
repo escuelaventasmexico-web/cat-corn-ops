@@ -10,6 +10,7 @@ import {
   type ExpenseDestinationScope,
 } from './expenseClassification.js';
 import type { ExpenseLiquidityTreatment, ExpensePaymentInstrument } from './availableFunds.js';
+import { getFuelVehicleLabel, type FuelVehicleCode } from './fuelBudget.js';
 
 interface Expense {
   id: string;
@@ -27,6 +28,7 @@ interface Expense {
   classification_status?: 'CLASSIFIED' | 'SYSTEM' | null;
   liquidity_treatment?: ExpenseLiquidityTreatment | null;
   payment_instrument?: ExpensePaymentInstrument | null;
+  fuel_vehicle_code?: FuelVehicleCode | null;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -95,7 +97,7 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
   // ─────────────────────────────────────────────────────────────────
   // HOJA 1: Gastos del Mes
   // ─────────────────────────────────────────────────────────────────
-  const headers = ['Fecha', 'Tipo', 'Grupo', 'Concepto', 'Destino presupuestal', 'Origen de comisión', 'Proveedor', 'Monto (MXN)', 'Instrumento', 'Efecto en liquidez', 'Factura', 'Notas'];
+  const headers = ['Fecha', 'Tipo', 'Grupo', 'Concepto', 'Destino presupuestal', 'Origen de comisión', 'Vehículo combustible', 'Proveedor', 'Monto (MXN)', 'Instrumento', 'Efecto en liquidez', 'Factura', 'Notas'];
 
   const rows = expenses.map((e) => [
     formatDateOnly(e.expense_date),
@@ -104,6 +106,7 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
     getExpenseConceptLabel(e.concept_code),
     getExpenseDestinationLabel(getExpenseBudgetDestination(e)),
     e.concept_code === 'COMMISSIONS' ? getExpenseDestinationLabel(getExpenseCommissionOrigin(e)) : '-',
+    e.concept_code === 'FUEL' ? getFuelVehicleLabel(e.fuel_vehicle_code) : '-',
     e.vendor ?? '-',
     Number(e.amount_mxn),
     e.payment_instrument ? INSTRUMENT_LABELS[e.payment_instrument] : (PM_LABELS[e.payment_method] ?? e.payment_method),
@@ -124,6 +127,7 @@ export function exportExpensesToExcel(expenses: Expense[], yearMonth?: string) {
     { wch: 20 }, // Concepto
     { wch: 20 }, // Destino presupuestal
     { wch: 20 }, // Origen de comisión
+    { wch: 22 }, // Vehículo combustible
     { wch: 24 }, // Proveedor
     { wch: 16 }, // Monto
     { wch: 18 }, // Método de Pago
