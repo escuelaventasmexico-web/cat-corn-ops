@@ -1,4 +1,4 @@
-export type ExpenseConceptCode = 'CORN' | 'OIL' | 'SEASONINGS' | 'CARAMEL' | 'PACKAGING' | 'FUEL' | 'SERVICES' | 'PAYROLL' | 'RENT' | 'COMMISSIONS' | 'OTHER';
+export type ExpenseConceptCode = 'CORN' | 'OIL' | 'SEASONINGS' | 'CARAMEL' | 'PACKAGING' | 'STATIONERY' | 'FUEL' | 'SERVICES' | 'PAYROLL' | 'RENT' | 'COMMISSIONS' | 'OTHER';
 export type ManualExpenseDestinationScope = 'AURRERA' | 'CHIPITLAN' | 'SHARED';
 export type ExpenseDestinationScope = ManualExpenseDestinationScope | 'MIXED' | 'UNKNOWN';
 export type ExpenseClassificationStatus = 'CLASSIFIED' | 'SYSTEM';

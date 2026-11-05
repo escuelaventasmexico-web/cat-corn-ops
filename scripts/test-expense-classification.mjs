@@ -83,7 +83,7 @@ assert.throws(() => getInitialExpenseDate('31/10/2026'), /inválida/);
 
 assert.deepEqual(
   EXPENSE_CONCEPT_OPTIONS.map(option => option.id),
-  ['CORN', 'OIL', 'SEASONINGS', 'CARAMEL', 'PACKAGING', 'FUEL', 'SERVICES', 'PAYROLL', 'RENT', 'COMMISSIONS', 'OTHER'],
+  ['CORN', 'OIL', 'SEASONINGS', 'CARAMEL', 'PACKAGING', 'STATIONERY', 'FUEL', 'SERVICES', 'PAYROLL', 'RENT', 'COMMISSIONS', 'OTHER'],
 );
 assert.deepEqual(
   EXPENSE_REPORT_DESTINATION_OPTIONS.map(option => option.id),
@@ -100,6 +100,7 @@ assert.equal(getExpenseDestinationLabel('CHIPITLAN'), 'Chipitlán');
 assert.equal(getExpenseConceptLabel('COMMISSIONS'), 'Comisiones');
 assert.equal(getExpenseConceptLabel('PAYROLL'), 'Nómina');
 assert.equal(getExpenseConceptLabel('RENT'), 'Renta');
+assert.equal(getExpenseConceptLabel('STATIONERY'), 'Papelería');
 assert.equal(getExpenseDestinationLabel('UNKNOWN'), 'Destino por determinar');
 assert.equal(getExpenseDestinationLabel('MIXED'), 'Mixto');
 assert.equal(getLegacyExpenseCategory('PAYROLL'), 'PAYROLL');

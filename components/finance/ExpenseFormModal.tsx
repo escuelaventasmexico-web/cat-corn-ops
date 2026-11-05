@@ -32,6 +32,14 @@ import {
   type FuelVehicleCode,
 } from '../../lib/fuelBudget.js';
 import { getFuelBudgetSnapshot, type FuelBudgetSnapshot } from '../../services/fuelBudgetService';
+import {
+  calculateStationeryBudgetProjection,
+  isStationeryConcept,
+} from '../../lib/stationeryBudget.js';
+import {
+  getStationeryBudgetSnapshot,
+  type StationeryBudgetSnapshot,
+} from '../../services/stationeryBudgetService';
 
 interface Expense {
   id: string;
@@ -114,6 +122,9 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
   const [fuelBudget, setFuelBudget] = useState<FuelBudgetSnapshot | null>(null);
   const [fuelBudgetLoading, setFuelBudgetLoading] = useState(false);
   const [fuelBudgetError, setFuelBudgetError] = useState<string | null>(null);
+  const [stationeryBudget, setStationeryBudget] = useState<StationeryBudgetSnapshot | null>(null);
+  const [stationeryBudgetLoading, setStationeryBudgetLoading] = useState(false);
+  const [stationeryBudgetError, setStationeryBudgetError] = useState<string | null>(null);
   const selectedFixedCost = fixedCostOptions.find(option => option.id === formData.fixed_cost_id);
   const fixedCostDestination = selectedFixedCost?.scope === 'AURRERA'
     || selectedFixedCost?.scope === 'CHIPITLAN'
@@ -200,6 +211,37 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
   useEffect(() => {
     const monthStart = getMonthStart(formData.expense_date);
     if (!monthStart) {
+      setStationeryBudget(null);
+      setStationeryBudgetLoading(false);
+      setStationeryBudgetError(null);
+      return;
+    }
+    let active = true;
+    setStationeryBudget(null);
+    setStationeryBudgetLoading(true);
+    setStationeryBudgetError(null);
+    const timer = window.setTimeout(async () => {
+      try {
+        const next = await getStationeryBudgetSnapshot(monthStart, expense?.id);
+        if (active) setStationeryBudget(next);
+      } catch (error: any) {
+        if (active) {
+          setStationeryBudget(null);
+          setStationeryBudgetError(error?.message || 'No se pudo calcular el presupuesto de papelería.');
+        }
+      } finally {
+        if (active) setStationeryBudgetLoading(false);
+      }
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [formData.expense_date, expense?.id]);
+
+  useEffect(() => {
+    const monthStart = getMonthStart(formData.expense_date);
+    if (!monthStart) {
       setFuelBudget(null);
       setFuelBudgetLoading(false);
       setFuelBudgetError(null);
@@ -259,6 +301,16 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
   );
   const fuelVehicleRequired = formData.concept_code === 'FUEL'
     && !preservesHistoricalUnassignedFuel;
+  const stationeryProjection = stationeryBudget
+    ? calculateStationeryBudgetProjection({
+      limitMxn: stationeryBudget.limit_mxn,
+      usedExcludingEditedExpenseMxn: stationeryBudget.used_mxn,
+      amountMxn: formData.amount_mxn,
+      conceptCode: formData.concept_code,
+    })
+    : null;
+  const showStationeryProjection = isStationeryConcept(formData.concept_code)
+    || isStationeryConcept(expense?.concept_code);
 
   // Clear incompatible pending files when toggling has_invoice
   useEffect(() => {
@@ -502,6 +554,20 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
       }
       if (fuelVehicleRequired && !formData.fuel_vehicle_code) {
         throw new Error('Selecciona el vehículo correspondiente a la carga de combustible.');
+      }
+      if (isStationeryConcept(formData.concept_code)) {
+        const monthStart = getMonthStart(formData.expense_date);
+        if (!monthStart) throw new Error('La fecha del gasto no permite calcular el presupuesto de papelería.');
+        const latestStationeryBudget = await getStationeryBudgetSnapshot(monthStart, expense?.id);
+        const latestStationeryProjection = calculateStationeryBudgetProjection({
+          limitMxn: latestStationeryBudget.limit_mxn,
+          usedExcludingEditedExpenseMxn: latestStationeryBudget.used_mxn,
+          amountMxn: formData.amount_mxn,
+          conceptCode: formData.concept_code,
+        });
+        if (latestStationeryProjection.isOverBudget) {
+          throw new Error(`El gasto superaría el presupuesto mensual de papelería por ${latestStationeryProjection.exceededMxn.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}. Reduce el importe o edita el límite antes de guardar.`);
+        }
       }
 
       const legacyCategory = getLegacyExpenseCategory(formData.concept_code);
@@ -929,6 +995,37 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
               </div>
             )}
 
+            {showStationeryProjection && (
+              <div className="md:col-span-2 rounded-lg border border-sky-500/25 bg-sky-500/5 p-4">
+                <p className="text-sm font-semibold text-sky-200">Presupuesto mensual de papelería</p>
+                {stationeryBudgetLoading ? (
+                  <p className="mt-2 text-sm text-cc-text-muted">Calculando acumulado proyectado…</p>
+                ) : stationeryBudget && stationeryProjection ? (
+                  <>
+                    <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
+                      <div><p className="text-xs text-cc-text-muted">Utilizado antes de este gasto</p><p className="font-semibold text-cc-cream">{stationeryBudget.used_mxn.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</p></div>
+                      <div><p className="text-xs text-cc-text-muted">Acumulado proyectado</p><p className="font-semibold text-cc-cream">{stationeryProjection.projectedUsedMxn.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</p></div>
+                      <div><p className="text-xs text-cc-text-muted">Límite del mes</p><p className="font-semibold text-cc-cream">{stationeryBudget.limit_mxn === null ? 'Sin presupuesto definido' : stationeryBudget.limit_mxn.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</p></div>
+                    </div>
+                    {stationeryProjection.isOverBudget && (
+                      <p className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200"><AlertTriangle size={17} className="mt-0.5 shrink-0" />El gasto superaría el límite por {stationeryProjection.exceededMxn.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}. No se puede guardar hasta reducir el importe o editar el límite.</p>
+                    )}
+                    {stationeryProjection.isAtWarning && (
+                      <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200"><AlertTriangle size={17} className="mt-0.5 shrink-0" />El acumulado alcanzará al menos el 80% del presupuesto ({stationeryProjection.warningThresholdMxn?.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}).</p>
+                    )}
+                    {formData.payment_instrument === 'CREDIT_CARD' && isStationeryConcept(formData.concept_code) && (
+                      <p className="mt-2 text-xs text-blue-200">La compra a crédito consume este presupuesto al registrarse; el pago posterior de la tarjeta no se vuelve a contar.</p>
+                    )}
+                    {!isStationeryConcept(formData.concept_code) && isStationeryConcept(expense?.concept_code) && (
+                      <p className="mt-2 text-xs text-cc-text-muted">Al guardar, el gasto dejará de consumir el presupuesto de papelería de este mes.</p>
+                    )}
+                  </>
+                ) : stationeryBudgetError ? (
+                  <p className="mt-2 text-sm text-red-300">No se pudo obtener la proyección: {stationeryBudgetError}. Supabase validará el límite al intentar guardar.</p>
+                ) : null}
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-cc-text-muted mb-2">
                 Proveedor
@@ -1019,7 +1116,7 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || Boolean(stationeryProjection?.isOverBudget)}
               className="flex items-center gap-2 px-4 py-2 bg-cc-primary text-cc-bg rounded-lg hover:bg-cc-primary/90 transition-colors font-medium disabled:opacity-50"
             >
               <Save size={20} />

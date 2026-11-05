@@ -28,6 +28,7 @@ import { FinanceSalesBreakdown } from '../components/finance/FinanceSalesBreakdo
 import { AvailableFundsPanel } from '../components/finance/AvailableFundsPanel.tsx';
 import { SupplyBudgetPanel } from '../components/finance/SupplyBudgetPanel.tsx';
 import { FuelBudgetPanel } from '../components/finance/FuelBudgetPanel.tsx';
+import { StationeryBudgetPanel } from '../components/finance/StationeryBudgetPanel.tsx';
 
 interface FinanceCard {
   path: string;
@@ -312,6 +313,8 @@ const FinanceResumenTest = () => {
           <SupplyBudgetPanel monthStartISO={monthStartISO} />
 
           <FuelBudgetPanel monthStartISO={monthStartISO} />
+
+          <StationeryBudgetPanel monthStartISO={monthStartISO} />
 
           {/* Metrics Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
