@@ -18,6 +18,8 @@ const authenticatedVerification = read('../supabase/verification/20261101091000_
 const enforcement = read('../supabase/pending/20261101100000_enforce_expense_liquidity_classification.sql');
 const followup = read('../supabase/applied-manually/20261101220000_available_funds_pos_defaults_commission_liquidity.sql');
 const followupVerification = read('../supabase/verification/20261101220000_verify_available_funds_pos_defaults_commission_liquidity.sql');
+const orderCollections = read('../supabase/applied-manually/20261110150000_finance_available_funds_order_collections.sql');
+const orderCollectionsVerification = read('../supabase/verification/20261110150000_verify_finance_available_funds_order_collections.sql');
 const panel = read('../components/finance/AvailableFundsPanel.tsx');
 const expenseForm = read('../components/finance/ExpenseFormModal.tsx');
 const service = read('../services/availableFundsService.ts');
@@ -33,6 +35,10 @@ assert.equal(calculateKnownAvailableFunds({
 }), 5686);
 assert.equal(calculateKnownAvailableFunds({ openingBalance: 10010 }), 10010,
   'the opening balance is not sales or profit');
+assert.equal(calculateKnownAvailableFunds({
+  openingBalance: 8036.40,
+  orderCollections: 268,
+}), 8304.40, 'the real $124 cash + $144 transfer order collections increase available funds once');
 
 assert.equal(buildAvailableFundsStatus({ hasOpeningBalance: false }), 'MISSING_OPENING');
 assert.equal(buildAvailableFundsStatus({ hasOpeningBalance: true }), 'EXACT');
@@ -187,11 +193,11 @@ assert.match(expenseForm, /Mercado Pago · disponible\/pago inmediato/);
 assert.match(expenseForm, /liquidity_treatment: liquidityTreatment/);
 assert.match(expenseForm, /credit_card_id: liquidityTreatment === 'CREDIT'/);
 assert.match(panel, /Registrar pago de tarjeta/);
-for (const label of ['Saldo inicial', 'Cobros POS', 'Cobranza B2B', 'Gastos pagados', 'Pagos de tarjeta', 'Saldo disponible']) {
+for (const label of ['Saldo inicial', 'Cobros POS', 'Cobranza B2B', 'Cobros de pedidos', 'Gastos pagados', 'Pagos de tarjeta', 'Saldo disponible']) {
   assert.match(panel, new RegExp(label), `el desglose visible incluye ${label}`);
 }
 assert.match(panel, /Cómo se obtiene el saldo disponible/);
-assert.match(panel, /Saldo inicial \+ cobros POS \+ cobranza B2B − gastos pagados − pagos de tarjeta/);
+assert.match(panel, /Saldo inicial \+ cobros POS \+ cobranza B2B \+ cobros de pedidos − gastos pagados − pagos de tarjeta/);
 assert.match(panel, /El saldo inicial sólo pertenece a este flujo/);
 assert.match(panel, /No se presenta como saldo exacto/, 'se conservan advertencias cuando falta información');
 assert.match(panel, /idempotencyKey: paymentToken/);
@@ -255,5 +261,30 @@ assert.match(authenticatedVerification, /finance_reverse_credit_card_payment/);
 assert.match(authenticatedVerification, /ROLLBACK;\s*$/);
 assert.match(followupVerification, /expected_available_mxn = 3805 AS expected_3805_confirmed/);
 assert.match(followupVerification, /structural_checks_passed/);
+
+assert.match(orderCollections, /^BEGIN;/m);
+assert.match(orderCollections, /COMMIT;\s*$/);
+assert.match(orderCollections, /CREATE OR REPLACE FUNCTION public\.finance_month_available_funds_v2/);
+assert.match(orderCollections, /public\.finance_month_available_funds\(p_month_start\)/,
+  'the compatible V2 RPC retains every existing liquidity source');
+assert.match(orderCollections, /lower\(COALESCE\(sale\.sale_origin, ''\)\) = 'order'/,
+  'only checkout sales explicitly classified as orders enter this source');
+assert.match(orderCollections, /sale\.created_at AT TIME ZONE 'America\/Mexico_City'/,
+  'the sale checkout timestamp is the payment business date');
+assert.match(orderCollections, /order_collections_mxn/);
+assert.match(orderCollections, /order_collections_by_method/);
+assert.match(orderCollections, /v_order_cash \+ v_order_card \+ v_order_transfer/);
+assert.match(orderCollections, /v_base->>'known_available_mxn'\)::NUMERIC \+ v_order_total/);
+assert.match(orderCollections, /COALESCE\(upper\(sale\.payment_method::TEXT\), ''\) NOT IN \('CASH','CARD','TRANSFER','MIXED'\)/,
+  'only genuinely unsupported paid-order methods remain a limitation');
+assert.doesNotMatch(orderCollections, /\b(INSERT|UPDATE|DELETE)\b\s+(INTO\s+)?public\.(sales|orders|expenses)/i);
+assert.match(service, /finance_month_available_funds_v2/);
+assert.match(panel, /Efectivo.*order_collections_by_method\?\.cash_mxn/);
+assert.match(panel, /Transferencia.*order_collections_by_method\?\.transfer_mxn/);
+assert.match(orderCollectionsVerification, /paid_order_total = 268/);
+assert.match(orderCollectionsVerification, /cash_total = 124/);
+assert.match(orderCollectionsVerification, /transfer_total = 144/);
+assert.match(orderCollectionsVerification, /reported_case_balance_after_orders = 8304\.40/);
+assert.doesNotMatch(stripComments(orderCollectionsVerification), /\b(INSERT|UPDATE|DELETE|ALTER|DROP|TRUNCATE|CREATE|GRANT|REVOKE)\b/i);
 
 console.log('OK: corte; POS posterior automático; decisión persistente; POS/MP; limitaciones; -$1,020');

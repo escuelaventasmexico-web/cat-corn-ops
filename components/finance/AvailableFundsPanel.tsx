@@ -27,7 +27,7 @@ const inputClass = 'w-full rounded-lg border border-white/10 bg-[#1C1A1A] px-3 p
 const limitationLabels: Record<string, string> = {
   pending_expenses: 'Gastos sin tratamiento de liquidez',
   refunded_pos_sales: 'Ventas POS devueltas sin salida de reembolso registrada',
-  order_sales: 'Pedidos con cobro aún no conciliado por esta etapa',
+  order_sales: 'Cobros de pedidos con método de pago aún no conciliable',
   delivery_sales: 'Delivery sin liquidación real registrada',
   unsupported_pos_payments: 'Cobros POS con método no soportado',
   ambiguous_cutoff_movements: 'Movimientos del día pendientes de confirmar',
@@ -242,10 +242,16 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 text-sm">
+              <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 text-sm">
                 <Metric label="Saldo inicial" value={snapshot.opening_balance.amount_mxn} />
                 <Metric label="+ Cobros POS" value={snapshot.inflows.pos_collections_mxn} positive />
                 <Metric label="+ Cobranza B2B" value={snapshot.inflows.b2b_collections_mxn} positive />
+                <Metric
+                  label="+ Cobros de pedidos"
+                  value={snapshot.inflows.order_collections_mxn}
+                  positive
+                  detail={`Efectivo ${money(snapshot.inflows.order_collections_by_method?.cash_mxn)} · Tarjeta ${money(snapshot.inflows.order_collections_by_method?.card_mxn)} · Transferencia ${money(snapshot.inflows.order_collections_by_method?.transfer_mxn)}`}
+                />
                 <Metric label="− Gastos pagados" value={snapshot.outflows.immediate_expenses_mxn} negative />
                 <Metric label="− Pagos de tarjeta" value={snapshot.outflows.credit_card_payments_mxn} negative />
               </div>
@@ -257,6 +263,8 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
                   <span>{money(snapshot.inflows.pos_collections_mxn)}</span>
                   <span className="text-green-300">+</span>
                   <span>{money(snapshot.inflows.b2b_collections_mxn)}</span>
+                  <span className="text-green-300">+</span>
+                  <span>{money(snapshot.inflows.order_collections_mxn)}</span>
                   <span className="text-red-300">−</span>
                   <span>{money(snapshot.outflows.immediate_expenses_mxn)}</span>
                   <span className="text-red-300">−</span>
@@ -264,7 +272,7 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
                   <span className="text-cyan-300">=</span>
                   <span className={Number(snapshot.known_available_mxn) < 0 ? 'text-red-300' : 'text-cyan-200'}>{money(snapshot.known_available_mxn)}</span>
                 </p>
-                <p className="mt-1 text-xs text-cc-text-muted">Saldo inicial + cobros POS + cobranza B2B − gastos pagados − pagos de tarjeta.</p>
+                <p className="mt-1 text-xs text-cc-text-muted">Saldo inicial + cobros POS + cobranza B2B + cobros de pedidos − gastos pagados − pagos de tarjeta.</p>
                 <p className="mt-2 text-xs text-cc-text-muted">El saldo inicial sólo pertenece a este flujo: no se vuelve a sumar como venta del mes.</p>
               </div>
               <div className="flex flex-wrap items-end justify-between gap-3 border-t border-cyan-500/20 pt-4">
@@ -434,7 +442,7 @@ export const AvailableFundsPanel = ({ monthStartISO }: Props) => {
   );
 };
 
-const Metric = ({ label, value, positive, negative }: { label: string; value: number; positive?: boolean; negative?: boolean }) => <div className="rounded-lg bg-black/20 p-3"><p className="text-xs text-cc-text-muted">{label}</p><p className={`font-bold ${positive ? 'text-green-300' : negative ? 'text-red-300' : 'text-cc-cream'}`}>{money(value)}</p></div>;
+const Metric = ({ label, value, positive, negative, detail }: { label: string; value: number; positive?: boolean; negative?: boolean; detail?: string }) => <div className="rounded-lg bg-black/20 p-3"><p className="text-xs text-cc-text-muted">{label}</p><p className={`font-bold ${positive ? 'text-green-300' : negative ? 'text-red-300' : 'text-cc-cream'}`}>{money(value)}</p>{detail && <p className="mt-1 text-[10px] leading-4 text-cc-text-muted">{detail}</p>}</div>;
 const Field = ({ label, children }: { label: string; children: React.ReactNode }) => <label className="block text-sm text-cc-text-muted"><span className="block mb-1.5">{label}</span>{children}</label>;
 const SubmitButton = ({ saving, label }: { saving: boolean; label: string }) => <button disabled={saving} className="w-full rounded-lg bg-cc-primary px-4 py-2.5 font-semibold text-cc-bg disabled:opacity-50">{saving ? 'Guardando…' : label}</button>;
 const InlineError = ({ error }: { error: string }) => error ? <div role="alert" className="flex gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300"><AlertTriangle size={18} className="shrink-0" />{error}</div> : null;

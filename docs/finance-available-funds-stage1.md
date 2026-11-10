@@ -12,6 +12,7 @@ Desde el punto de corte capturado por el usuario:
 saldo conocido = saldo inicial
                + cobros POS
                + cobranza B2B confirmada
+               + cobros confirmados de Pedidos
                - gastos con pago inmediato
                - pagos reales de tarjeta de crédito
 ```
@@ -26,8 +27,13 @@ saldo conocido = saldo inicial
 - El corte de noviembre usa `cutoff_business_date = 2026-11-01`. No se inventa
   una hora: cada movimiento de ese día se confirma como `BEFORE_OPENING`
   (ya incluido en el saldo) o `AFTER_OPENING` (ocurrió después del saldo).
-- POS se agrupa por la fecha de `created_at` en `America/Mexico_City`; gastos y
+- POS y Pedidos cobrados se agrupan por la fecha de `sales.created_at` en
+  `America/Mexico_City`; gastos y
   pagos de tarjeta usan su fecha económica, nunca la hora en que se capturaron.
+- Pedidos sólo entra cuando el flujo **Cobrar pedido** crea una venta con
+  `sale_origin = 'order'`. La fila se cuenta una vez y conserva su desglose de
+  efectivo, tarjeta y transferencia; pedidos pendientes, preparados,
+  cancelados o estimados no crean esa venta y no se suman.
 
 ## Cuándo no se afirma un saldo exacto
 
@@ -37,7 +43,7 @@ al corte:
 
 - gasto sin tratamiento de liquidez;
 - venta POS devuelta sin una salida de reembolso explícita;
-- pedido, porque la relación actual no acredita de forma atómica pedido y cobro;
+- cobro de pedido con un método que todavía no pueda conciliarse con liquidez;
 - delivery, porque todavía no existe liquidación real de plataforma;
 - método POS no soportado;
 - movimiento del mismo día del saldo inicial todavía sin confirmar como antes
@@ -138,3 +144,24 @@ El verificador de solo lectura está en
 `supabase/verification/20261101220000_verify_available_funds_pos_defaults_commission_liquidity.sql`.
 La obligatoriedad general futura de liquidez permanece separada en
 `supabase/pending/20261101100000_enforce_expense_liquidity_classification.sql`.
+
+## Cobros de Pedidos
+
+La ampliación compatible agrega `finance_month_available_funds_v2(date)` y
+mantiene la RPC anterior para que una versión previa de la interfaz continúe
+funcionando durante el despliegue. La V2 reutiliza todo el cálculo existente y
+suma una fuente separada `order_collections_mxn`; no modifica ventas, pedidos,
+gastos, saldos ni las fórmulas de P&L.
+
+El SQL se conserva fuera de `supabase/migrations` en
+`supabase/applied-manually/20261110150000_finance_available_funds_order_collections.sql`.
+Fue aplicado manualmente en Supabase el 10/11/2026 y no debe volver a
+ejecutarse. Su SHA-256 exacto es
+`0d216474e6745c7d580030f68de237669065af9d2394ea24bfd7edd17d13186b`.
+Su verificador de solo lectura es
+`supabase/verification/20261110150000_verify_finance_available_funds_order_collections.sql`.
+El verificador confirmó el caso real de cuatro cobros por `$268` (`$124` en
+efectivo y `$144` por transferencia), sin IDs duplicados ni filas clasificadas
+simultáneamente como POS.
+No debe ejecutarse mediante `supabase db push` ni copiarse a la carpeta de
+migraciones automáticas.

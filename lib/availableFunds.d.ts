@@ -20,6 +20,7 @@ export function calculateKnownAvailableFunds(input: {
   openingBalance?: number;
   posCollections?: number;
   b2bCollections?: number;
+  orderCollections?: number;
   immediateExpenses?: number;
   creditCardPayments?: number;
 }): number;

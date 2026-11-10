@@ -43,6 +43,13 @@ export interface AvailableFundsSnapshot {
   inflows: {
     pos_collections_mxn: number;
     b2b_collections_mxn: number;
+    order_collections_mxn: number;
+    order_collections_by_method: {
+      count: number;
+      cash_mxn: number;
+      card_mxn: number;
+      transfer_mxn: number;
+    };
   };
   outflows: {
     immediate_expenses_mxn: number;
@@ -93,7 +100,7 @@ const requireClient = () => {
   return supabase;
 };
 export const getAvailableFundsSnapshot = async (monthStart: string): Promise<AvailableFundsSnapshot> => {
-  const { data, error } = await requireClient().rpc('finance_month_available_funds', {
+  const { data, error } = await requireClient().rpc('finance_month_available_funds_v2', {
     p_month_start: monthStart,
   });
   if (error) throw error;
