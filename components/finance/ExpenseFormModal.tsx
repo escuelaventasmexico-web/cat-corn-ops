@@ -40,6 +40,14 @@ import {
   getStationeryBudgetSnapshot,
   type StationeryBudgetSnapshot,
 } from '../../services/stationeryBudgetService';
+import {
+  calculateCleaningBudgetProjection,
+  isCleaningConcept,
+} from '../../lib/cleaningBudget.js';
+import {
+  getCleaningBudgetSnapshot,
+  type CleaningBudgetSnapshot,
+} from '../../services/cleaningBudgetService';
 
 interface Expense {
   id: string;
@@ -125,6 +133,9 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
   const [stationeryBudget, setStationeryBudget] = useState<StationeryBudgetSnapshot | null>(null);
   const [stationeryBudgetLoading, setStationeryBudgetLoading] = useState(false);
   const [stationeryBudgetError, setStationeryBudgetError] = useState<string | null>(null);
+  const [cleaningBudget, setCleaningBudget] = useState<CleaningBudgetSnapshot | null>(null);
+  const [cleaningBudgetLoading, setCleaningBudgetLoading] = useState(false);
+  const [cleaningBudgetError, setCleaningBudgetError] = useState<string | null>(null);
   const selectedFixedCost = fixedCostOptions.find(option => option.id === formData.fixed_cost_id);
   const fixedCostDestination = selectedFixedCost?.scope === 'AURRERA'
     || selectedFixedCost?.scope === 'CHIPITLAN'
@@ -200,6 +211,37 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
         }
       } finally {
         if (active) setSupplyBudgetLoading(false);
+      }
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [formData.expense_date, expense?.id]);
+
+  useEffect(() => {
+    const monthStart = getMonthStart(formData.expense_date);
+    if (!monthStart) {
+      setCleaningBudget(null);
+      setCleaningBudgetLoading(false);
+      setCleaningBudgetError(null);
+      return;
+    }
+    let active = true;
+    setCleaningBudget(null);
+    setCleaningBudgetLoading(true);
+    setCleaningBudgetError(null);
+    const timer = window.setTimeout(async () => {
+      try {
+        const next = await getCleaningBudgetSnapshot(monthStart, expense?.id);
+        if (active) setCleaningBudget(next);
+      } catch (error: any) {
+        if (active) {
+          setCleaningBudget(null);
+          setCleaningBudgetError(error?.message || 'No se pudo calcular el presupuesto de limpieza.');
+        }
+      } finally {
+        if (active) setCleaningBudgetLoading(false);
       }
     }, 250);
     return () => {
@@ -311,6 +353,16 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     : null;
   const showStationeryProjection = isStationeryConcept(formData.concept_code)
     || isStationeryConcept(expense?.concept_code);
+  const cleaningProjection = cleaningBudget
+    ? calculateCleaningBudgetProjection({
+      limitMxn: cleaningBudget.limit_mxn,
+      usedExcludingEditedExpenseMxn: cleaningBudget.used_mxn,
+      amountMxn: formData.amount_mxn,
+      conceptCode: formData.concept_code,
+    })
+    : null;
+  const showCleaningProjection = isCleaningConcept(formData.concept_code)
+    || isCleaningConcept(expense?.concept_code);
 
   // Clear incompatible pending files when toggling has_invoice
   useEffect(() => {
@@ -1022,6 +1074,37 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
                   </>
                 ) : stationeryBudgetError ? (
                   <p className="mt-2 text-sm text-red-300">No se pudo obtener la proyección: {stationeryBudgetError}. Supabase validará el límite al intentar guardar.</p>
+                ) : null}
+              </div>
+            )}
+
+            {showCleaningProjection && (
+              <div className="md:col-span-2 rounded-lg border border-cyan-500/25 bg-cyan-500/5 p-4">
+                <p className="text-sm font-semibold text-cyan-200">Presupuesto mensual de limpieza</p>
+                {cleaningBudgetLoading ? (
+                  <p className="mt-2 text-sm text-cc-text-muted">Calculando acumulado proyectado…</p>
+                ) : cleaningBudget && cleaningProjection ? (
+                  <>
+                    <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
+                      <div><p className="text-xs text-cc-text-muted">Utilizado antes de este gasto</p><p className="font-semibold text-cc-cream">{cleaningBudget.used_mxn.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</p></div>
+                      <div><p className="text-xs text-cc-text-muted">Acumulado proyectado</p><p className="font-semibold text-cc-cream">{cleaningProjection.projectedUsedMxn.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</p></div>
+                      <div><p className="text-xs text-cc-text-muted">Límite del mes</p><p className="font-semibold text-cc-cream">{cleaningBudget.limit_mxn === null ? 'Sin presupuesto definido' : cleaningBudget.limit_mxn.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}</p></div>
+                    </div>
+                    {cleaningProjection.isOverBudget && (
+                      <p className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200"><AlertTriangle size={17} className="mt-0.5 shrink-0" />El gasto rebasará el límite por {cleaningProjection.exceededMxn.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}. Puedes registrar el gasto real.</p>
+                    )}
+                    {cleaningProjection.isAtWarning && (
+                      <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200"><AlertTriangle size={17} className="mt-0.5 shrink-0" />El acumulado alcanzará al menos el 80% del presupuesto ({cleaningProjection.warningThresholdMxn?.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}).</p>
+                    )}
+                    {formData.payment_instrument === 'CREDIT_CARD' && isCleaningConcept(formData.concept_code) && (
+                      <p className="mt-2 text-xs text-blue-200">La compra a crédito consume este presupuesto al registrarse; el pago posterior de la tarjeta no se vuelve a contar.</p>
+                    )}
+                    {!isCleaningConcept(formData.concept_code) && isCleaningConcept(expense?.concept_code) && (
+                      <p className="mt-2 text-xs text-cc-text-muted">Al guardar, el gasto dejará de consumir el presupuesto de limpieza de este mes.</p>
+                    )}
+                  </>
+                ) : cleaningBudgetError ? (
+                  <p className="mt-2 text-sm text-amber-300">No se pudo obtener la proyección: {cleaningBudgetError}. Esto no bloquea el registro del gasto real.</p>
                 ) : null}
               </div>
             )}
