@@ -16,6 +16,7 @@ import {
   getExpenseDestinationLabel,
   getExpenseSaveErrorMessage,
   getLegacyExpenseCategory,
+  getSuggestedExpenseConceptForFixedCost,
   type ExpenseConceptCode,
   type ManualExpenseDestinationScope,
 } from '../../lib/expenseClassification.js';
@@ -81,6 +82,7 @@ type DocKind = 'invoice_pdf' | 'invoice_xml' | 'receipt_image';
 interface FixedCostOption {
   id: string;
   name: string;
+  obligation_code: string | null;
   scope: string;
   periodicity: string;
   amount_mxn: number | null;
@@ -170,7 +172,7 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
       setFixedCostsLoading(true);
       const { data, error } = await client
         .from('fixed_costs')
-        .select('id,name,scope,periodicity,amount_mxn')
+        .select('id,name,obligation_code,scope,periodicity,amount_mxn')
         .lte('effective_from', formData.expense_date)
         .or(`effective_to.is.null,effective_to.gte.${formData.expense_date}`)
         .order('scope')
@@ -776,7 +778,16 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
                   <select
                     value={formData.fixed_cost_id || ''}
                     disabled={formData.is_unbudgeted_fixed || fixedCostsLoading}
-                    onChange={(e) => setFormData({ ...formData, fixed_cost_id: e.target.value || null })}
+                    onChange={(e) => {
+                      const fixedCostId = e.target.value || null;
+                      const fixedCost = fixedCostOptions.find(option => option.id === fixedCostId);
+                      const suggestedConcept = getSuggestedExpenseConceptForFixedCost(fixedCost);
+                      setFormData({
+                        ...formData,
+                        fixed_cost_id: fixedCostId,
+                        concept_code: suggestedConcept || formData.concept_code,
+                      });
+                    }}
                     className="w-full bg-[#1C1A1A] border border-white/10 rounded-lg px-4 py-2 text-cc-text-main disabled:opacity-50"
                   >
                     <option value="">{fixedCostsLoading ? 'Cargando…' : 'Seleccionar obligación…'}</option>

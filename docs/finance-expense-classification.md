@@ -3,8 +3,8 @@
 ## Contrato
 
 Los gastos manuales nuevos se capturan con un identificador estable de concepto
-(`CORN`, `OIL`, `SEASONINGS`, `CARAMEL`, `PACKAGING`, `FUEL`, `SERVICES`,
-`PAYROLL`, `RENT`, `COMMISSIONS` u `OTHER`) y un destino (`AURRERA`,
+(`CORN`, `OIL`, `SEASONINGS`, `CARAMEL`, `PACKAGING`, `STATIONERY`, `CLEANING`,
+`FUEL`, `SERVICES`, `MAINTENANCE`, `PAYROLL`, `RENT`, `COMMISSIONS` u `OTHER`) y un destino (`AURRERA`,
 `CHIPITLAN` o `SHARED`).
 `SHARED` describe una
 sola compra central: la fila y su importe se registran una vez, sin reparto ni
@@ -46,8 +46,11 @@ obligaciones fijas ni el dinero disponible.
 
 `PAYROLL` evita clasificar la nómina como servicio u otro. `RENT` cubre renta,
 que tampoco tiene equivalencia semántica en los conceptos de insumos o
-servicios. Mantenimiento, internet, luz y contador permanecen correctamente
-bajo `SERVICES`; esta clasificación no vincula por sí misma una obligación.
+servicios. `MAINTENANCE` separa el mantenimiento mensual y las reparaciones o
+servicios de mantenimiento de sucursales/equipo; internet, luz y contador
+permanecen bajo `SERVICES`. Esta clasificación no vincula por sí misma una
+obligación. Al elegir una obligación cuyo nombre indique mantenimiento, la
+interfaz lo sugiere como concepto y permite corregirlo antes de guardar.
 
 Las diez obligaciones presupuestales nuevas son aplicables desde el
 01/11/2026. Un gasto con fecha hasta el 31/10/2026 sólo puede elegir una de las

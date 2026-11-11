@@ -14,6 +14,7 @@ import {
   getExpenseDestinationLabel,
   getExpenseSaveErrorMessage,
   getLegacyExpenseCategory,
+  getSuggestedExpenseConceptForFixedCost,
   isExpenseClassificationComplete,
   resolveCommissionDestination,
   summarizePendingClassification,
@@ -33,6 +34,8 @@ const enforcement = read('../supabase/applied-manually/20261031210000_enforce_ma
 const enforcementVerification = read('../supabase/verification/20261031210000_verify_manual_expense_classification_enforcement.sql');
 const conceptExpansion = read('../supabase/migrations/20261031203000_add_payroll_rent_expense_concepts.sql');
 const conceptExpansionVerification = read('../supabase/verification/20261031203000_verify_payroll_rent_expense_concepts.sql');
+const maintenanceExpansion = read('../supabase/applied-manually/20261111120000_add_maintenance_expense_concept.sql');
+const maintenanceVerification = read('../supabase/verification/20261111120000_verify_maintenance_expense_concept.sql');
 const commissionExpenseMigration = read('../migration_commission_settlement_expenses.sql');
 const form = read('../components/finance/ExpenseFormModal.tsx');
 const manager = read('../components/finance/ExpensesManager.tsx');
@@ -83,7 +86,7 @@ assert.throws(() => getInitialExpenseDate('31/10/2026'), /inválida/);
 
 assert.deepEqual(
   EXPENSE_CONCEPT_OPTIONS.map(option => option.id),
-  ['CORN', 'OIL', 'SEASONINGS', 'CARAMEL', 'PACKAGING', 'STATIONERY', 'CLEANING', 'FUEL', 'SERVICES', 'PAYROLL', 'RENT', 'COMMISSIONS', 'OTHER'],
+  ['CORN', 'OIL', 'SEASONINGS', 'CARAMEL', 'PACKAGING', 'STATIONERY', 'CLEANING', 'FUEL', 'SERVICES', 'MAINTENANCE', 'PAYROLL', 'RENT', 'COMMISSIONS', 'OTHER'],
 );
 assert.deepEqual(
   EXPENSE_REPORT_DESTINATION_OPTIONS.map(option => option.id),
@@ -102,11 +105,26 @@ assert.equal(getExpenseConceptLabel('PAYROLL'), 'Nómina');
 assert.equal(getExpenseConceptLabel('RENT'), 'Renta');
 assert.equal(getExpenseConceptLabel('STATIONERY'), 'Papelería');
 assert.equal(getExpenseConceptLabel('CLEANING'), 'Limpieza');
+assert.equal(getExpenseConceptLabel('MAINTENANCE'), 'Mantenimiento');
 assert.equal(getExpenseDestinationLabel('UNKNOWN'), 'Destino por determinar');
 assert.equal(getExpenseDestinationLabel('MIXED'), 'Mixto');
 assert.equal(getLegacyExpenseCategory('PAYROLL'), 'PAYROLL');
 assert.equal(getLegacyExpenseCategory('RENT'), 'RENT');
+assert.equal(getLegacyExpenseCategory('MAINTENANCE'), 'MAINTENANCE');
 assert.equal(getLegacyExpenseCategory(''), null);
+assert.equal(
+  getSuggestedExpenseConceptForFixedCost({ name: 'Mantenimiento del local Aurrera' }),
+  'MAINTENANCE',
+);
+assert.equal(
+  getSuggestedExpenseConceptForFixedCost({ category: 'Maintenance services' }),
+  'MAINTENANCE',
+);
+assert.equal(
+  getSuggestedExpenseConceptForFixedCost({ obligation_code: 'aurrera.mantenimiento_local' }),
+  'MAINTENANCE',
+);
+assert.equal(getSuggestedExpenseConceptForFixedCost({ name: 'Internet Aurrera' }), null);
 assert.match(
   getExpenseSaveErrorMessage(new TypeError('Failed to fetch')),
   /No se pudo conectar con Supabase[\s\S]*no se guardó/i,
@@ -316,7 +334,27 @@ assert.match(conceptExpansion, /Phase 2 manual enforcement is already enabled/);
 assert.doesNotMatch(conceptExpansion, /\bUPDATE\s+public\.expenses\b/i);
 assert.doesNotMatch(conceptExpansion, /\bINSERT\s+INTO\s+public\.expenses\b/i);
 
+assert.match(maintenanceExpansion, /^BEGIN;/m);
+assert.match(maintenanceExpansion, /COMMIT;\s*$/);
+assert.match(maintenanceExpansion, /'MAINTENANCE'/);
+assert.equal(
+  existsSync(new URL('../supabase/migrations/20261111120000_add_maintenance_expense_concept.sql', import.meta.url)),
+  false,
+  'the manually applied MAINTENANCE migration must stay outside the automatic migration directory',
+);
+assert.doesNotMatch(maintenanceExpansion, /\bUPDATE\s+public\.expenses\b/i);
+assert.doesNotMatch(maintenanceExpansion, /\bINSERT\s+INTO\s+public\.expenses\b/i);
+assert.doesNotMatch(maintenanceExpansion, /commission_settlement_id[\s\S]*(GRANT|REVOKE)/i);
+assert.match(maintenanceVerification, /READ ONLY/);
+assert.doesNotMatch(withoutComments(maintenanceVerification), forbiddenWrites);
+assert.match(maintenanceVerification, /historical_other_expense_count/);
+assert.match(maintenanceVerification, /historical_other_expense_amount_mxn/);
+assert.match(maintenanceVerification, /maintenance_isolated_from_special_budgets/);
+assert.match(maintenanceVerification, /commission_link_write_still_protected/);
+
 assert.match(form, /EXPENSE_CONCEPT_OPTIONS/);
+assert.match(form, /getSuggestedExpenseConceptForFixedCost\(fixedCost\)/);
+assert.match(form, /concept_code: suggestedConcept \|\| formData\.concept_code/);
 assert.match(form, /getInitialExpenseDate\(expense\?\.expense_date\)/);
 assert.doesNotMatch(form, /new Date\(\)\.toISOString\(\)\.split\('T'\)\[0\]/);
 assert.match(form, /EXPENSE_DESTINATION_OPTIONS/);

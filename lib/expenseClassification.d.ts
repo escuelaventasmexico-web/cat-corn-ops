@@ -1,4 +1,4 @@
-export type ExpenseConceptCode = 'CORN' | 'OIL' | 'SEASONINGS' | 'CARAMEL' | 'PACKAGING' | 'STATIONERY' | 'CLEANING' | 'FUEL' | 'SERVICES' | 'PAYROLL' | 'RENT' | 'COMMISSIONS' | 'OTHER';
+export type ExpenseConceptCode = 'CORN' | 'OIL' | 'SEASONINGS' | 'CARAMEL' | 'PACKAGING' | 'STATIONERY' | 'CLEANING' | 'FUEL' | 'SERVICES' | 'MAINTENANCE' | 'PAYROLL' | 'RENT' | 'COMMISSIONS' | 'OTHER';
 export type ManualExpenseDestinationScope = 'AURRERA' | 'CHIPITLAN' | 'SHARED';
 export type ExpenseDestinationScope = ManualExpenseDestinationScope | 'MIXED' | 'UNKNOWN';
 export type ExpenseClassificationStatus = 'CLASSIFIED' | 'SYSTEM';
@@ -28,6 +28,11 @@ export function getExpenseConceptGroupLabel(code?: string | null): string;
 export function getExpenseBudgetDestination(expense?: ClassifiableExpense | null): ExpenseDestinationScope | null;
 export function getExpenseCommissionOrigin(expense?: ClassifiableExpense | null): ExpenseDestinationScope | null;
 export function getLegacyExpenseCategory(code?: string | null): ExpenseConceptCode | null;
+export function getSuggestedExpenseConceptForFixedCost(fixedCost?: {
+  name?: string | null;
+  category?: string | null;
+  obligation_code?: string | null;
+} | null): 'MAINTENANCE' | null;
 export function getExpenseSaveErrorMessage(error?: {
   message?: unknown;
   details?: unknown;
