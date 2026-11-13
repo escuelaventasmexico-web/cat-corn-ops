@@ -86,15 +86,15 @@ assert.throws(() => getInitialExpenseDate('31/10/2026'), /inválida/);
 
 assert.deepEqual(
   EXPENSE_CONCEPT_OPTIONS.map(option => option.id),
-  ['CORN', 'OIL', 'SEASONINGS', 'CARAMEL', 'PACKAGING', 'STATIONERY', 'CLEANING', 'FUEL', 'SERVICES', 'MAINTENANCE', 'PAYROLL', 'RENT', 'COMMISSIONS', 'OTHER'],
+  ['CORN', 'OIL', 'SEASONINGS', 'CARAMEL', 'PACKAGING', 'STATIONERY', 'CLEANING', 'FUEL', 'SERVICES', 'MAINTENANCE', 'OPERATIONS_MANAGEMENT', 'PAYROLL', 'RENT', 'COMMISSIONS', 'OTHER'],
 );
 assert.deepEqual(
   EXPENSE_REPORT_DESTINATION_OPTIONS.map(option => option.id),
-  ['AURRERA', 'CHIPITLAN', 'SHARED', 'MIXED', 'UNKNOWN'],
+  ['AURRERA', 'CHIPITLAN', 'SHARED', 'ENRIQUE', 'MIXED', 'UNKNOWN'],
 );
 assert.deepEqual(
   EXPENSE_DESTINATION_OPTIONS.map(option => option.id),
-  ['AURRERA', 'CHIPITLAN', 'SHARED'],
+  ['AURRERA', 'CHIPITLAN', 'SHARED', 'ENRIQUE'],
 );
 assert.equal(getExpenseConceptLabel(null), 'Pendiente de clasificar');
 assert.equal(getExpenseDestinationLabel(null), 'Pendiente de clasificar');
@@ -106,11 +106,14 @@ assert.equal(getExpenseConceptLabel('RENT'), 'Renta');
 assert.equal(getExpenseConceptLabel('STATIONERY'), 'Papelería');
 assert.equal(getExpenseConceptLabel('CLEANING'), 'Limpieza');
 assert.equal(getExpenseConceptLabel('MAINTENANCE'), 'Mantenimiento');
+assert.equal(getExpenseConceptLabel('OPERATIONS_MANAGEMENT'), 'Gastos dirección operativa');
+assert.equal(getExpenseDestinationLabel('ENRIQUE'), 'Enrique');
 assert.equal(getExpenseDestinationLabel('UNKNOWN'), 'Destino por determinar');
 assert.equal(getExpenseDestinationLabel('MIXED'), 'Mixto');
 assert.equal(getLegacyExpenseCategory('PAYROLL'), 'PAYROLL');
 assert.equal(getLegacyExpenseCategory('RENT'), 'RENT');
 assert.equal(getLegacyExpenseCategory('MAINTENANCE'), 'MAINTENANCE');
+assert.equal(getLegacyExpenseCategory('OPERATIONS_MANAGEMENT'), 'OPERATIONS_MANAGEMENT');
 assert.equal(getLegacyExpenseCategory(''), null);
 assert.equal(
   getSuggestedExpenseConceptForFixedCost({ name: 'Mantenimiento del local Aurrera' }),
@@ -138,17 +141,20 @@ const fixtures = [
   { id: 'legacy', amount_mxn: 100, concept_code: null, destination_scope: null, classification_status: null },
   { id: 'aurrera', amount_mxn: 250, concept_code: 'OIL', destination_scope: 'AURRERA', classification_status: 'CLASSIFIED' },
   { id: 'shared', amount_mxn: 600, concept_code: 'PACKAGING', destination_scope: 'SHARED', classification_status: 'CLASSIFIED' },
+  { id: 'enrique', amount_mxn: 300, concept_code: 'OPERATIONS_MANAGEMENT', destination_scope: 'ENRIQUE', classification_status: 'CLASSIFIED' },
   { id: 'commission-unknown', amount_mxn: 50, concept_code: 'COMMISSIONS', destination_scope: 'UNKNOWN', classification_status: 'SYSTEM' },
   { id: 'commission-mixed', amount_mxn: 75, concept_code: 'COMMISSIONS', destination_scope: 'MIXED', classification_status: 'SYSTEM' },
 ];
 assert.equal(isExpenseClassificationComplete(fixtures[0]), false);
 assert.equal(isExpenseClassificationComplete(fixtures[1]), true);
-assert.equal(isExpenseClassificationComplete(fixtures[3]), false);
-assert.equal(isExpenseClassificationComplete(fixtures[4]), true);
+assert.equal(isExpenseClassificationComplete(fixtures[3]), true);
+assert.equal(isExpenseClassificationComplete(fixtures[4]), false);
+assert.equal(isExpenseClassificationComplete(fixtures[5]), true);
 assert.deepEqual(filterExpensesByClassification(fixtures, 'PENDING', 'ALL').map(row => row.id), ['legacy']);
 assert.deepEqual(filterExpensesByClassification(fixtures, 'ALL', 'SHARED').map(row => row.id), ['shared', 'commission-unknown', 'commission-mixed']);
 assert.deepEqual(filterExpensesByClassification(fixtures, 'ALL', 'PENDING').map(row => row.id), ['legacy', 'commission-unknown']);
-assert.equal(sumExpensesOnce(fixtures), 1075);
+assert.equal(sumExpensesOnce(fixtures), 1375);
+assert.deepEqual(filterExpensesByClassification(fixtures, 'OPERATIONS_MANAGEMENT', 'ENRIQUE').map(row => row.id), ['enrique']);
 assert.equal(sumExpensesOnce(filterExpensesByClassification(fixtures, 'ALL', 'SHARED')), 725,
   'shared purchases and commissions are each represented and summed once');
 assert.deepEqual(summarizePendingClassification(fixtures), { count: 2, amount_mxn: 150 });

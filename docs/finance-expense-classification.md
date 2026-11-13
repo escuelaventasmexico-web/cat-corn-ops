@@ -4,8 +4,10 @@
 
 Los gastos manuales nuevos se capturan con un identificador estable de concepto
 (`CORN`, `OIL`, `SEASONINGS`, `CARAMEL`, `PACKAGING`, `STATIONERY`, `CLEANING`,
-`FUEL`, `SERVICES`, `MAINTENANCE`, `PAYROLL`, `RENT`, `COMMISSIONS` u `OTHER`) y un destino (`AURRERA`,
-`CHIPITLAN` o `SHARED`).
+`FUEL`, `SERVICES`, `MAINTENANCE`, `OPERATIONS_MANAGEMENT`, `PAYROLL`, `RENT`,
+`COMMISSIONS` u `OTHER`) y un destino manual (`AURRERA`, `CHIPITLAN`, `SHARED`
+o `ENRIQUE`). `OPERATIONS_MANAGEMENT` se muestra como **Gastos dirección
+operativa** y `ENRIQUE` como **Enrique**.
 `SHARED` describe una
 sola compra central: la fila y su importe se registran una vez, sin reparto ni
 duplicación por sucursal.
@@ -17,6 +19,9 @@ muestran como **Pendiente de clasificar**.
 Un gasto fijo vinculado hereda `fixed_costs.scope`. El formulario no vuelve a
 pedir destino y el trigger comprueba el valor contra la obligación vigente. Un
 gasto fijo no presupuestado sí requiere selección explícita de destino.
+`ENRIQUE` es exclusivamente un destino prospectivo de gastos manuales: no se
+agrega a `fixed_costs.scope`, no cambia obligaciones existentes y nunca se
+infiere para registros históricos.
 
 Las liquidaciones automáticas se reconocen únicamente por
 `commission_settlement_id` y usan el concepto explícito `COMMISSIONS`. Su destino
@@ -51,6 +56,12 @@ servicios de mantenimiento de sucursales/equipo; internet, luz y contador
 permanecen bajo `SERVICES`. Esta clasificación no vincula por sí misma una
 obligación. Al elegir una obligación cuyo nombre indique mantenimiento, la
 interfaz lo sugiere como concepto y permite corregirlo antes de guardar.
+
+`OPERATIONS_MANAGEMENT` conserva el tratamiento financiero ordinario de un
+gasto pagado: participa en P&L y dinero disponible mediante las fórmulas ya
+vigentes. No pertenece a los presupuestos especiales de insumos, combustible,
+papelería o limpieza. Agregarlo al catálogo no reclasifica filas `OTHER` ni
+pendientes.
 
 Las diez obligaciones presupuestales nuevas son aplicables desde el
 01/11/2026. Un gasto con fecha hasta el 31/10/2026 sólo puede elegir una de las

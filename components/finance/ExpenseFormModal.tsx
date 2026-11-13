@@ -107,6 +107,7 @@ export const ExpenseFormModal = ({ expense, onClose }: ExpenseFormModalProps) =>
     destination_scope: expense?.destination_scope === 'AURRERA'
       || expense?.destination_scope === 'CHIPITLAN'
       || expense?.destination_scope === 'SHARED'
+      || expense?.destination_scope === 'ENRIQUE'
       ? expense.destination_scope
       : '',
     vendor: expense?.vendor || '',

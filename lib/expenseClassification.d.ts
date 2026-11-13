@@ -1,5 +1,5 @@
-export type ExpenseConceptCode = 'CORN' | 'OIL' | 'SEASONINGS' | 'CARAMEL' | 'PACKAGING' | 'STATIONERY' | 'CLEANING' | 'FUEL' | 'SERVICES' | 'MAINTENANCE' | 'PAYROLL' | 'RENT' | 'COMMISSIONS' | 'OTHER';
-export type ManualExpenseDestinationScope = 'AURRERA' | 'CHIPITLAN' | 'SHARED';
+export type ExpenseConceptCode = 'CORN' | 'OIL' | 'SEASONINGS' | 'CARAMEL' | 'PACKAGING' | 'STATIONERY' | 'CLEANING' | 'FUEL' | 'SERVICES' | 'MAINTENANCE' | 'OPERATIONS_MANAGEMENT' | 'PAYROLL' | 'RENT' | 'COMMISSIONS' | 'OTHER';
+export type ManualExpenseDestinationScope = 'AURRERA' | 'CHIPITLAN' | 'SHARED' | 'ENRIQUE';
 export type ExpenseDestinationScope = ManualExpenseDestinationScope | 'MIXED' | 'UNKNOWN';
 export type ExpenseClassificationStatus = 'CLASSIFIED' | 'SYSTEM';
 export type ExpenseConceptFilter = ExpenseConceptCode | 'ALL' | 'PENDING' | 'PAYROLL_GROUP';
